@@ -3,5 +3,5 @@ package main
 import "log"
 
 func main() {
-    log.Println("rss-worker started")
+	log.Println("rss-worker started")
 }

@@ -1,3 +1,6 @@
-APP_HTTP_PORT: 8080
-DATABASE_DSN: postgres://user:pass@localhost:5432/rss?sslmode=disable
-REDIS_ADDR: localhost:6379
+http:
+  port: 8080
+database:
+  dsn: postgres://user:pass@localhost:5432/rss?sslmode=disable
+redis:
+  addr: localhost:6379
