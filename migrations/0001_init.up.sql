@@ -1,8 +1,13 @@
 CREATE TABLE source_articles (
   id VARCHAR(36) PRIMARY KEY,
   miniflux_entry_id BIGINT UNIQUE NOT NULL,
+  feed_id BIGINT NOT NULL,
+  feed_title TEXT NOT NULL,
   title TEXT NOT NULL,
+  author TEXT NOT NULL,
   url TEXT NOT NULL,
+  content_html TEXT NOT NULL,
+  content_text TEXT NOT NULL,
   fingerprint TEXT UNIQUE NOT NULL
 );
 
@@ -12,5 +17,8 @@ CREATE TABLE profile_versions (
   name TEXT NOT NULL,
   version INT NOT NULL,
   is_active BOOLEAN NOT NULL DEFAULT FALSE,
-  payload_json JSONB NOT NULL
+  payload_json JSONB NOT NULL,
+  CONSTRAINT uq_profile_versions_type_name_version UNIQUE (profile_type, name, version)
 );
+
+CREATE INDEX idx_profile_versions_type_active ON profile_versions (profile_type, is_active);

@@ -19,7 +19,7 @@ func NewProfileRepository(db *gorm.DB) *ProfileRepository {
 
 func (r *ProfileRepository) Create(ctx context.Context, v profile.Version) error {
 	m := models.ProfileVersionModel{
-		ID:          v.ID,
+		ID:          ensureID(v.ID),
 		ProfileType: v.ProfileType,
 		Name:        v.Name,
 		Version:     v.Version,
@@ -28,6 +28,27 @@ func (r *ProfileRepository) Create(ctx context.Context, v profile.Version) error
 	}
 
 	return r.db.WithContext(ctx).Create(&m).Error
+}
+
+func (r *ProfileRepository) Activate(ctx context.Context, profileType string, version int) error {
+	return withTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := tx.Model(&models.ProfileVersionModel{}).
+			Where("profile_type = ?", profileType).
+			Update("is_active", false).Error; err != nil {
+			return err
+		}
+
+		result := tx.Model(&models.ProfileVersionModel{}).
+			Where("profile_type = ? AND version = ?", profileType, version).
+			Update("is_active", true)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
 
 func (r *ProfileRepository) GetActive(ctx context.Context, profileType string) (profile.Version, error) {
