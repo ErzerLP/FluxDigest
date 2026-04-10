@@ -1,15 +1,129 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"rss-platform/internal/app/api/handlers"
+	"rss-platform/internal/app/api/middleware"
+	"rss-platform/internal/telemetry"
 )
 
-func NewRouter() *gin.Engine {
+type routerConfig struct {
+	apiKey        string
+	articleReader handlers.ArticleReader
+	digestReader  handlers.DigestReader
+	profileReader handlers.ProfileReader
+	jobTrigger    handlers.JobTrigger
+	metrics       *telemetry.Metrics
+}
+
+// Option 定义 router 组装选项。
+type Option func(*routerConfig)
+
+// WithAPIKey 配置 job 接口使用的 API key。
+func WithAPIKey(apiKey string) Option {
+	return func(cfg *routerConfig) {
+		cfg.apiKey = apiKey
+	}
+}
+
+// WithArticleReader 注入文章读取依赖。
+func WithArticleReader(reader handlers.ArticleReader) Option {
+	return func(cfg *routerConfig) {
+		cfg.articleReader = reader
+	}
+}
+
+// WithDigestReader 注入日报读取依赖。
+func WithDigestReader(reader handlers.DigestReader) Option {
+	return func(cfg *routerConfig) {
+		cfg.digestReader = reader
+	}
+}
+
+// WithProfileReader 注入配置读取依赖。
+func WithProfileReader(reader handlers.ProfileReader) Option {
+	return func(cfg *routerConfig) {
+		cfg.profileReader = reader
+	}
+}
+
+// WithJobTrigger 注入日报任务触发依赖。
+func WithJobTrigger(trigger handlers.JobTrigger) Option {
+	return func(cfg *routerConfig) {
+		cfg.jobTrigger = trigger
+	}
+}
+
+// WithMetrics 注入 metrics 导出器。
+func WithMetrics(metrics *telemetry.Metrics) Option {
+	return func(cfg *routerConfig) {
+		cfg.metrics = metrics
+	}
+}
+
+// NewRouter 创建可注入依赖的最小 API router。
+func NewRouter(options ...Option) *gin.Engine {
+	cfg := defaultRouterConfig()
+	for _, option := range options {
+		option(&cfg)
+	}
+
 	router := gin.New()
+	router.Use(gin.Recovery())
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	router.GET("/metrics", gin.WrapH(cfg.metrics.Handler()))
+
+	apiV1 := router.Group("/api/v1")
+	handlers.RegisterArticleRoutes(apiV1, cfg.articleReader)
+	handlers.RegisterDigestRoutes(apiV1, cfg.digestReader)
+	handlers.RegisterProfileRoutes(apiV1, cfg.profileReader)
+
+	jobs := apiV1.Group("")
+	if cfg.apiKey != "" {
+		jobs.Use(middleware.RequireAPIKey(cfg.apiKey))
+	}
+	handlers.RegisterJobRoutes(jobs, cfg.jobTrigger)
+
 	return router
+}
+
+func defaultRouterConfig() routerConfig {
+	return routerConfig{
+		articleReader: defaultArticleReader{},
+		digestReader:  defaultDigestReader{},
+		profileReader: defaultProfileReader{},
+		jobTrigger:    noopJobTrigger{},
+		metrics:       telemetry.NewMetrics(),
+	}
+}
+
+type defaultArticleReader struct{}
+
+func (defaultArticleReader) ListArticles() []map[string]any {
+	return []map[string]any{}
+}
+
+type defaultDigestReader struct{}
+
+func (defaultDigestReader) LatestDigest() map[string]any {
+	return map[string]any{"title": "", "sections": []any{}}
+}
+
+type defaultProfileReader struct{}
+
+func (defaultProfileReader) ActiveProfile(profileType string) map[string]any {
+	return map[string]any{"profile_type": profileType, "name": ""}
+}
+
+type noopJobTrigger struct{}
+
+func (noopJobTrigger) TriggerDailyDigest(_ context.Context, _ time.Time) error {
+	return nil
 }

@@ -1,0 +1,155 @@
+openapi: 3.1.0
+info:
+  title: RSS AI Digest API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /metrics:
+    get:
+      summary: Export minimal Prometheus metrics
+      responses:
+        '200':
+          description: Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/v1/articles:
+    get:
+      summary: List articles
+      responses:
+        '200':
+          description: Article list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Article'
+  /api/v1/digests/latest:
+    get:
+      summary: Get latest digest
+      responses:
+        '200':
+          description: Latest digest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Digest'
+  /api/v1/profiles/{profileType}/active:
+    get:
+      summary: Get active profile by type
+      parameters:
+        - in: path
+          name: profileType
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Active profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+  /api/v1/jobs/daily-digest:
+    post:
+      summary: Trigger daily digest job
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                trigger_at:
+                  type: string
+                  format: date-time
+      responses:
+        '202':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+                  trigger_at:
+                    type: string
+                    format: date-time
+        '401':
+          description: Invalid API key
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    Article:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+    DigestSectionItem:
+      type: object
+      properties:
+        article_id:
+          type: string
+        title:
+          type: string
+        core_summary:
+          type: string
+    DigestSection:
+      type: object
+      properties:
+        name:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DigestSectionItem'
+    Digest:
+      type: object
+      properties:
+        title:
+          type: string
+        subtitle:
+          type: string
+        opening_note:
+          type: string
+        sections:
+          type: array
+          items:
+            $ref: '#/components/schemas/DigestSection'
+    Profile:
+      type: object
+      properties:
+        profile_type:
+          type: string
+        name:
+          type: string

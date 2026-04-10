@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: rss
+      POSTGRES_USER: rss
+      POSTGRES_PASSWORD: rss
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rss -d rss"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rss-api:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/api.Dockerfile
+    environment:
+      APP_HTTP_PORT: 8080
+      APP_DATABASE_DSN: postgres://rss:rss@postgres:5432/rss?sslmode=disable
+      APP_REDIS_ADDR: redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  rss-worker:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/worker.Dockerfile
+    environment:
+      APP_DATABASE_DSN: postgres://rss:rss@postgres:5432/rss?sslmode=disable
+      APP_REDIS_ADDR: redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  rss-scheduler:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/scheduler.Dockerfile
+    environment:
+      APP_DATABASE_DSN: postgres://rss:rss@postgres:5432/rss?sslmode=disable
+      APP_REDIS_ADDR: redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
