@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"rss-platform/internal/agent/digest_planning"
+	domaindigest "rss-platform/internal/domain/digest"
 )
 
 var (
@@ -12,23 +12,14 @@ var (
 	errRendererRequired = errors.New("digest renderer is required")
 )
 
-// CandidateArticle 复用 digest planning 的候选文章结构。
-type CandidateArticle = digest_planning.CandidateArticle
-
-// Section 复用 digest planning 的日报分节结构。
-type Section = digest_planning.Section
-
-// Plan 复用 digest planning 的结构化规划输出。
-type Plan = digest_planning.Plan
-
 // Planner 定义日报规划所需的最小能力。
 type Planner interface {
-	Plan(ctx context.Context, items []CandidateArticle) (Plan, error)
+	Plan(ctx context.Context, items []domaindigest.CandidateArticle) (domaindigest.Plan, error)
 }
 
 // Renderer 定义日报渲染所需的最小能力。
 type Renderer interface {
-	Render(plan Plan, items []CandidateArticle) (string, string, error)
+	Render(plan domaindigest.Plan) (string, string, error)
 }
 
 // Digest 表示日报工作流输出。
@@ -37,7 +28,7 @@ type Digest struct {
 	Subtitle        string
 	ContentMarkdown string
 	ContentHTML     string
-	Plan            Plan
+	Plan            domaindigest.Plan
 }
 
 // Workflow 负责编排日报规划与渲染。
@@ -52,7 +43,7 @@ func New(planner Planner, renderer Renderer) *Workflow {
 }
 
 // Run 顺序执行 planner 与 renderer，输出日报内容。
-func (w *Workflow) Run(ctx context.Context, items []CandidateArticle) (Digest, error) {
+func (w *Workflow) Run(ctx context.Context, items []domaindigest.CandidateArticle) (Digest, error) {
 	if w == nil || w.planner == nil {
 		return Digest{}, errPlannerRequired
 	}
@@ -65,7 +56,7 @@ func (w *Workflow) Run(ctx context.Context, items []CandidateArticle) (Digest, e
 		return Digest{}, err
 	}
 
-	markdown, html, err := w.renderer.Render(plan, items)
+	markdown, html, err := w.renderer.Render(plan)
 	if err != nil {
 		return Digest{}, err
 	}

@@ -2,6 +2,7 @@ package markdown_export
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,8 @@ import (
 type Publisher struct {
 	outputDir string
 }
+
+var errMarkdownRequired = errors.New("markdown content is required")
 
 // New 创建 Markdown 导出发布器。
 func New(outputDir string) *Publisher {
@@ -39,7 +42,7 @@ func (p *Publisher) PublishDigest(ctx context.Context, req adapterpublisher.Publ
 	path := filepath.Join(p.outputDir, fileName+".md")
 	content := req.ContentMarkdown
 	if content == "" {
-		content = req.ContentHTML
+		return adapterpublisher.PublishDigestResult{}, errMarkdownRequired
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return adapterpublisher.PublishDigestResult{}, err

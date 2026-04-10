@@ -4,7 +4,7 @@ import (
 	"html/template"
 	"strings"
 
-	workflow "rss-platform/internal/workflow/daily_digest_workflow"
+	domaindigest "rss-platform/internal/domain/digest"
 )
 
 // DigestRenderer 负责把结构化日报规划渲染为 Markdown 与 HTML。
@@ -15,12 +15,12 @@ func NewDigestRenderer() *DigestRenderer {
 	return &DigestRenderer{}
 }
 
-// Render 把 Plan 和候选文章渲染为 Markdown 与 HTML。
-func (r *DigestRenderer) Render(plan workflow.Plan, items []workflow.CandidateArticle) (string, string, error) {
-	return renderMarkdown(plan, items), renderHTML(plan, items), nil
+// Render 只根据 Plan 渲染 Markdown 与 HTML。
+func (r *DigestRenderer) Render(plan domaindigest.Plan) (string, string, error) {
+	return renderMarkdown(plan), renderHTML(plan), nil
 }
 
-func renderMarkdown(plan workflow.Plan, items []workflow.CandidateArticle) string {
+func renderMarkdown(plan domaindigest.Plan) string {
 	var builder strings.Builder
 	builder.WriteString("# ")
 	builder.WriteString(plan.Title)
@@ -40,16 +40,6 @@ func renderMarkdown(plan workflow.Plan, items []workflow.CandidateArticle) strin
 		builder.WriteString(section.Name)
 		builder.WriteString("\n")
 		for _, item := range section.Items {
-			builder.WriteString("- ")
-			builder.WriteString(item)
-			builder.WriteString("\n")
-		}
-		builder.WriteString("\n")
-	}
-
-	if len(items) > 0 {
-		builder.WriteString("## 候选文章\n")
-		for _, item := range items {
 			builder.WriteString("- **")
 			builder.WriteString(item.Title)
 			builder.WriteString("**")
@@ -59,12 +49,13 @@ func renderMarkdown(plan workflow.Plan, items []workflow.CandidateArticle) strin
 			}
 			builder.WriteString("\n")
 		}
+		builder.WriteString("\n")
 	}
 
 	return builder.String()
 }
 
-func renderHTML(plan workflow.Plan, items []workflow.CandidateArticle) string {
+func renderHTML(plan domaindigest.Plan) string {
 	var builder strings.Builder
 	builder.WriteString("<article>")
 	builder.WriteString("<h1>")
@@ -87,16 +78,6 @@ func renderHTML(plan workflow.Plan, items []workflow.CandidateArticle) string {
 		builder.WriteString(template.HTMLEscapeString(section.Name))
 		builder.WriteString("</h2><ul>")
 		for _, item := range section.Items {
-			builder.WriteString("<li>")
-			builder.WriteString(template.HTMLEscapeString(item))
-			builder.WriteString("</li>")
-		}
-		builder.WriteString("</ul></section>")
-	}
-
-	if len(items) > 0 {
-		builder.WriteString("<section><h2>候选文章</h2><ul>")
-		for _, item := range items {
 			builder.WriteString("<li><strong>")
 			builder.WriteString(template.HTMLEscapeString(item.Title))
 			builder.WriteString("</strong>")

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	domaindigest "rss-platform/internal/domain/digest"
 )
 
 var errRunnerRequired = errors.New("digest planning runner is required")
@@ -15,7 +17,7 @@ type Runner interface {
 
 // Planner 定义日报规划所需的最小能力边界。
 type Planner interface {
-	Plan(ctx context.Context, items []CandidateArticle) (Plan, error)
+	Plan(ctx context.Context, items []domaindigest.CandidateArticle) (domaindigest.Plan, error)
 }
 
 // Agent 负责把候选文章交给底层 runner 生成结构化 Plan。
@@ -29,22 +31,22 @@ func New(runner Runner) *Agent {
 }
 
 // Plan 根据候选文章生成结构化日报规划。
-func (a *Agent) Plan(ctx context.Context, items []CandidateArticle) (Plan, error) {
+func (a *Agent) Plan(ctx context.Context, items []domaindigest.CandidateArticle) (domaindigest.Plan, error) {
 	if a == nil || a.runner == nil {
-		return Plan{}, errRunnerRequired
+		return domaindigest.Plan{}, errRunnerRequired
 	}
 
 	prompt, err := buildPrompt(items)
 	if err != nil {
-		return Plan{}, err
+		return domaindigest.Plan{}, err
 	}
 
 	return a.runner.Run(ctx, prompt)
 }
 
-func buildPrompt(items []CandidateArticle) (string, error) {
+func buildPrompt(items []domaindigest.CandidateArticle) (string, error) {
 	payload, err := json.Marshal(struct {
-		Articles []CandidateArticle `json:"articles"`
+		Articles []domaindigest.CandidateArticle `json:"articles"`
 	}{Articles: items})
 	if err != nil {
 		return "", err
