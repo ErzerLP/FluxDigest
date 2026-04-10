@@ -1,9 +1,7 @@
 package api
 
 import (
-	"context"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -99,7 +97,6 @@ func defaultRouterConfig() routerConfig {
 		articleReader: defaultArticleReader{},
 		digestReader:  defaultDigestReader{},
 		profileReader: defaultProfileReader{},
-		jobTrigger:    noopJobTrigger{},
 		metrics:       telemetry.NewMetrics(),
 	}
 }
@@ -120,10 +117,4 @@ type defaultProfileReader struct{}
 
 func (defaultProfileReader) ActiveProfile(profileType string) map[string]any {
 	return map[string]any{"profile_type": profileType, "name": ""}
-}
-
-type noopJobTrigger struct{}
-
-func (noopJobTrigger) TriggerDailyDigest(_ context.Context, _ time.Time) error {
-	return nil
 }

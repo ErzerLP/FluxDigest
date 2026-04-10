@@ -35,6 +35,8 @@ services:
       APP_HTTP_PORT: 8080
       APP_DATABASE_DSN: postgres://rss:rss@postgres:5432/rss?sslmode=disable
       APP_REDIS_ADDR: redis:6379
+      APP_JOB_API_KEY: dev-api-key
+      APP_JOB_QUEUE: default
     ports:
       - "8080:8080"
     depends_on:
@@ -50,6 +52,8 @@ services:
     environment:
       APP_DATABASE_DSN: postgres://rss:rss@postgres:5432/rss?sslmode=disable
       APP_REDIS_ADDR: redis:6379
+      APP_JOB_QUEUE: default
+      APP_WORKER_CONCURRENCY: 10
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,6 +67,7 @@ services:
     environment:
       APP_DATABASE_DSN: postgres://rss:rss@postgres:5432/rss?sslmode=disable
       APP_REDIS_ADDR: redis:6379
+      APP_JOB_QUEUE: default
     depends_on:
       postgres:
         condition: service_healthy

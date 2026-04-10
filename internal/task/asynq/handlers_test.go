@@ -26,6 +26,21 @@ func TestNewProcessArticleTaskEncodesArticleID(t *testing.T) {
 	}
 }
 
+func TestNewDailyDigestTaskEncodesDigestDate(t *testing.T) {
+	task, err := asynqtask.NewDailyDigestTask("2026-04-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["digest_date"] != "2026-04-10" {
+		t.Fatalf("want digest_date 2026-04-10 got %q", payload["digest_date"])
+	}
+}
+
 func TestArticleProcessingHandlerPassesArticleIDToCallback(t *testing.T) {
 	var gotArticleID string
 	handler := asynqtask.NewArticleProcessingHandler(func(_ context.Context, articleID string) error {
@@ -43,5 +58,25 @@ func TestArticleProcessingHandlerPassesArticleIDToCallback(t *testing.T) {
 	}
 	if gotArticleID != "art-1" {
 		t.Fatalf("want art-1 got %q", gotArticleID)
+	}
+}
+
+func TestDailyDigestHandlerPassesDigestDateToCallback(t *testing.T) {
+	var gotDigestDate string
+	handler := asynqtask.NewDailyDigestHandler(func(_ context.Context, digestDate string) error {
+		gotDigestDate = digestDate
+		return nil
+	})
+
+	task, err := asynqtask.NewDailyDigestTask("2026-04-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := handler.ProcessTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	if gotDigestDate != "2026-04-10" {
+		t.Fatalf("want 2026-04-10 got %q", gotDigestDate)
 	}
 }

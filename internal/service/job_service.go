@@ -37,13 +37,13 @@ func NewJobService(queue DailyDigestQueue, metrics ...JobMetrics) *JobService {
 	return svc
 }
 
-// TriggerDailyDigest 按日期触发日报任务，重复日期会被跳过。
+// TriggerDailyDigest 按上海日历日触发日报任务，重复日期会被跳过。
 func (s *JobService) TriggerDailyDigest(ctx context.Context, now time.Time) error {
 	if s.queue == nil {
 		return errDailyDigestQueueRequired
 	}
 
-	digestDate := now.Format("2006-01-02")
+	digestDate := now.In(shanghaiLocation()).Format("2006-01-02")
 
 	s.mu.Lock()
 	if s.lastDigest == digestDate {
@@ -70,4 +70,12 @@ func (s *JobService) TriggerDailyDigest(ctx context.Context, now time.Time) erro
 	}
 
 	return nil
+}
+
+func shanghaiLocation() *time.Location {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("CST", 8*3600)
+	}
+	return location
 }

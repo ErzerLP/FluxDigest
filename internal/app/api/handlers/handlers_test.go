@@ -86,6 +86,20 @@ func TestRequireAPIKeyRejectsMissingHeader(t *testing.T) {
 	}
 }
 
+func TestNewRouterWithoutJobTriggerReturnsServiceUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := apiapp.NewRouter()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/daily-digest", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 got %d", rec.Code)
+	}
+}
+
 func TestRouterRegistersVersionedRoutesAndProtectsJobs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	trigger := &jobTriggerStub{}

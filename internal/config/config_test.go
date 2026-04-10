@@ -28,6 +28,12 @@ func TestLoadDefaultsPortTo8080(t *testing.T) {
 	if cfg.HTTP.Port != 8080 {
 		t.Fatalf("want 8080 got %d", cfg.HTTP.Port)
 	}
+	if cfg.Job.Queue != "default" {
+		t.Fatalf("want default queue got %q", cfg.Job.Queue)
+	}
+	if cfg.Worker.Concurrency != 10 {
+		t.Fatalf("want worker concurrency 10 got %d", cfg.Worker.Concurrency)
+	}
 }
 
 func TestLoadReadsConfigYAMLAndEnvOverrides(t *testing.T) {
@@ -37,7 +43,7 @@ func TestLoadReadsConfigYAMLAndEnvOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	yaml := "http:\n  port: 7000\n"
+	yaml := "http:\n  port: 7000\njob:\n  api_key: yaml-secret\n  queue: digest\nworker:\n  concurrency: 3\n"
 	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +57,34 @@ func TestLoadReadsConfigYAMLAndEnvOverrides(t *testing.T) {
 	if cfg.HTTP.Port != 7000 {
 		t.Fatalf("want 7000 got %d", cfg.HTTP.Port)
 	}
+	if cfg.Job.APIKey != "yaml-secret" {
+		t.Fatalf("want yaml-secret got %q", cfg.Job.APIKey)
+	}
+	if cfg.Job.Queue != "digest" {
+		t.Fatalf("want digest got %q", cfg.Job.Queue)
+	}
+	if cfg.Worker.Concurrency != 3 {
+		t.Fatalf("want 3 got %d", cfg.Worker.Concurrency)
+	}
 
 	t.Setenv("APP_HTTP_PORT", "9091")
+	t.Setenv("APP_JOB_API_KEY", "env-secret")
+	t.Setenv("APP_JOB_QUEUE", "default")
+	t.Setenv("APP_WORKER_CONCURRENCY", "9")
 	cfg, err = config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.HTTP.Port != 9091 {
 		t.Fatalf("want 9091 got %d", cfg.HTTP.Port)
+	}
+	if cfg.Job.APIKey != "env-secret" {
+		t.Fatalf("want env-secret got %q", cfg.Job.APIKey)
+	}
+	if cfg.Job.Queue != "default" {
+		t.Fatalf("want default got %q", cfg.Job.Queue)
+	}
+	if cfg.Worker.Concurrency != 9 {
+		t.Fatalf("want 9 got %d", cfg.Worker.Concurrency)
 	}
 }

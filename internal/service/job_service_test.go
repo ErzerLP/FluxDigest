@@ -34,3 +34,20 @@ func TestJobServiceSkipsDuplicateDigestDate(t *testing.T) {
 		t.Fatalf("want digest date 2026-04-10 got %s", queue.dates[0])
 	}
 }
+
+func TestJobServiceNormalizesDigestDateToShanghai(t *testing.T) {
+	queue := &enqueueStub{}
+	svc := NewJobService(queue)
+	now := time.Date(2026, 4, 9, 16, 30, 0, 0, time.UTC)
+
+	if err := svc.TriggerDailyDigest(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(queue.dates) != 1 {
+		t.Fatalf("want queue called once got %d", len(queue.dates))
+	}
+	if queue.dates[0] != "2026-04-10" {
+		t.Fatalf("want digest date 2026-04-10 got %s", queue.dates[0])
+	}
+}
