@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,7 +44,7 @@ func (c *Client) ListEntries(ctx context.Context, since time.Time) ([]Entry, err
 	}
 
 	query := endpoint.Query()
-	query.Set("published_after", since.UTC().Format(time.RFC3339))
+	query.Set("published_after", strconv.FormatInt(since.UTC().Unix(), 10))
 	endpoint.RawQuery = query.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
@@ -64,11 +65,41 @@ func (c *Client) ListEntries(ctx context.Context, since time.Time) ([]Entry, err
 	}
 
 	var payload struct {
-		Entries []Entry `json:"entries"`
+		Entries []struct {
+			ID          int64     `json:"id"`
+			FeedID      int64     `json:"feed_id"`
+			Title       string    `json:"title"`
+			Author      string    `json:"author"`
+			URL         string    `json:"url"`
+			Content     string    `json:"content"`
+			PublishedAt time.Time `json:"published_at"`
+			Feed        struct {
+				ID    int64  `json:"id"`
+				Title string `json:"title"`
+			} `json:"feed"`
+		} `json:"entries"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode entries response: %w", err)
 	}
 
-	return payload.Entries, nil
+	entries := make([]Entry, 0, len(payload.Entries))
+	for _, raw := range payload.Entries {
+		feedID := raw.Feed.ID
+		if feedID == 0 {
+			feedID = raw.FeedID
+		}
+		entries = append(entries, Entry{
+			ID:          raw.ID,
+			FeedID:      feedID,
+			FeedTitle:   raw.Feed.Title,
+			Title:       raw.Title,
+			Author:      raw.Author,
+			URL:         raw.URL,
+			Content:     raw.Content,
+			PublishedAt: raw.PublishedAt,
+		})
+	}
+
+	return entries, nil
 }

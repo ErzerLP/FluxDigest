@@ -3,13 +3,17 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"rss-platform/internal/domain/profile"
 )
 
+var ErrProfileNotFound = errors.New("profile active version not found")
+
 type ProfileRepository interface {
 	Create(ctx context.Context, v profile.Version) error
+	GetActive(ctx context.Context, profileType string) (profile.Version, error)
 }
 
 type ProfileService struct {
@@ -30,9 +34,11 @@ func (s *ProfileService) SeedDefaults(ctx context.Context) error {
 			profileType: "ai",
 			name:        "default-ai",
 			payload: map[string]any{
-				"provider":    "openai",
-				"model":       "gpt-4.1-mini",
-				"temperature": 0.2,
+				"provider":                    "openai",
+				"model":                       "gpt-4.1-mini",
+				"temperature":                 0.2,
+				"translation_prompt_template": "configs/prompts/translation.tmpl",
+				"analysis_prompt_template":    "configs/prompts/analysis.tmpl",
 			},
 		},
 		{
@@ -62,6 +68,12 @@ func (s *ProfileService) SeedDefaults(ctx context.Context) error {
 	}
 
 	for _, def := range defaults {
+		if _, err := s.repo.GetActive(ctx, def.profileType); err == nil {
+			continue
+		} else if !errors.Is(err, ErrProfileNotFound) {
+			return fmt.Errorf("check active %s profile: %w", def.profileType, err)
+		}
+
 		payload, err := json.Marshal(def.payload)
 		if err != nil {
 			return fmt.Errorf("marshal default %s profile payload: %w", def.profileType, err)
