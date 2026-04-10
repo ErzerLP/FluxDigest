@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 
 	"rss-platform/internal/domain/profile"
 	"rss-platform/internal/repository/postgres/models"
@@ -43,6 +44,9 @@ func (r *ProfileRepository) Create(ctx context.Context, v profile.Version) error
 func (r *ProfileRepository) GetActive(ctx context.Context, profileType string) (profile.Version, error) {
 	var m models.ProfileVersionModel
 	if err := r.db.WithContext(ctx).Where("profile_type = ? AND is_active = ?", profileType, true).First(&m).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return profile.Version{}, profile.ErrNotFound
+		}
 		return profile.Version{}, err
 	}
 

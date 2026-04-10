@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -147,5 +148,18 @@ func TestProfileRepositoryCreateActiveVersionSwitchesActive(t *testing.T) {
 	}
 	if active.Version != 2 {
 		t.Fatalf("want version 2 got %d", active.Version)
+	}
+}
+
+func TestProfileRepositoryGetActiveReturnsDomainErrNotFound(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.AutoMigrate(&models.ProfileVersionModel{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	repo := postgres.NewProfileRepository(db)
+	_, err := repo.GetActive(context.Background(), "ai")
+	if !errors.Is(err, profile.ErrNotFound) {
+		t.Fatalf("want profile.ErrNotFound got %v", err)
 	}
 }
