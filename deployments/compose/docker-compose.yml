@@ -50,13 +50,10 @@ services:
       context: ../..
       dockerfile: deployments/docker/worker.Dockerfile
     environment:
-      APP_DATABASE_DSN: postgres://rss:rss@postgres:5432/rss?sslmode=disable
       APP_REDIS_ADDR: redis:6379
       APP_JOB_QUEUE: default
       APP_WORKER_CONCURRENCY: 10
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -65,12 +62,9 @@ services:
       context: ../..
       dockerfile: deployments/docker/scheduler.Dockerfile
     environment:
-      APP_DATABASE_DSN: postgres://rss:rss@postgres:5432/rss?sslmode=disable
       APP_REDIS_ADDR: redis:6379
       APP_JOB_QUEUE: default
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
 
