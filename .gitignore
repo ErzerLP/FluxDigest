@@ -1,0 +1,9 @@
+.worktrees/
+worktrees/
+/bin/
+/dist/
+*.exe
+*.out
+configs/config.yaml
+.env
+.env.*
