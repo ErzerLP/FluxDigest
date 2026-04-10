@@ -18,36 +18,25 @@ func NewProfileRepository(db *gorm.DB) *ProfileRepository {
 }
 
 func (r *ProfileRepository) Create(ctx context.Context, v profile.Version) error {
-	m := models.ProfileVersionModel{
-		ID:          ensureID(v.ID),
-		ProfileType: v.ProfileType,
-		Name:        v.Name,
-		Version:     v.Version,
-		IsActive:    v.IsActive,
-		PayloadJSON: v.PayloadJSON,
-	}
-
-	return r.db.WithContext(ctx).Create(&m).Error
-}
-
-func (r *ProfileRepository) Activate(ctx context.Context, profileType string, version int) error {
-	return withTx(ctx, r.db, func(tx *gorm.DB) error {
-		if err := tx.Model(&models.ProfileVersionModel{}).
-			Where("profile_type = ?", profileType).
-			Update("is_active", false).Error; err != nil {
-			return err
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if v.IsActive {
+			if err := tx.Model(&models.ProfileVersionModel{}).
+				Where("profile_type = ?", v.ProfileType).
+				Update("is_active", false).Error; err != nil {
+				return err
+			}
 		}
 
-		result := tx.Model(&models.ProfileVersionModel{}).
-			Where("profile_type = ? AND version = ?", profileType, version).
-			Update("is_active", true)
-		if result.Error != nil {
-			return result.Error
+		m := models.ProfileVersionModel{
+			ID:          ensureID(v.ID),
+			ProfileType: v.ProfileType,
+			Name:        v.Name,
+			Version:     v.Version,
+			IsActive:    v.IsActive,
+			PayloadJSON: v.PayloadJSON,
 		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-		return nil
+
+		return tx.Create(&m).Error
 	})
 }
 

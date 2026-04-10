@@ -95,7 +95,7 @@ func TestArticleRepositoryUpsertGeneratesIDForEmptyInput(t *testing.T) {
 	}
 }
 
-func TestProfileRepositoryCreateVersionAndActivate(t *testing.T) {
+func TestProfileRepositoryCreateVersionAndGetActive(t *testing.T) {
 	db := newTestDB(t)
 	if err := db.AutoMigrate(&models.ProfileVersionModel{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
@@ -118,7 +118,7 @@ func TestProfileRepositoryCreateVersionAndActivate(t *testing.T) {
 	}
 }
 
-func TestProfileRepositoryActivateSwitchesActiveVersion(t *testing.T) {
+func TestProfileRepositoryCreateActiveVersionSwitchesActive(t *testing.T) {
 	db := newTestDB(t)
 	if err := db.AutoMigrate(&models.ProfileVersionModel{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
@@ -129,21 +129,23 @@ func TestProfileRepositoryActivateSwitchesActiveVersion(t *testing.T) {
 	if err := repo.Create(ctx, profile.Version{ProfileType: "ai", Name: "default-ai", Version: 1, IsActive: true, PayloadJSON: []byte(`{"model":"gpt-4.1-mini"}`)}); err != nil {
 		t.Fatalf("create v1: %v", err)
 	}
-	if err := repo.Create(ctx, profile.Version{ProfileType: "ai", Name: "default-ai", Version: 2, IsActive: false, PayloadJSON: []byte(`{"model":"gpt-5-mini"}`)}); err != nil {
+	if err := repo.Create(ctx, profile.Version{ProfileType: "ai", Name: "default-ai", Version: 2, IsActive: true, PayloadJSON: []byte(`{"model":"gpt-5-mini"}`)}); err != nil {
 		t.Fatalf("create v2: %v", err)
 	}
 
-	if err := repo.Activate(ctx, "ai", 2); err != nil {
-		t.Fatalf("activate v2: %v", err)
+	var activeCount int64
+	if err := db.Model(&models.ProfileVersionModel{}).Where("profile_type = ? AND is_active = ?", "ai", true).Count(&activeCount).Error; err != nil {
+		t.Fatalf("count active: %v", err)
 	}
+	if activeCount != 1 {
+		t.Fatalf("want exactly 1 active version, got %d", activeCount)
+	}
+
 	active, err := repo.GetActive(ctx, "ai")
 	if err != nil {
 		t.Fatalf("get active: %v", err)
 	}
 	if active.Version != 2 {
 		t.Fatalf("want version 2 got %d", active.Version)
-	}
-	if active.Name != "default-ai" {
-		t.Fatalf("want default-ai got %s", active.Name)
 	}
 }

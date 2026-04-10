@@ -17,8 +17,7 @@ CREATE TABLE profile_versions (
   name TEXT NOT NULL,
   version INT NOT NULL,
   is_active BOOLEAN NOT NULL DEFAULT FALSE,
-  payload_json JSONB NOT NULL,
-  CONSTRAINT uq_profile_versions_type_name_version UNIQUE (profile_type, name, version)
+  payload_json JSONB NOT NULL
 );
 
-CREATE INDEX idx_profile_versions_type_active ON profile_versions (profile_type, is_active);
+CREATE INDEX idx_profile_versions_profile_type ON profile_versions (profile_type);
