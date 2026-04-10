@@ -6,23 +6,19 @@ import (
 	"fmt"
 
 	"github.com/hibiken/asynq"
-
-	workflow "rss-platform/internal/workflow/article_processing_workflow"
 )
 
-// ArticleWorkflow 定义异步任务所需的工作流能力。
-type ArticleWorkflow interface {
-	Run(ctx context.Context, input workflow.Input) (workflow.ProcessedArticle, error)
-}
+// ProcessArticleFunc 定义异步任务处理所需的最小回调能力。
+type ProcessArticleFunc func(ctx context.Context, articleID string) error
 
 // ArticleProcessingHandler 负责消费文章处理任务。
 type ArticleProcessingHandler struct {
-	workflow ArticleWorkflow
+	process ProcessArticleFunc
 }
 
 // NewArticleProcessingHandler 创建文章处理 handler。
-func NewArticleProcessingHandler(workflow ArticleWorkflow) *ArticleProcessingHandler {
-	return &ArticleProcessingHandler{workflow: workflow}
+func NewArticleProcessingHandler(process ProcessArticleFunc) *ArticleProcessingHandler {
+	return &ArticleProcessingHandler{process: process}
 }
 
 // Handler 返回可注册到 asynq 的 handler。
@@ -30,7 +26,7 @@ func (h *ArticleProcessingHandler) Handler() asynq.Handler {
 	return asynq.HandlerFunc(h.ProcessTask)
 }
 
-// ProcessTask 执行单篇文章处理工作流。
+// ProcessTask 解包任务并转交文章 ID 给回调。
 func (h *ArticleProcessingHandler) ProcessTask(ctx context.Context, task *asynq.Task) error {
 	if task.Type() != TypeProcessArticle {
 		return fmt.Errorf("unexpected task type %q", task.Type())
@@ -41,6 +37,9 @@ func (h *ArticleProcessingHandler) ProcessTask(ctx context.Context, task *asynq.
 		return err
 	}
 
-	_, err := h.workflow.Run(ctx, workflow.Input{Article: payload.Article})
-	return err
+	if h.process == nil {
+		return nil
+	}
+
+	return h.process(ctx, payload.ArticleID)
 }
