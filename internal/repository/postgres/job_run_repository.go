@@ -12,7 +12,7 @@ import (
 
 // JobRunRecord 表示作业运行记录。
 type JobRunRecord struct {
-	ID            uint64
+	ID            string
 	JobType       string
 	TriggerSource string
 	Status        string
@@ -60,7 +60,7 @@ func (r *JobRunRepository) Create(ctx context.Context, record JobRunRecord) erro
 	}
 
 	model := models.JobRunModel{
-		ID:            ensureID(""),
+		ID:            ensureID(record.ID),
 		JobType:       record.JobType,
 		TriggerSource: record.TriggerSource,
 		Status:        record.Status,
@@ -136,6 +136,7 @@ func mapJobRunModel(model models.JobRunModel) (JobRunRecord, error) {
 	}
 
 	record := JobRunRecord{
+		ID:            model.ID,
 		JobType:       model.JobType,
 		TriggerSource: model.TriggerSource,
 		Status:        model.Status,

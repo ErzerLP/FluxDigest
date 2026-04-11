@@ -4,7 +4,7 @@ CREATE TABLE job_runs (
   trigger_source TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
   digest_date DATE,
-  detail_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  detail_json JSONB NOT NULL DEFAULT '{}',
   error_message TEXT NOT NULL DEFAULT '',
   requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   started_at TIMESTAMPTZ,

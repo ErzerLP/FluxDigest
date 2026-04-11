@@ -18,6 +18,11 @@ type JobRunLatestFinder interface {
 	LatestByType(ctx context.Context, jobType string) (JobRunRecord, error)
 }
 
+// DigestLatestFinder 定义最新日报查询所需的最小能力。
+type DigestLatestFinder interface {
+	LatestDigest(ctx context.Context) (DigestView, error)
+}
+
 // AdminStatusView 表示管理后台状态视图。
 type AdminStatusView struct {
 	System       SystemStatusView      `json:"system"`
@@ -57,11 +62,17 @@ type RuntimeStatusView struct {
 type AdminStatusService struct {
 	configs AdminStatusConfigReader
 	jobs    JobRunLatestFinder
+	digests DigestLatestFinder
 }
 
 // NewAdminStatusService 创建 AdminStatusService。
 func NewAdminStatusService(configs AdminStatusConfigReader, jobs JobRunLatestFinder) *AdminStatusService {
-	return &AdminStatusService{configs: configs, jobs: jobs}
+	return NewAdminStatusServiceWithDigest(configs, jobs, nil)
+}
+
+// NewAdminStatusServiceWithDigest 创建 AdminStatusService，允许注入 digest 查询能力。
+func NewAdminStatusServiceWithDigest(configs AdminStatusConfigReader, jobs JobRunLatestFinder, digests DigestLatestFinder) *AdminStatusService {
+	return &AdminStatusService{configs: configs, jobs: jobs, digests: digests}
 }
 
 // GetStatus 返回后台状态视图。
@@ -82,6 +93,11 @@ func (s *AdminStatusService) GetStatus(ctx context.Context) (AdminStatusView, er
 		latestLLMTest, _ = s.jobs.LatestByType(ctx, "llm_test")
 	}
 
+	latestDigest := DigestView{}
+	if s.digests != nil {
+		latestDigest, _ = s.digests.LatestDigest(ctx)
+	}
+
 	llmConfigured := snapshot.LLM.BaseURL != "" && snapshot.LLM.APIKey.IsSet
 
 	return AdminStatusView{
@@ -98,8 +114,8 @@ func (s *AdminStatusService) GetStatus(ctx context.Context) (AdminStatusView, er
 			},
 		},
 		Runtime: RuntimeStatusView{
-			LatestDigestDate:   latestRun.DigestDate,
-			LatestDigestStatus: latestRun.Status,
+			LatestDigestDate:   latestDigest.DigestDate,
+			LatestDigestStatus: latestDigest.PublishState,
 			LatestJobStatus:    latestRun.Status,
 		},
 	}, nil

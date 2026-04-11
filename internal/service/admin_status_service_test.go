@@ -38,6 +38,18 @@ func (s jobRunRepoStub) LatestByType(_ context.Context, jobType string) (service
 	return service.JobRunRecord{}, errors.New("not found")
 }
 
+type digestLatestStub struct {
+	view service.DigestView
+	err  error
+}
+
+func (s digestLatestStub) LatestDigest(_ context.Context) (service.DigestView, error) {
+	if s.err != nil {
+		return service.DigestView{}, s.err
+	}
+	return s.view, nil
+}
+
 func mustRFC3339(value string) time.Time {
 	parsed, err := time.Parse(time.RFC3339, value)
 	if err != nil {
@@ -52,7 +64,7 @@ func TestAdminStatusServiceBuildsDashboardState(t *testing.T) {
 		"llm_test":         {JobType: "llm_test", Status: "ok", FinishedAt: mustRFC3339("2026-04-11T18:00:00+08:00")},
 		"daily_digest_run": {JobType: "daily_digest_run", Status: "succeeded", DigestDate: "2026-04-11"},
 	}}
-	svc := service.NewAdminStatusService(configs, jobs)
+	svc := service.NewAdminStatusServiceWithDigest(configs, jobs, digestLatestStub{view: service.DigestView{DigestDate: "2026-04-11", PublishState: "published"}})
 
 	status, err := svc.GetStatus(context.Background())
 	if err != nil {
@@ -63,5 +75,8 @@ func TestAdminStatusServiceBuildsDashboardState(t *testing.T) {
 	}
 	if status.Runtime.LatestJobStatus != "succeeded" {
 		t.Fatalf("want succeeded got %q", status.Runtime.LatestJobStatus)
+	}
+	if status.Runtime.LatestDigestStatus != "published" {
+		t.Fatalf("want published got %q", status.Runtime.LatestDigestStatus)
 	}
 }

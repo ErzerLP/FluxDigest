@@ -41,4 +41,28 @@ func TestJobRunRepositoryCreateAndListLatest(t *testing.T) {
 	if len(runs) != 1 || runs[0].JobType != "daily_digest_run" {
 		t.Fatalf("unexpected runs %#v", runs)
 	}
+	if runs[0].ID == "" {
+		t.Fatalf("expected generated id, got empty")
+	}
+}
+
+func TestJobRunRepositoryCreatePreservesID(t *testing.T) {
+	db := newJobRunTestDB(t)
+	if err := db.AutoMigrate(&models.JobRunModel{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	repo := postgres.NewJobRunRepository(db)
+
+	input := service.JobRunRecord{ID: "run-123", JobType: "llm_test", Status: "ok"}
+	if err := repo.Create(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := repo.ListLatest(context.Background(), service.JobRunListFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].ID != "run-123" {
+		t.Fatalf("unexpected runs %#v", runs)
+	}
 }

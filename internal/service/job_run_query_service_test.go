@@ -55,6 +55,9 @@ func TestJobRunQueryServiceListLatest(t *testing.T) {
 	if runs[0].JobType != "llm_test" {
 		t.Fatalf("want latest llm_test got %s", runs[0].JobType)
 	}
+	if runs[0].ID != "run-2" {
+		t.Fatalf("want latest id run-2 got %s", runs[0].ID)
+	}
 	if runs[1].DigestDate != "2026-04-10" {
 		t.Fatalf("want digest date 2026-04-10 got %s", runs[1].DigestDate)
 	}

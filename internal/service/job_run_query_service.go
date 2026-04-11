@@ -77,6 +77,7 @@ func mapJobRunModelToRecord(model models.JobRunModel) (JobRunRecord, error) {
 	}
 
 	record := JobRunRecord{
+		ID:            model.ID,
 		JobType:       model.JobType,
 		TriggerSource: model.TriggerSource,
 		Status:        model.Status,
