@@ -1,8 +1,10 @@
-package postgres_test
+package postgres
 
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,8 +13,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"rss-platform/internal/repository/postgres"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -40,7 +40,7 @@ DELETE FROM widgets;
 		t.Fatal(err)
 	}
 
-	migrator := postgres.NewMigrator(db, tempDir)
+	migrator := NewMigrator(db, tempDir)
 	if err := migrator.Migrate(context.Background()); err != nil {
 		t.Fatalf("first migrate: %v", err)
 	}
@@ -68,7 +68,7 @@ DELETE FROM widgets;
 func TestMigratorWithLockSerializesSQLiteFallback(t *testing.T) {
 	tempDir := t.TempDir()
 	db := openSQLiteDB(t, filepath.Join(tempDir, "runtime.db"))
-	migrator := postgres.NewMigrator(db, tempDir)
+	migrator := NewMigrator(db, tempDir)
 
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -118,7 +118,7 @@ func TestMigratorWithLockSerializesSQLiteFallback(t *testing.T) {
 func TestMigratorAppliesRealRuntimeStateMigration(t *testing.T) {
 	tempDir := t.TempDir()
 	db := openSQLiteDB(t, filepath.Join(tempDir, "runtime.db"))
-	migrator := postgres.NewMigrator(db, projectMigrationsDir(t))
+	migrator := NewMigrator(db, projectMigrationsDir(t))
 
 	if err := migrator.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate project files: %v", err)
@@ -250,4 +250,88 @@ func projectMigrationsDir(t *testing.T) string {
 
 func writeMigrationFile(dir string, name string, contents string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o644)
+}
+
+func TestWithPostgresAdvisoryLockUsesSingleSessionConnection(t *testing.T) {
+	conn := &fakeAdvisoryConn{unlockResult: true}
+	migrator := &Migrator{
+		openAdvisoryConn: func(context.Context) (advisoryConn, error) {
+			return conn, nil
+		},
+	}
+
+	if err := migrator.withPostgresAdvisoryLock(context.Background(), func(context.Context) error {
+		if conn.closed {
+			t.Fatal("connection closed before callback finished")
+		}
+		conn.events = append(conn.events, "run")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"lock", "run", "unlock", "close"}
+	if strings.Join(conn.events, ",") != strings.Join(want, ",") {
+		t.Fatalf("want events %v got %v", want, conn.events)
+	}
+}
+
+func TestWithPostgresAdvisoryLockReturnsErrorWhenUnlockFails(t *testing.T) {
+	migrator := &Migrator{
+		openAdvisoryConn: func(context.Context) (advisoryConn, error) {
+			return &fakeAdvisoryConn{unlockResult: false}, nil
+		},
+	}
+
+	err := migrator.withPostgresAdvisoryLock(context.Background(), func(context.Context) error { return nil })
+	if err == nil {
+		t.Fatal("want unlock error")
+	}
+	if !strings.Contains(err.Error(), "bootstrap advisory unlock returned false") {
+		t.Fatalf("unexpected error %v", err)
+	}
+}
+
+type fakeAdvisoryConn struct {
+	events       []string
+	closed       bool
+	lockErr      error
+	unlockErr    error
+	unlockResult bool
+}
+
+func (c *fakeAdvisoryConn) ExecContext(_ context.Context, query string, _ ...any) (sql.Result, error) {
+	if strings.Contains(query, "pg_advisory_lock") {
+		c.events = append(c.events, "lock")
+		return driver.RowsAffected(1), c.lockErr
+	}
+	return nil, errors.New("unexpected exec query")
+}
+
+func (c *fakeAdvisoryConn) QueryRowContext(_ context.Context, query string, _ ...any) rowScanner {
+	if strings.Contains(query, "pg_advisory_unlock") {
+		c.events = append(c.events, "unlock")
+		return fakeRow{value: c.unlockResult, err: c.unlockErr}
+	}
+	return fakeRow{err: errors.New("unexpected query")}
+}
+
+func (c *fakeAdvisoryConn) Close() error {
+	c.closed = true
+	c.events = append(c.events, "close")
+	return nil
+}
+
+type fakeRow struct {
+	value bool
+	err   error
+}
+
+func (r fakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	ptr := dest[0].(*bool)
+	*ptr = r.value
+	return nil
 }
