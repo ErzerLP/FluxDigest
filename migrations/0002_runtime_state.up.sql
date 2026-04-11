@@ -8,7 +8,7 @@ CREATE TABLE article_processings (
   key_points_json JSONB NOT NULL,
   topic_category TEXT NOT NULL,
   importance_score DOUBLE PRECISION NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE daily_digests (
@@ -19,5 +19,5 @@ CREATE TABLE daily_digests (
   content_markdown TEXT NOT NULL,
   content_html TEXT NOT NULL,
   remote_url TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

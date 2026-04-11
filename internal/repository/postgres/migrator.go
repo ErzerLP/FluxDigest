@@ -3,12 +3,18 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
+
+const bootstrapAdvisoryLockID int64 = 676344581687673420
+
+var bootstrapFallbackLocks sync.Map
 
 type Migrator struct {
 	db            *sql.DB
@@ -20,6 +26,18 @@ func NewMigrator(db *sql.DB, migrationsDir string) *Migrator {
 		db:            db,
 		migrationsDir: migrationsDir,
 	}
+}
+
+func (m *Migrator) WithLock(ctx context.Context, run func(context.Context) error) error {
+	err := m.withPostgresAdvisoryLock(ctx, run)
+	if err == nil {
+		return nil
+	}
+	if !isAdvisoryLockUnsupported(err) {
+		return err
+	}
+
+	return m.withProcessLocalLock(ctx, run)
 }
 
 func (m *Migrator) Migrate(ctx context.Context) error {
@@ -47,6 +65,38 @@ func (m *Migrator) Migrate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (m *Migrator) withPostgresAdvisoryLock(ctx context.Context, run func(context.Context) error) error {
+	lockSQL := fmt.Sprintf("SELECT pg_advisory_lock(%d)", bootstrapAdvisoryLockID)
+	if _, err := m.db.ExecContext(ctx, lockSQL); err != nil {
+		return fmt.Errorf("acquire bootstrap advisory lock: %w", err)
+	}
+
+	runErr := run(ctx)
+
+	unlockSQL := fmt.Sprintf("SELECT pg_advisory_unlock(%d)", bootstrapAdvisoryLockID)
+	if _, err := m.db.ExecContext(ctx, unlockSQL); err != nil {
+		unlockErr := fmt.Errorf("release bootstrap advisory lock: %w", err)
+		if runErr != nil {
+			return errors.Join(runErr, unlockErr)
+		}
+		return unlockErr
+	}
+
+	return runErr
+}
+
+func (m *Migrator) withProcessLocalLock(ctx context.Context, run func(context.Context) error) error {
+	_ = ctx
+
+	key := filepath.Clean(m.migrationsDir)
+	lock, _ := bootstrapFallbackLocks.LoadOrStore(key, &sync.Mutex{})
+	mutex := lock.(*sync.Mutex)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	return run(ctx)
 }
 
 func (m *Migrator) listMigrationFiles() ([]string, error) {
@@ -83,6 +133,11 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 	}
 
 	return nil
+}
+
+func isAdvisoryLockUnsupported(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such function: pg_advisory_lock")
 }
 
 func (m *Migrator) loadAppliedMigrations(ctx context.Context) (map[string]bool, error) {

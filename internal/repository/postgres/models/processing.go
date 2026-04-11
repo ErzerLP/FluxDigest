@@ -12,7 +12,7 @@ type ArticleProcessingModel struct {
 	KeyPointsJSON     []byte    `gorm:"type:jsonb;not null"`
 	TopicCategory     string    `gorm:"not null"`
 	ImportanceScore   float64   `gorm:"not null"`
-	CreatedAt         time.Time `gorm:"not null;autoCreateTime"`
+	CreatedAt         time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;autoCreateTime"`
 }
 
 func (ArticleProcessingModel) TableName() string {
