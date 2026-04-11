@@ -16,6 +16,7 @@ type routerConfig struct {
 	digestReader  handlers.DigestReader
 	profileReader handlers.ProfileReader
 	jobTrigger    handlers.JobTrigger
+	admin         handlers.AdminDeps
 	metrics       *telemetry.Metrics
 }
 
@@ -57,6 +58,13 @@ func WithJobTrigger(trigger handlers.JobTrigger) Option {
 	}
 }
 
+// WithAdminDeps 注入 admin 路由依赖。
+func WithAdminDeps(deps handlers.AdminDeps) Option {
+	return func(cfg *routerConfig) {
+		cfg.admin = deps
+	}
+}
+
 // WithMetrics 注入 metrics 导出器。
 func WithMetrics(metrics *telemetry.Metrics) Option {
 	return func(cfg *routerConfig) {
@@ -82,6 +90,7 @@ func NewRouter(options ...Option) *gin.Engine {
 	handlers.RegisterArticleRoutes(apiV1, cfg.articleReader)
 	handlers.RegisterDigestRoutes(apiV1, cfg.digestReader)
 	handlers.RegisterProfileRoutes(apiV1, cfg.profileReader)
+	handlers.RegisterAdminRoutes(apiV1, cfg.admin)
 
 	jobs := apiV1.Group("")
 	if cfg.apiKey != "" {

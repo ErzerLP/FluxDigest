@@ -54,9 +54,6 @@ func main() {
 	if cfg.Miniflux.AuthToken == "" {
 		log.Fatal("APP_MINIFLUX_AUTH_TOKEN is required")
 	}
-	if cfg.LLM.Model == "" {
-		log.Fatal("APP_LLM_MODEL is required")
-	}
 
 	runtimeSvc, dbCloser, err := buildRuntimeService(context.Background(), cfg)
 	if err != nil {
@@ -102,10 +99,21 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 		return nil, nil, err
 	}
 
+	runtimeConfigs := service.NewRuntimeConfigService(postgres.NewProfileRepository(db), cfg)
+	runtimeSnapshot, err := runtimeConfigs.Snapshot(ctx)
+	if err != nil {
+		_ = sqlDB.Close()
+		return nil, nil, err
+	}
+	if runtimeSnapshot.LLM.Model == "" {
+		_ = sqlDB.Close()
+		return nil, nil, errors.New("APP_LLM_MODEL is required")
+	}
+
 	chatModel, err := llmadapter.NewChatModel(ctx, llmadapter.FactoryConfig{
-		BaseURL: cfg.LLM.BaseURL,
-		APIKey:  cfg.LLM.APIKey,
-		Model:   cfg.LLM.Model,
+		BaseURL: runtimeSnapshot.LLM.BaseURL,
+		APIKey:  runtimeSnapshot.LLM.APIKey,
+		Model:   runtimeSnapshot.LLM.Model,
 	})
 	if err != nil {
 		_ = sqlDB.Close()

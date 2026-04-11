@@ -76,6 +76,96 @@ paths:
                 $ref: '#/components/schemas/Profile'
         '503':
           description: Profile reader is not configured
+  /api/v1/admin/status:
+    get:
+      summary: Get admin dashboard status
+      responses:
+        '200':
+          description: Admin dashboard status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStatus'
+        '503':
+          description: Admin status reader is not configured
+  /api/v1/admin/configs:
+    get:
+      summary: Get admin configuration snapshot
+      responses:
+        '200':
+          description: Admin configuration snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminConfigSnapshot'
+        '503':
+          description: Admin config reader is not configured
+  /api/v1/admin/configs/llm:
+    put:
+      summary: Update LLM admin config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLLMConfigInput'
+      responses:
+        '200':
+          description: Created active profile version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Update failed
+        '503':
+          description: Admin llm updater is not configured
+  /api/v1/admin/test/llm:
+    post:
+      summary: Test LLM connectivity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMTestDraft'
+      responses:
+        '200':
+          description: Connectivity test succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectivityTestResult'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Connectivity test failed
+        '503':
+          description: Admin llm tester is not configured
+  /api/v1/admin/jobs:
+    get:
+      summary: List recent admin job runs
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Recent job runs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobRunListResponse'
+        '400':
+          description: Invalid limit
+        '500':
+          description: Query failed
+        '503':
+          description: Admin job reader is not configured
   /api/v1/jobs/daily-digest:
     post:
       summary: Trigger daily digest job
@@ -190,6 +280,152 @@ components:
         payload:
           type: object
           additionalProperties: true
+    ProfileVersion:
+      type: object
+      properties:
+        id:
+          type: string
+        profile_type:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+        is_active:
+          type: boolean
+    SecretView:
+      type: object
+      properties:
+        is_set:
+          type: boolean
+        masked_value:
+          type: string
+    LLMConfigView:
+      type: object
+      properties:
+        base_url:
+          type: string
+        model:
+          type: string
+        api_key:
+          $ref: '#/components/schemas/SecretView'
+    AdminConfigSnapshot:
+      type: object
+      properties:
+        llm:
+          $ref: '#/components/schemas/LLMConfigView'
+    IntegrationState:
+      type: object
+      properties:
+        configured:
+          type: boolean
+        last_test_status:
+          type: string
+        last_test_at:
+          type: string
+          format: date-time
+    AdminStatus:
+      type: object
+      properties:
+        system:
+          type: object
+          properties:
+            api:
+              type: string
+            db:
+              type: string
+            redis:
+              type: string
+        integrations:
+          type: object
+          properties:
+            llm:
+              $ref: '#/components/schemas/IntegrationState'
+            miniflux:
+              $ref: '#/components/schemas/IntegrationState'
+            publisher:
+              $ref: '#/components/schemas/IntegrationState'
+        runtime:
+          type: object
+          properties:
+            latest_digest_date:
+              type: string
+              format: date
+            latest_digest_status:
+              type: string
+            latest_job_status:
+              type: string
+    SecretInput:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [keep, replace, clear]
+        value:
+          type: string
+    UpdateLLMConfigInput:
+      type: object
+      properties:
+        base_url:
+          type: string
+        model:
+          type: string
+        api_key:
+          $ref: '#/components/schemas/SecretInput'
+    LLMTestDraft:
+      type: object
+      properties:
+        base_url:
+          type: string
+        model:
+          type: string
+        api_key:
+          type: string
+    ConnectivityTestResult:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        latency_ms:
+          type: integer
+          format: int64
+    JobRunRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        job_type:
+          type: string
+        trigger_source:
+          type: string
+        status:
+          type: string
+        digest_date:
+          type: string
+          format: date
+        detail:
+          type: object
+          additionalProperties: true
+        error_message:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+    JobRunListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobRunRecord'
     JobTriggerResponse:
       type: object
       properties:

@@ -7,12 +7,16 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 
+	llmadapter "rss-platform/internal/adapter/llm"
 	"rss-platform/internal/app/api"
+	"rss-platform/internal/app/api/handlers"
 	"rss-platform/internal/config"
 	postgresrepo "rss-platform/internal/repository/postgres"
 	"rss-platform/internal/service"
@@ -89,9 +93,15 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, queue service.Daily
 		return nil, nil, err
 	}
 
+	profileRepo := postgresrepo.NewProfileRepository(db)
+	jobRunRepo := &adminJobRunRepoAdapter{repo: postgresrepo.NewJobRunRepository(db)}
 	articleQueryService := service.NewArticleQueryService(db)
 	digestQueryService := service.NewDigestQueryService(db)
 	profileQueryService := service.NewProfileQueryService(db)
+	adminConfigService := service.NewAdminConfigService(profileRepo)
+	adminStatusService := service.NewAdminStatusServiceWithDigest(adminConfigService, jobRunRepo, digestQueryService)
+	adminTestService := service.NewAdminTestService(adminLLMConnectivityChecker{}, nil, nil, jobRunRepo)
+	jobRunQueryService := service.NewJobRunQueryService(db)
 	router := api.NewRouter(
 		api.WithAPIKey(cfg.Job.APIKey),
 		api.WithMetrics(metrics),
@@ -99,6 +109,13 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, queue service.Daily
 		api.WithDigestReader(digestQueryService),
 		api.WithProfileReader(profileQueryService),
 		api.WithJobTrigger(service.NewJobService(queue, metrics)),
+		api.WithAdminDeps(handlers.AdminDeps{
+			Status:     adminStatusService,
+			Configs:    adminConfigService,
+			LLMUpdater: adminConfigService,
+			LLMTester:  adminTestService,
+			Jobs:       jobRunQueryService,
+		}),
 	)
 
 	return router, closer, nil
@@ -192,4 +209,68 @@ func (q dailyDigestQueue) EnqueueDailyDigest(ctx context.Context, digestDate str
 
 func dailyDigestTaskID(digestDate string) string {
 	return "daily-digest:" + digestDate
+}
+
+type adminLLMConnectivityChecker struct{}
+
+func (adminLLMConnectivityChecker) Check(ctx context.Context, draft service.LLMTestDraft) (time.Duration, error) {
+	startedAt := time.Now()
+	chatModel, err := llmadapter.NewChatModel(ctx, llmadapter.FactoryConfig{
+		BaseURL: draft.BaseURL,
+		APIKey:  draft.APIKey,
+		Model:   draft.Model,
+	})
+	if err != nil {
+		return time.Since(startedAt), err
+	}
+
+	_, err = chatModel.Generate(ctx, []*schema.Message{schema.UserMessage("ping")})
+	return time.Since(startedAt), err
+}
+
+type adminJobRunRepoAdapter struct {
+	repo *postgresrepo.JobRunRepository
+}
+
+func (a *adminJobRunRepoAdapter) LatestByType(ctx context.Context, jobType string) (service.JobRunRecord, error) {
+	if a == nil || a.repo == nil {
+		return service.JobRunRecord{}, nil
+	}
+
+	record, err := a.repo.LatestByType(ctx, jobType)
+	if err != nil {
+		return service.JobRunRecord{}, err
+	}
+
+	return service.JobRunRecord{
+		ID:            record.ID,
+		JobType:       record.JobType,
+		TriggerSource: record.TriggerSource,
+		Status:        record.Status,
+		DigestDate:    record.DigestDate,
+		Detail:        record.Detail,
+		ErrorMessage:  record.ErrorMessage,
+		RequestedAt:   record.RequestedAt,
+		StartedAt:     record.StartedAt,
+		FinishedAt:    record.FinishedAt,
+	}, nil
+}
+
+func (a *adminJobRunRepoAdapter) Create(ctx context.Context, record service.JobRunRecord) error {
+	if a == nil || a.repo == nil {
+		return nil
+	}
+
+	return a.repo.Create(ctx, postgresrepo.JobRunRecord{
+		ID:            record.ID,
+		JobType:       record.JobType,
+		TriggerSource: record.TriggerSource,
+		Status:        record.Status,
+		DigestDate:    record.DigestDate,
+		Detail:        record.Detail,
+		ErrorMessage:  record.ErrorMessage,
+		RequestedAt:   record.RequestedAt,
+		StartedAt:     record.StartedAt,
+		FinishedAt:    record.FinishedAt,
+	})
 }
