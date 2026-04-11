@@ -39,6 +39,18 @@ func (s adminLLMUpdaterStub) UpdateLLM(_ context.Context, _ service.UpdateLLMCon
 	return s.version, nil
 }
 
+type adminJobReaderStub struct {
+	items []service.JobRunRecord
+	err   error
+}
+
+func (s adminJobReaderStub) ListLatest(_ context.Context, _ service.JobRunListFilter) ([]service.JobRunRecord, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.items, nil
+}
+
 func TestAdminStatusRouteReturnsDashboardJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -122,5 +134,21 @@ func TestAdminUpdateLLMRouteReturnsProfileVersionContract(t *testing.T) {
 	}
 	if _, ok := body["payload_json"]; ok {
 		t.Fatalf("did not expect payload_json key in response: %#v", body)
+	}
+}
+
+func TestAdminJobsRouteRejectsNonPositiveLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
+		Jobs: adminJobReaderStub{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/jobs?limit=0", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 got %d body=%s", rec.Code, rec.Body.String())
 	}
 }

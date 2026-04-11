@@ -54,3 +54,67 @@ func TestRuntimeConfigServiceUsesProfilePayloadBeforeEnvDefaults(t *testing.T) {
 		t.Fatalf("want timezone UTC got %q", snapshot.Scheduler.Timezone)
 	}
 }
+
+func TestRuntimeConfigServiceKeepsFallbackForDefaultSeedEmptyValues(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeLLM: {
+			ProfileType: profile.TypeLLM,
+			Name:        "default-llm",
+			Version:     1,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"","model":"","api_key":""}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.LLM.BaseURL = "https://env.llm.local/v1"
+	defaults.LLM.Model = "gpt-env"
+	defaults.LLM.APIKey = "env-token"
+
+	svc := service.NewRuntimeConfigService(repo, defaults)
+	snapshot, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snapshot.LLM.BaseURL != "https://env.llm.local/v1" {
+		t.Fatalf("want fallback base_url got %q", snapshot.LLM.BaseURL)
+	}
+	if snapshot.LLM.Model != "gpt-env" {
+		t.Fatalf("want fallback model got %q", snapshot.LLM.Model)
+	}
+	if snapshot.LLM.APIKey != "env-token" {
+		t.Fatalf("want fallback api_key got %q", snapshot.LLM.APIKey)
+	}
+}
+
+func TestRuntimeConfigServiceAllowsAdminProfileToClearValues(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeLLM: {
+			ProfileType: profile.TypeLLM,
+			Name:        "admin-llm",
+			Version:     2,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"","model":"gpt-db","api_key":""}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.LLM.BaseURL = "https://env.llm.local/v1"
+	defaults.LLM.Model = "gpt-env"
+	defaults.LLM.APIKey = "env-token"
+
+	svc := service.NewRuntimeConfigService(repo, defaults)
+	snapshot, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snapshot.LLM.BaseURL != "" {
+		t.Fatalf("want cleared base_url got %q", snapshot.LLM.BaseURL)
+	}
+	if snapshot.LLM.APIKey != "" {
+		t.Fatalf("want cleared api_key got %q", snapshot.LLM.APIKey)
+	}
+	if snapshot.LLM.Model != "gpt-db" {
+		t.Fatalf("want db model got %q", snapshot.LLM.Model)
+	}
+}

@@ -148,6 +148,10 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
 				return
 			}
+			if parsed <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+				return
+			}
 			limit = parsed
 		}
 

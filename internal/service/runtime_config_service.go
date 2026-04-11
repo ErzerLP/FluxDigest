@@ -36,6 +36,11 @@ type RuntimeConfigService struct {
 	defaults *config.Config
 }
 
+type activeProfileSnapshot struct {
+	version profile.Version
+	payload map[string]any
+}
+
 // NewRuntimeConfigService 创建 RuntimeConfigService。
 func NewRuntimeConfigService(repo ProfileRepository, defaults *config.Config) *RuntimeConfigService {
 	return &RuntimeConfigService{repo: repo, defaults: defaults}
@@ -52,31 +57,35 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 		Scheduler: defaultSchedulerRuntimeConfig(),
 	}
 
-	llmPayload, err := s.activePayload(ctx, profile.TypeLLM)
+	llmProfile, err := s.activeProfile(ctx, profile.TypeLLM)
 	if err != nil {
 		return RuntimeSnapshot{}, err
 	}
-	if value := strings.TrimSpace(stringValue(llmPayload, "base_url")); value != "" {
+	if s.shouldUseExplicitStringOverride(llmProfile.version, "base_url", llmProfile.payload) {
+		snapshot.LLM.BaseURL = stringValue(llmProfile.payload, "base_url")
+	} else if value := strings.TrimSpace(stringValue(llmProfile.payload, "base_url")); value != "" {
 		snapshot.LLM.BaseURL = value
 	}
-	if value := strings.TrimSpace(stringValue(llmPayload, "api_key")); value != "" {
+	if s.shouldUseExplicitStringOverride(llmProfile.version, "api_key", llmProfile.payload) {
+		snapshot.LLM.APIKey = stringValue(llmProfile.payload, "api_key")
+	} else if value := strings.TrimSpace(stringValue(llmProfile.payload, "api_key")); value != "" {
 		snapshot.LLM.APIKey = value
 	}
-	if value := strings.TrimSpace(stringValue(llmPayload, "model")); value != "" {
+	if value := strings.TrimSpace(stringValue(llmProfile.payload, "model")); value != "" {
 		snapshot.LLM.Model = value
 	}
 
-	schedulerPayload, err := s.activePayload(ctx, profile.TypeScheduler)
+	schedulerProfile, err := s.activeProfile(ctx, profile.TypeScheduler)
 	if err != nil {
 		return RuntimeSnapshot{}, err
 	}
-	if value, ok := boolValue(schedulerPayload, "schedule_enabled"); ok {
+	if value, ok := boolValue(schedulerProfile.payload, "schedule_enabled"); ok {
 		snapshot.Scheduler.Enabled = value
 	}
-	if value := strings.TrimSpace(stringValue(schedulerPayload, "schedule_time")); value != "" {
+	if value := strings.TrimSpace(stringValue(schedulerProfile.payload, "schedule_time")); value != "" {
 		snapshot.Scheduler.ScheduleTime = value
 	}
-	if value := strings.TrimSpace(stringValue(schedulerPayload, "timezone")); value != "" {
+	if value := strings.TrimSpace(stringValue(schedulerProfile.payload, "timezone")); value != "" {
 		snapshot.Scheduler.Timezone = value
 	}
 
@@ -101,28 +110,28 @@ func (s *RuntimeConfigService) Scheduler(ctx context.Context) (SchedulerRuntimeC
 	return snapshot.Scheduler, nil
 }
 
-func (s *RuntimeConfigService) activePayload(ctx context.Context, profileType string) (map[string]any, error) {
+func (s *RuntimeConfigService) activeProfile(ctx context.Context, profileType string) (activeProfileSnapshot, error) {
 	if s == nil || s.repo == nil {
-		return map[string]any{}, nil
+		return activeProfileSnapshot{payload: map[string]any{}}, nil
 	}
 
 	version, err := s.repo.GetActive(ctx, profileType)
 	if err != nil {
 		if errors.Is(err, profile.ErrNotFound) {
-			return map[string]any{}, nil
+			return activeProfileSnapshot{payload: map[string]any{}}, nil
 		}
-		return nil, err
+		return activeProfileSnapshot{}, err
 	}
 
 	payload := map[string]any{}
 	if len(version.PayloadJSON) == 0 {
-		return payload, nil
+		return activeProfileSnapshot{version: version, payload: payload}, nil
 	}
 	if err := json.Unmarshal(version.PayloadJSON, &payload); err != nil {
-		return nil, err
+		return activeProfileSnapshot{}, err
 	}
 
-	return payload, nil
+	return activeProfileSnapshot{version: version, payload: payload}, nil
 }
 
 func (s *RuntimeConfigService) defaultLLMBaseURL() string {
@@ -164,4 +173,23 @@ func boolValue(payload map[string]any, key string) (bool, bool) {
 	}
 	cast, ok := value.(bool)
 	return cast, ok
+}
+
+func (s *RuntimeConfigService) shouldUseExplicitStringOverride(version profile.Version, key string, payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	value, ok := payload[key]
+	if !ok {
+		return false
+	}
+	_, isString := value.(string)
+	if !isString {
+		return false
+	}
+	return !isDefaultSeedProfile(version)
+}
+
+func isDefaultSeedProfile(version profile.Version) bool {
+	return version.Name == "default-"+version.ProfileType
 }

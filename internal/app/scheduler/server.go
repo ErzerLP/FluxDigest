@@ -27,6 +27,7 @@ type Server struct {
 	ticks          <-chan time.Time
 	stop           func()
 	loadLocation   func(name string) (*time.Location, error)
+	now            func() time.Time
 	lastDigestDate string
 }
 
@@ -47,6 +48,15 @@ func WithLocationLoader(loader func(string) (*time.Location, error)) Option {
 	}
 }
 
+// WithNowFunc 注入当前时间函数。
+func WithNowFunc(now func() time.Time) Option {
+	return func(s *Server) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
 // NewServer 创建调度循环。
 func NewServer(trigger Trigger, configs ConfigReader, options ...Option) *Server {
 	ticker := time.NewTicker(time.Minute)
@@ -56,6 +66,7 @@ func NewServer(trigger Trigger, configs ConfigReader, options ...Option) *Server
 		ticks:        ticker.C,
 		stop:         ticker.Stop,
 		loadLocation: time.LoadLocation,
+		now:          time.Now,
 	}
 	for _, option := range options {
 		option(server)
@@ -77,6 +88,10 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	defer s.Close()
 
+	if err := s.runOnce(ctx, s.currentTime()); err != nil {
+		// 启动检查失败时继续后续轮次，避免因瞬时错误直接退出。
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -86,7 +101,7 @@ func (s *Server) Run(ctx context.Context) error {
 				return nil
 			}
 			if err := s.runOnce(ctx, now); err != nil {
-				return err
+				continue
 			}
 		}
 	}
@@ -107,7 +122,11 @@ func (s *Server) runOnce(ctx context.Context, now time.Time) error {
 
 	location := s.resolveLocation(cfg.Timezone)
 	localNow := now.In(location)
-	if localNow.Format("15:04") != normalizeScheduleTime(cfg.ScheduleTime) {
+	scheduledAt, ok := scheduleTimeForDate(localNow, cfg.ScheduleTime)
+	if !ok {
+		return nil
+	}
+	if localNow.Before(scheduledAt) {
 		return nil
 	}
 
@@ -153,6 +172,21 @@ func normalizeScheduleTime(value string) string {
 	}
 
 	return parsed.Format("15:04")
+}
+
+func scheduleTimeForDate(now time.Time, value string) (time.Time, bool) {
+	parsed, err := time.Parse("15:04", normalizeScheduleTime(value))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Date(now.Year(), now.Month(), now.Day(), parsed.Hour(), parsed.Minute(), 0, 0, now.Location()), true
+}
+
+func (s *Server) currentTime() time.Time {
+	if s == nil || s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }
 
 func shanghaiLocation() *time.Location {
