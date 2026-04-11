@@ -13,6 +13,8 @@ type adminConfigProfileRepo interface {
 	GetActive(ctx context.Context, profileType string) (profile.Version, error)
 }
 
+var errAdminConfigRepoMissing = errors.New("admin config repo is required")
+
 // AdminConfigService 负责读取与更新管理员配置。
 type AdminConfigService struct {
 	repo adminConfigProfileRepo
@@ -46,37 +48,29 @@ type AdminConfigSnapshot struct {
 }
 
 type LLMConfigView struct {
-	BaseURL   string     `json:"base_url"`
-	Model     string     `json:"model"`
-	APIKey    SecretView `json:"api_key"`
-	Enabled   bool       `json:"is_enabled"`
-	TimeoutMS int        `json:"timeout_ms"`
-	Version   int        `json:"version"`
+	BaseURL string     `json:"base_url"`
+	Model   string     `json:"model"`
+	APIKey  SecretView `json:"api_key"`
 }
 
 type UpdateLLMConfigInput struct {
-	BaseURL   string      `json:"base_url"`
-	Model     string      `json:"model"`
-	APIKey    SecretInput `json:"api_key"`
-	Enabled   *bool       `json:"is_enabled,omitempty"`
-	TimeoutMS int         `json:"timeout_ms,omitempty"`
+	BaseURL string      `json:"base_url"`
+	Model   string      `json:"model"`
+	APIKey  SecretInput `json:"api_key"`
 }
 
 // GetSnapshot 返回管理员配置快照。
 func (s *AdminConfigService) GetSnapshot(ctx context.Context) (AdminConfigSnapshot, error) {
-	payload, version, err := s.loadProfile(ctx, profile.TypeLLM)
+	payload, _, err := s.loadProfile(ctx, profile.TypeLLM)
 	if err != nil {
 		return AdminConfigSnapshot{}, err
 	}
 
 	return AdminConfigSnapshot{
 		LLM: LLMConfigView{
-			BaseURL:   stringValue(payload, "base_url"),
-			Model:     stringValue(payload, "model"),
-			APIKey:    maskSecret(stringValue(payload, "api_key")),
-			Enabled:   boolValue(payload, "is_enabled", true),
-			TimeoutMS: intValue(payload, "timeout_ms", 30000),
-			Version:   version,
+			BaseURL: stringValue(payload, "base_url"),
+			Model:   stringValue(payload, "model"),
+			APIKey:  maskSecret(stringValue(payload, "api_key")),
 		},
 	}, nil
 }
@@ -91,16 +85,6 @@ func (s *AdminConfigService) UpdateLLM(ctx context.Context, input UpdateLLMConfi
 	payload := map[string]any{
 		"base_url": input.BaseURL,
 		"model":    input.Model,
-	}
-	if input.TimeoutMS > 0 {
-		payload["timeout_ms"] = input.TimeoutMS
-	} else if currentTimeout, ok := currentPayload["timeout_ms"]; ok {
-		payload["timeout_ms"] = currentTimeout
-	}
-	if input.Enabled != nil {
-		payload["is_enabled"] = *input.Enabled
-	} else if currentEnabled, ok := currentPayload["is_enabled"]; ok {
-		payload["is_enabled"] = currentEnabled
 	}
 
 	applySecret(payload, currentPayload, "api_key", input.APIKey)
@@ -127,7 +111,7 @@ func (s *AdminConfigService) UpdateLLM(ctx context.Context, input UpdateLLMConfi
 
 func (s *AdminConfigService) loadProfile(ctx context.Context, profileType string) (map[string]any, int, error) {
 	if s == nil || s.repo == nil {
-		return map[string]any{}, 0, nil
+		return nil, 0, errAdminConfigRepoMissing
 	}
 
 	version, err := s.repo.GetActive(ctx, profileType)
@@ -183,35 +167,6 @@ func stringValue(payload map[string]any, key string) string {
 		}
 	}
 	return ""
-}
-
-func boolValue(payload map[string]any, key string, fallback bool) bool {
-	if payload == nil {
-		return fallback
-	}
-	if value, ok := payload[key]; ok {
-		if cast, ok := value.(bool); ok {
-			return cast
-		}
-	}
-	return fallback
-}
-
-func intValue(payload map[string]any, key string, fallback int) int {
-	if payload == nil {
-		return fallback
-	}
-	if value, ok := payload[key]; ok {
-		switch cast := value.(type) {
-		case int:
-			return cast
-		case int64:
-			return int(cast)
-		case float64:
-			return int(cast)
-		}
-	}
-	return fallback
 }
 
 func nextVersion(current int) int {
