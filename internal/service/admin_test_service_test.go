@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -39,6 +40,8 @@ func (s *jobRunWriterStub) Create(_ context.Context, record service.JobRunRecord
 	return s.err
 }
 
+var errStub = errors.New("persist failed")
+
 func TestAdminTestServiceRecordsLLMResult(t *testing.T) {
 	checker := llmCheckerStub{latency: 850 * time.Millisecond}
 	repo := &jobRunWriterStub{}
@@ -53,5 +56,16 @@ func TestAdminTestServiceRecordsLLMResult(t *testing.T) {
 	}
 	if len(repo.created) != 1 || repo.created[0].JobType != "llm_test" {
 		t.Fatalf("unexpected records %#v", repo.created)
+	}
+}
+
+func TestAdminTestServiceReturnsErrorWhenPersistFails(t *testing.T) {
+	checker := llmCheckerStub{latency: 10 * time.Millisecond}
+	repo := &jobRunWriterStub{err: errStub}
+	svc := service.NewAdminTestService(checker, minifluxCheckerStub{}, publishCheckerStub{}, repo)
+
+	_, err := svc.TestLLM(context.Background(), service.LLMTestDraft{BaseURL: "https://llm.local/v1", Model: "gpt-4.1-mini", APIKey: "token"})
+	if err == nil {
+		t.Fatal("expected error when persist fails")
 	}
 }

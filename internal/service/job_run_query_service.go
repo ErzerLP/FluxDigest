@@ -2,97 +2,91 @@ package service
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
+	"time"
 
 	postgresrepo "rss-platform/internal/repository/postgres"
-	"rss-platform/internal/repository/postgres/models"
 
 	"gorm.io/gorm"
 )
 
 // JobRunRecord 表示作业运行记录。
-type JobRunRecord = postgresrepo.JobRunRecord
+type JobRunRecord struct {
+	ID            string         `json:"id"`
+	JobType       string         `json:"job_type"`
+	TriggerSource string         `json:"trigger_source"`
+	Status        string         `json:"status"`
+	DigestDate    string         `json:"digest_date"`
+	Detail        map[string]any `json:"detail"`
+	ErrorMessage  string         `json:"error_message"`
+	RequestedAt   time.Time      `json:"requested_at"`
+	StartedAt     time.Time      `json:"started_at"`
+	FinishedAt    time.Time      `json:"finished_at"`
+}
 
 // JobRunListFilter 表示作业查询过滤条件。
-type JobRunListFilter = postgresrepo.JobRunListFilter
+type JobRunListFilter struct {
+	Limit int
+}
+
+type jobRunReader interface {
+	ListLatest(ctx context.Context, filter JobRunListFilter) ([]JobRunRecord, error)
+}
 
 // JobRunQueryService 负责读取作业运行记录。
 type JobRunQueryService struct {
-	db *gorm.DB
+	reader jobRunReader
 }
 
 // NewJobRunQueryService 创建 JobRunQueryService。
 func NewJobRunQueryService(db *gorm.DB) *JobRunQueryService {
-	return &JobRunQueryService{db: db}
+	svc := &JobRunQueryService{}
+	if db != nil {
+		svc.reader = &jobRunRepoAdapter{repo: postgresrepo.NewJobRunRepository(db)}
+	}
+	return svc
 }
 
 // ListLatest 返回最新的作业运行记录。
 func (s *JobRunQueryService) ListLatest(ctx context.Context, filter JobRunListFilter) ([]JobRunRecord, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.reader == nil {
+		return []JobRunRecord{}, nil
+	}
+	return s.reader.ListLatest(ctx, filter)
+}
+
+type jobRunRepoAdapter struct {
+	repo *postgresrepo.JobRunRepository
+}
+
+func (a *jobRunRepoAdapter) ListLatest(ctx context.Context, filter JobRunListFilter) ([]JobRunRecord, error) {
+	if a == nil || a.repo == nil {
 		return []JobRunRecord{}, nil
 	}
 
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-
-	var modelsList []models.JobRunModel
-	err := s.db.WithContext(ctx).
-		Order("requested_at DESC").
-		Order("id DESC").
-		Limit(limit).
-		Find(&modelsList).Error
+	records, err := a.repo.ListLatest(ctx, postgresrepo.JobRunListFilter{Limit: filter.Limit})
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return []JobRunRecord{}, nil
-		}
 		return nil, err
 	}
 
-	records := make([]JobRunRecord, 0, len(modelsList))
-	for _, model := range modelsList {
-		record, err := mapJobRunModelToRecord(model)
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, record)
+	out := make([]JobRunRecord, 0, len(records))
+	for _, record := range records {
+		out = append(out, mapJobRunRecord(record))
 	}
 
-	return records, nil
+	return out, nil
 }
 
-func mapJobRunModelToRecord(model models.JobRunModel) (JobRunRecord, error) {
-	detail := map[string]any{}
-	if len(model.DetailJSON) > 0 {
-		if err := json.Unmarshal(model.DetailJSON, &detail); err != nil {
-			return JobRunRecord{}, err
-		}
+func mapJobRunRecord(record postgresrepo.JobRunRecord) JobRunRecord {
+	return JobRunRecord{
+		ID:            record.ID,
+		JobType:       record.JobType,
+		TriggerSource: record.TriggerSource,
+		Status:        record.Status,
+		DigestDate:    record.DigestDate,
+		Detail:        record.Detail,
+		ErrorMessage:  record.ErrorMessage,
+		RequestedAt:   record.RequestedAt,
+		StartedAt:     record.StartedAt,
+		FinishedAt:    record.FinishedAt,
 	}
-
-	digestDate := ""
-	if model.DigestDate != nil {
-		digestDate = model.DigestDate.Format("2006-01-02")
-	}
-
-	record := JobRunRecord{
-		ID:            model.ID,
-		JobType:       model.JobType,
-		TriggerSource: model.TriggerSource,
-		Status:        model.Status,
-		DigestDate:    digestDate,
-		Detail:        detail,
-		ErrorMessage:  model.ErrorMessage,
-		RequestedAt:   model.RequestedAt,
-	}
-
-	if model.StartedAt != nil {
-		record.StartedAt = *model.StartedAt
-	}
-	if model.FinishedAt != nil {
-		record.FinishedAt = *model.FinishedAt
-	}
-
-	return record, nil
 }

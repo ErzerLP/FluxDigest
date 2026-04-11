@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 var errAdminStatusSnapshotRequired = errors.New("admin config snapshot is required")
@@ -89,13 +91,22 @@ func (s *AdminStatusService) GetStatus(ctx context.Context) (AdminStatusView, er
 	latestRun := JobRunRecord{}
 	latestLLMTest := JobRunRecord{}
 	if s.jobs != nil {
-		latestRun, _ = s.jobs.LatestByType(ctx, "daily_digest_run")
-		latestLLMTest, _ = s.jobs.LatestByType(ctx, "llm_test")
+		latestRun, err = s.jobs.LatestByType(ctx, "daily_digest_run")
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return AdminStatusView{}, err
+		}
+		latestLLMTest, err = s.jobs.LatestByType(ctx, "llm_test")
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return AdminStatusView{}, err
+		}
 	}
 
 	latestDigest := DigestView{}
 	if s.digests != nil {
-		latestDigest, _ = s.digests.LatestDigest(ctx)
+		latestDigest, err = s.digests.LatestDigest(ctx)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return AdminStatusView{}, err
+		}
 	}
 
 	llmConfigured := snapshot.LLM.BaseURL != "" && snapshot.LLM.APIKey.IsSet

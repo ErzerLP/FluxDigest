@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"rss-platform/internal/service"
+
+	"gorm.io/gorm"
 )
 
 type adminConfigSnapshotStub struct {
@@ -35,7 +37,7 @@ func (s jobRunRepoStub) LatestByType(_ context.Context, jobType string) (service
 			return record, nil
 		}
 	}
-	return service.JobRunRecord{}, errors.New("not found")
+	return service.JobRunRecord{}, gorm.ErrRecordNotFound
 }
 
 type digestLatestStub struct {
@@ -78,5 +80,29 @@ func TestAdminStatusServiceBuildsDashboardState(t *testing.T) {
 	}
 	if status.Runtime.LatestDigestStatus != "published" {
 		t.Fatalf("want published got %q", status.Runtime.LatestDigestStatus)
+	}
+}
+
+func TestAdminStatusServiceAllowsNotFound(t *testing.T) {
+	configs := adminConfigSnapshotStub{snapshot: service.AdminConfigSnapshot{LLM: service.LLMConfigView{BaseURL: "https://llm.local/v1", APIKey: service.SecretView{IsSet: true}}}}
+	svc := service.NewAdminStatusServiceWithDigest(configs, jobRunRepoStub{}, digestLatestStub{err: gorm.ErrRecordNotFound})
+
+	status, err := svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Runtime.LatestDigestStatus != "" {
+		t.Fatalf("expected empty digest status got %q", status.Runtime.LatestDigestStatus)
+	}
+}
+
+func TestAdminStatusServiceReturnsErrorOnRepoFailure(t *testing.T) {
+	configs := adminConfigSnapshotStub{snapshot: service.AdminConfigSnapshot{LLM: service.LLMConfigView{BaseURL: "https://llm.local/v1", APIKey: service.SecretView{IsSet: true}}}}
+	err := errors.New("db down")
+	svc := service.NewAdminStatusServiceWithDigest(configs, jobRunRepoStub{err: err}, digestLatestStub{})
+
+	_, got := svc.GetStatus(context.Background())
+	if !errors.Is(got, err) {
+		t.Fatalf("expected error %v got %v", err, got)
 	}
 }

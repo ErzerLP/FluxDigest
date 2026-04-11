@@ -61,16 +61,17 @@ func (s *AdminTestService) TestLLM(ctx context.Context, draft LLMTestDraft) (Con
 		return ConnectivityTestResult{}, errAdminTestLLMRequired
 	}
 
-	latency, err := s.llm.Check(ctx, draft)
+	latency, checkErr := s.llm.Check(ctx, draft)
 	result := ConnectivityTestResult{Status: "ok", Message: "connection succeeded", LatencyMS: latency.Milliseconds()}
-	if err != nil {
+	if checkErr != nil {
 		result.Status = "error"
-		result.Message = err.Error()
+		result.Message = checkErr.Error()
 	}
 
 	now := time.Now()
+	var persistErr error
 	if s.jobs != nil {
-		_ = s.jobs.Create(ctx, JobRunRecord{
+		persistErr = s.jobs.Create(ctx, JobRunRecord{
 			JobType:     "llm_test",
 			Status:      result.Status,
 			Detail:      map[string]any{"message": result.Message, "latency_ms": result.LatencyMS},
@@ -79,8 +80,15 @@ func (s *AdminTestService) TestLLM(ctx context.Context, draft LLMTestDraft) (Con
 		})
 	}
 
-	if err != nil {
-		return result, err
+	if checkErr != nil && persistErr != nil {
+		return result, errors.Join(checkErr, persistErr)
 	}
+	if persistErr != nil {
+		return result, persistErr
+	}
+	if checkErr != nil {
+		return result, checkErr
+	}
+
 	return result, nil
 }
