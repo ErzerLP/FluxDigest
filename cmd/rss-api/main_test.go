@@ -222,7 +222,7 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 		t.Fatalf("want publish_state published got %#v", digestBody["publish_state"])
 	}
 
-	profileReq := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/ai/active", nil)
+	profileReq := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/llm/active", nil)
 	profileRec := httptest.NewRecorder()
 	router.ServeHTTP(profileRec, profileReq)
 	if profileRec.Code != http.StatusOK {
@@ -233,7 +233,7 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	if err := json.Unmarshal(profileRec.Body.Bytes(), &profileBody); err != nil {
 		t.Fatalf("unmarshal profile: %v", err)
 	}
-	if profileBody["name"] != "default-ai" {
-		t.Fatalf("want default-ai got %#v", profileBody["name"])
+	if profileBody["name"] != "default-llm" {
+		t.Fatalf("want default-llm got %#v", profileBody["name"])
 	}
 }
