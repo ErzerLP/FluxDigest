@@ -52,6 +52,14 @@ type AdminDeps struct {
 	Jobs       AdminJobReader
 }
 
+type profileVersionResponse struct {
+	ID          string `json:"id"`
+	ProfileType string `json:"profile_type"`
+	Name        string `json:"name"`
+	Version     int    `json:"version"`
+	IsActive    bool   `json:"is_active"`
+}
+
 // RegisterAdminRoutes 注册管理后台接口。
 func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 	admin := group.Group("/admin")
@@ -103,7 +111,7 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 			return
 		}
 
-		c.JSON(http.StatusOK, version)
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
 	})
 
 	admin.POST("/test/llm", func(c *gin.Context) {
@@ -151,4 +159,14 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 
 		c.JSON(http.StatusOK, gin.H{"items": runs})
 	})
+}
+
+func toProfileVersionResponse(version profile.Version) profileVersionResponse {
+	return profileVersionResponse{
+		ID:          version.ID,
+		ProfileType: version.ProfileType,
+		Name:        version.Name,
+		Version:     version.Version,
+		IsActive:    version.IsActive,
+	}
 }
