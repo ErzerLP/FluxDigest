@@ -94,7 +94,7 @@ func (p *ArticleProcessor) Analyze(ctx context.Context, input article.SourceArti
 		return processing.Analysis{}, errChatInvokerRequired
 	}
 
-	prompt, err := buildPrompt(p.analysisTemplate, input, `仅输出 JSON：{"core_summary":"","key_points":[],"topic_category":"","importance_score":0}`)
+	prompt, err := buildPrompt(p.analysisTemplate, input, "")
 	if err != nil {
 		return processing.Analysis{}, err
 	}

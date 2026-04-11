@@ -2,6 +2,7 @@ package llm_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"rss-platform/internal/adapter/llm"
@@ -43,5 +44,31 @@ func TestArticleProcessorParsesTranslationAndAnalysisJSON(t *testing.T) {
 	}
 	if len(model.calls) != 2 {
 		t.Fatalf("want 2 calls got %d", len(model.calls))
+	}
+}
+
+func TestArticleProcessorAnalyzePromptUsesUnifiedSchema(t *testing.T) {
+	model := &chatModelStub{responses: []string{
+		`{"core_summary":"核心总结","key_points":["a"],"topic_category":"AI","importance_score":0.9}`,
+	}}
+	processor := llm.NewArticleProcessor(model, "configs/prompts/translation.tmpl", "configs/prompts/analysis.tmpl")
+
+	_, err := processor.Analyze(context.Background(), article.SourceArticle{Title: "Original", ContentText: "Hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(model.calls) != 1 {
+		t.Fatalf("want 1 call got %d", len(model.calls))
+	}
+
+	prompt := model.calls[0]
+	if strings.Contains(prompt, `"risks"`) || strings.Contains(prompt, `"audience"`) {
+		t.Fatalf("analysis prompt should not contain legacy schema, got %s", prompt)
+	}
+	if !strings.Contains(prompt, `"core_summary"`) || !strings.Contains(prompt, `"topic_category"`) || !strings.Contains(prompt, `"importance_score"`) {
+		t.Fatalf("analysis prompt should contain unified schema, got %s", prompt)
+	}
+	if strings.Count(prompt, `"core_summary"`) != 1 {
+		t.Fatalf("analysis prompt should contain exactly one schema contract, got %s", prompt)
 	}
 }
