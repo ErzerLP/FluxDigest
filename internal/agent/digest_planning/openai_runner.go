@@ -1,0 +1,59 @@
+package digest_planning
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+)
+
+var errPromptRunnerRequired = errors.New("digest planning prompt runner is required")
+
+// PromptRunner 定义最小文本生成边界。
+type PromptRunner interface {
+	Generate(ctx context.Context, prompt string) (string, error)
+}
+
+// OpenAIRunner 负责把原始 JSON 响应解析为 Plan。
+type OpenAIRunner struct {
+	runner PromptRunner
+}
+
+// NewOpenAIRunner 创建规划执行器。
+func NewOpenAIRunner(runner PromptRunner) *OpenAIRunner {
+	return &OpenAIRunner{runner: runner}
+}
+
+// Run 执行 prompt 并解析结构化日报规划。
+func (r *OpenAIRunner) Run(ctx context.Context, prompt string) (Plan, error) {
+	if r == nil || r.runner == nil {
+		return Plan{}, errPromptRunnerRequired
+	}
+
+	raw, err := r.runner.Generate(ctx, prompt)
+	if err != nil {
+		return Plan{}, err
+	}
+
+	var plan Plan
+	if err := json.Unmarshal([]byte(normalizePlanJSON(raw)), &plan); err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
+}
+
+func normalizePlanJSON(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	trimmed = strings.TrimSpace(trimmed)
+
+	start := strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start >= 0 && end >= start {
+		return trimmed[start : end+1]
+	}
+
+	return trimmed
+}

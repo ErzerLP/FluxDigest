@@ -12,6 +12,7 @@ import (
 type ProcessArticleFunc func(ctx context.Context, articleID string) error
 
 // DailyDigestFunc 定义日报任务处理所需的最小回调能力。
+// 具体执行时刻由回调内部自行决定并注入 runtime service。
 type DailyDigestFunc func(ctx context.Context, digestDate string) error
 
 // ArticleProcessingHandler 负责消费文章处理任务。

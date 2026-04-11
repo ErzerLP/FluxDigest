@@ -80,3 +80,26 @@ func TestDailyDigestHandlerPassesDigestDateToCallback(t *testing.T) {
 		t.Fatalf("want 2026-04-10 got %q", gotDigestDate)
 	}
 }
+
+func TestDailyDigestHandlerRunsRuntimeService(t *testing.T) {
+	called := 0
+	handler := asynqtask.NewDailyDigestHandler(func(_ context.Context, digestDate string) error {
+		called++
+		if digestDate != "2026-04-11" {
+			t.Fatalf("unexpected digest date %s", digestDate)
+		}
+		return nil
+	})
+
+	task, err := asynqtask.NewDailyDigestTask("2026-04-11")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := handler.ProcessTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	if called != 1 {
+		t.Fatalf("want 1 call got %d", called)
+	}
+}
