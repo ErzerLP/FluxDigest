@@ -21,6 +21,24 @@ export class AdminApiError extends Error {
   }
 }
 
+function extractAdminErrorMessage(payload: unknown, status: number) {
+  if (typeof payload === 'string' && payload.trim()) {
+    return payload.trim();
+  }
+
+  if (payload && typeof payload === 'object') {
+    if ('error' in payload && typeof payload.error === 'string' && payload.error.trim()) {
+      return payload.error;
+    }
+
+    if ('message' in payload && typeof payload.message === 'string' && payload.message.trim()) {
+      return payload.message;
+    }
+  }
+
+  return `Admin request failed with status ${status}`;
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   if (response.status === 204) {
     return undefined as T;
@@ -48,25 +66,19 @@ async function requestAdmin<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    let message = `Admin request failed with status ${response.status}`;
-
     try {
       const payload = await parseResponse<unknown>(response);
-      if (typeof payload === 'string' && payload.trim()) {
-        message = payload.trim();
-      } else if (
-        payload &&
-        typeof payload === 'object' &&
-        'message' in payload &&
-        typeof payload.message === 'string'
-      ) {
-        message = payload.message;
+      throw new AdminApiError(extractAdminErrorMessage(payload, response.status), response.status);
+    } catch (error) {
+      if (error instanceof AdminApiError) {
+        throw error;
       }
-    } catch {
-      // Ignore body parsing errors and use the default message.
-    }
 
-    throw new AdminApiError(message, response.status);
+      throw new AdminApiError(
+        `Admin request failed with status ${response.status}`,
+        response.status,
+      );
+    }
   }
 
   return parseResponse<T>(response);
