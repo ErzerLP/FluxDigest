@@ -9,3 +9,15 @@ job:
   queue: default
 worker:
   concurrency: 10
+miniflux:
+  base_url: https://miniflux.local
+  auth_token: change-me
+llm:
+  base_url: https://api.openai.com/v1
+  api_key: change-me
+  model: gpt-4.1-mini
+publish:
+  holo_endpoint: https://blog.local/api/posts
+  holo_token: change-me
+  channel: markdown
+  output_dir: data/output

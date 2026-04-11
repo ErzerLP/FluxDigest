@@ -26,6 +26,21 @@ type Config struct {
 	Worker struct {
 		Concurrency int `yaml:"concurrency"`
 	} `yaml:"worker"`
+	Miniflux struct {
+		BaseURL   string `yaml:"base_url"`
+		AuthToken string `yaml:"auth_token"`
+	} `yaml:"miniflux"`
+	LLM struct {
+		BaseURL string `yaml:"base_url"`
+		APIKey  string `yaml:"api_key"`
+		Model   string `yaml:"model"`
+	} `yaml:"llm"`
+	Publish struct {
+		HoloEndpoint string `yaml:"holo_endpoint"`
+		HoloToken    string `yaml:"holo_token"`
+		Channel      string `yaml:"channel"`
+		OutputDir    string `yaml:"output_dir"`
+	} `yaml:"publish"`
 }
 
 // Load 加载 YAML 与环境变量，并应用最小默认值。
@@ -77,6 +92,33 @@ func loadFromYAML(cfg *Config) error {
 	if fromFile.Worker.Concurrency != 0 {
 		cfg.Worker.Concurrency = fromFile.Worker.Concurrency
 	}
+	if fromFile.Miniflux.BaseURL != "" {
+		cfg.Miniflux.BaseURL = fromFile.Miniflux.BaseURL
+	}
+	if fromFile.Miniflux.AuthToken != "" {
+		cfg.Miniflux.AuthToken = fromFile.Miniflux.AuthToken
+	}
+	if fromFile.LLM.BaseURL != "" {
+		cfg.LLM.BaseURL = fromFile.LLM.BaseURL
+	}
+	if fromFile.LLM.APIKey != "" {
+		cfg.LLM.APIKey = fromFile.LLM.APIKey
+	}
+	if fromFile.LLM.Model != "" {
+		cfg.LLM.Model = fromFile.LLM.Model
+	}
+	if fromFile.Publish.HoloEndpoint != "" {
+		cfg.Publish.HoloEndpoint = fromFile.Publish.HoloEndpoint
+	}
+	if fromFile.Publish.HoloToken != "" {
+		cfg.Publish.HoloToken = fromFile.Publish.HoloToken
+	}
+	if fromFile.Publish.Channel != "" {
+		cfg.Publish.Channel = fromFile.Publish.Channel
+	}
+	if fromFile.Publish.OutputDir != "" {
+		cfg.Publish.OutputDir = fromFile.Publish.OutputDir
+	}
 
 	return nil
 }
@@ -108,6 +150,33 @@ func applyEnvOverrides(cfg *Config) error {
 			return err
 		}
 		cfg.Worker.Concurrency = concurrency
+	}
+	if value := os.Getenv("APP_MINIFLUX_BASE_URL"); value != "" {
+		cfg.Miniflux.BaseURL = value
+	}
+	if value := os.Getenv("APP_MINIFLUX_AUTH_TOKEN"); value != "" {
+		cfg.Miniflux.AuthToken = value
+	}
+	if value := os.Getenv("APP_LLM_BASE_URL"); value != "" {
+		cfg.LLM.BaseURL = value
+	}
+	if value := os.Getenv("APP_LLM_API_KEY"); value != "" {
+		cfg.LLM.APIKey = value
+	}
+	if value := os.Getenv("APP_LLM_MODEL"); value != "" {
+		cfg.LLM.Model = value
+	}
+	if value := os.Getenv("APP_PUBLISH_HOLO_ENDPOINT"); value != "" {
+		cfg.Publish.HoloEndpoint = value
+	}
+	if value := os.Getenv("APP_PUBLISH_HOLO_TOKEN"); value != "" {
+		cfg.Publish.HoloToken = value
+	}
+	if value := os.Getenv("APP_PUBLISH_CHANNEL"); value != "" {
+		cfg.Publish.Channel = value
+	}
+	if value := os.Getenv("APP_PUBLISH_OUTPUT_DIR"); value != "" {
+		cfg.Publish.OutputDir = value
 	}
 
 	return nil

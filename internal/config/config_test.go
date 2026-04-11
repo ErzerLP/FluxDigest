@@ -88,3 +88,31 @@ func TestLoadReadsConfigYAMLAndEnvOverrides(t *testing.T) {
 		t.Fatalf("want 9 got %d", cfg.Worker.Concurrency)
 	}
 }
+
+func TestLoadReadsMinifluxLLMAndPublishConfig(t *testing.T) {
+	t.Setenv("APP_MINIFLUX_BASE_URL", "https://miniflux.local")
+	t.Setenv("APP_MINIFLUX_AUTH_TOKEN", "miniflux-token")
+	t.Setenv("APP_LLM_BASE_URL", "https://llm.local/v1")
+	t.Setenv("APP_LLM_API_KEY", "llm-token")
+	t.Setenv("APP_PUBLISH_HOLO_ENDPOINT", "https://blog.local/api/posts")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Miniflux.BaseURL != "https://miniflux.local" {
+		t.Fatalf("unexpected base url %q", cfg.Miniflux.BaseURL)
+	}
+	if cfg.Miniflux.AuthToken != "miniflux-token" {
+		t.Fatalf("unexpected auth token %q", cfg.Miniflux.AuthToken)
+	}
+	if cfg.LLM.BaseURL != "https://llm.local/v1" {
+		t.Fatalf("unexpected llm base url %q", cfg.LLM.BaseURL)
+	}
+	if cfg.LLM.APIKey != "llm-token" {
+		t.Fatalf("unexpected llm api key %q", cfg.LLM.APIKey)
+	}
+	if cfg.Publish.HoloEndpoint != "https://blog.local/api/posts" {
+		t.Fatalf("unexpected publish endpoint %q", cfg.Publish.HoloEndpoint)
+	}
+}
