@@ -118,3 +118,29 @@ func TestRuntimeConfigServiceAllowsAdminProfileToClearValues(t *testing.T) {
 		t.Fatalf("want db model got %q", snapshot.LLM.Model)
 	}
 }
+
+func TestRuntimeConfigServiceAllowsAdminProfileToClearModel(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeLLM: {
+			ProfileType: profile.TypeLLM,
+			Name:        "admin-llm",
+			Version:     2,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"https://db.llm.local/v1","model":"","api_key":"db-token"}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.LLM.BaseURL = "https://env.llm.local/v1"
+	defaults.LLM.Model = "gpt-env"
+	defaults.LLM.APIKey = "env-token"
+
+	svc := service.NewRuntimeConfigService(repo, defaults)
+	snapshot, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snapshot.LLM.Model != "" {
+		t.Fatalf("want cleared model got %q", snapshot.LLM.Model)
+	}
+}

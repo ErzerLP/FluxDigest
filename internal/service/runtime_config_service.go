@@ -71,7 +71,9 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 	} else if value := strings.TrimSpace(stringValue(llmProfile.payload, "api_key")); value != "" {
 		snapshot.LLM.APIKey = value
 	}
-	if value := strings.TrimSpace(stringValue(llmProfile.payload, "model")); value != "" {
+	if s.shouldUseExplicitStringOverride(llmProfile.version, "model", llmProfile.payload) {
+		snapshot.LLM.Model = stringValue(llmProfile.payload, "model")
+	} else if value := strings.TrimSpace(stringValue(llmProfile.payload, "model")); value != "" {
 		snapshot.LLM.Model = value
 	}
 
