@@ -9,8 +9,12 @@ type DailyDigestModel struct {
 	Subtitle        string    `gorm:"not null"`
 	ContentMarkdown string    `gorm:"not null"`
 	ContentHTML     string    `gorm:"not null"`
+	RemoteID        string    `gorm:"not null;default:''"`
 	RemoteURL       string    `gorm:"not null;default:''"`
+	PublishState    string    `gorm:"not null;default:'failed'"`
+	PublishError    string    `gorm:"not null;default:''"`
 	CreatedAt       time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;autoCreateTime"`
+	UpdatedAt       time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;autoUpdateTime"`
 }
 
 func (DailyDigestModel) TableName() string {

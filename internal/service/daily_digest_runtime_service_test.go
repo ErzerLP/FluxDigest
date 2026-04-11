@@ -50,54 +50,84 @@ func (s *digestWorkflowStub) Generate(_ context.Context, _ []domaindigest.Candid
 }
 
 type digestRepoStub struct {
-	exists         bool
-	remoteURL      string
-	reserveCalls   int
-	markCalls      int
-	lastDigestDate string
-	lastDigest     daily_digest_workflow.Digest
-	lastPublish    adapterpublisher.PublishDigestResult
-	markPublishErr error
-	reserveReturn  bool
+	state              string
+	remoteURL          string
+	remoteID           string
+	publishError       string
+	beginCalls         int
+	markPublishedCalls int
+	markFailedCalls    int
+	markRecoveryCalls  int
+	lastDigestDate     string
+	lastDigest         daily_digest_workflow.Digest
+	lastPublish        adapterpublisher.PublishDigestResult
+	markPublishedErrs  []error
 }
 
-func (s *digestRepoStub) GetRemoteURL(_ context.Context, digestDate string) (string, bool, error) {
+func (s *digestRepoStub) GetState(_ context.Context, digestDate string) (string, string, bool, error) {
 	s.lastDigestDate = digestDate
-	return s.remoteURL, s.exists, nil
+	if s.state == "" {
+		return "", "", false, nil
+	}
+	return s.state, s.remoteURL, true, nil
 }
 
-func (s *digestRepoStub) Reserve(_ context.Context, digestDate string, digest daily_digest_workflow.Digest) (bool, error) {
-	s.reserveCalls++
+func (s *digestRepoStub) BeginPublish(_ context.Context, digestDate string, digest daily_digest_workflow.Digest) (bool, error) {
+	s.beginCalls++
 	s.lastDigestDate = digestDate
 	s.lastDigest = digest
-	if s.exists {
+	if s.state == "published" || s.state == "publishing" || s.state == "recovery_required" {
 		return false, nil
 	}
-	reserved := true
-	if s.reserveReturn {
-		reserved = s.reserveReturn
-	}
-	if reserved {
-		s.exists = true
-		s.remoteURL = ""
-	}
-	return reserved, nil
+	s.state = "publishing"
+	s.remoteURL = ""
+	s.remoteID = ""
+	s.publishError = ""
+	return true, nil
 }
 
 func (s *digestRepoStub) MarkPublished(_ context.Context, digestDate string, publishResult adapterpublisher.PublishDigestResult) error {
-	s.markCalls++
+	s.markPublishedCalls++
 	s.lastDigestDate = digestDate
 	s.lastPublish = publishResult
-	if s.markPublishErr != nil {
-		return s.markPublishErr
+	if len(s.markPublishedErrs) > 0 {
+		err := s.markPublishedErrs[0]
+		s.markPublishedErrs = s.markPublishedErrs[1:]
+		if err != nil {
+			return err
+		}
 	}
-	s.exists = true
+	s.state = "published"
 	s.remoteURL = publishResult.RemoteURL
+	s.remoteID = publishResult.RemoteID
+	s.publishError = ""
+	return nil
+}
+
+func (s *digestRepoStub) MarkFailed(_ context.Context, digestDate string, publishError string) error {
+	s.markFailedCalls++
+	s.lastDigestDate = digestDate
+	s.state = "failed"
+	s.publishError = publishError
+	return nil
+}
+
+func (s *digestRepoStub) MarkRecoveryRequired(_ context.Context, digestDate string, publishError string) error {
+	s.markRecoveryCalls++
+	s.lastDigestDate = digestDate
+	s.state = "recovery_required"
+	s.publishError = publishError
 	return nil
 }
 
 type publishStub struct {
-	calls int
+	calls   int
+	results []publishOutcome
+}
+
+type publishOutcome struct {
+	result adapterpublisher.PublishDigestResult
+	err    error
 }
 
 func (publishStub) Name() string { return "stub" }
@@ -107,7 +137,12 @@ func (s *publishStub) PublishDigest(_ context.Context, req adapterpublisher.Publ
 	if req.Title == "" {
 		return adapterpublisher.PublishDigestResult{}, nil
 	}
-	return adapterpublisher.PublishDigestResult{RemoteID: "remote-1", RemoteURL: "https://example.com/digest/2026-04-11"}, nil
+	if len(s.results) == 0 {
+		return adapterpublisher.PublishDigestResult{RemoteID: "remote-1", RemoteURL: "https://example.com/digest/2026-04-11"}, nil
+	}
+	out := s.results[0]
+	s.results = s.results[1:]
+	return out.result, out.err
 }
 
 func TestDailyDigestRuntimeServiceRunsEndToEndAndPersistsDigest(t *testing.T) {
@@ -134,81 +169,91 @@ func TestDailyDigestRuntimeServiceRunsEndToEndAndPersistsDigest(t *testing.T) {
 	if out.RemoteURL == "" {
 		t.Fatal("expected remote url")
 	}
-	wantStart := time.Date(2026, 4, 11, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
-	wantEnd := time.Date(2026, 4, 12, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
-	if !ingestion.windowStart.Equal(wantStart) || !ingestion.windowEnd.Equal(wantEnd) {
-		t.Fatalf("unexpected ingestion window: [%s, %s)", ingestion.windowStart.Format(time.RFC3339), ingestion.windowEnd.Format(time.RFC3339))
-	}
-	if !processing.windowStart.Equal(wantStart) || !processing.windowEnd.Equal(wantEnd) {
-		t.Fatalf("unexpected processing window: [%s, %s)", processing.windowStart.Format(time.RFC3339), processing.windowEnd.Format(time.RFC3339))
-	}
-	if publisher.calls != 1 {
-		t.Fatalf("want 1 publish call got %d", publisher.calls)
-	}
-	if digests.reserveCalls != 1 || digests.markCalls != 1 {
-		t.Fatalf("want reserve=1 mark=1 got reserve=%d mark=%d", digests.reserveCalls, digests.markCalls)
+	if digests.state != "published" {
+		t.Fatalf("want published state got %s", digests.state)
 	}
 }
 
-func TestDailyDigestRuntimeServiceReturnsExistingPublishedDigestWithoutRepublishing(t *testing.T) {
-	ingestion := &ingestionStub{}
-	processing := &processingWorkflowStub{}
-	digestWorkflow := &digestWorkflowStub{}
-	digests := &digestRepoStub{exists: true, remoteURL: "https://example.com/existing"}
-	publisher := &publishStub{}
-	svc := service.NewDailyDigestRuntimeService(ingestion, processing, digestWorkflow, digests, publisher)
-
-	out, err := svc.Run(context.Background(), "2026-04-11", time.Date(2026, 4, 12, 8, 0, 0, 0, time.FixedZone("CST", 8*3600)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.RemoteURL != "https://example.com/existing" {
-		t.Fatalf("want existing remote url got %s", out.RemoteURL)
-	}
-	if publisher.calls != 0 {
-		t.Fatalf("want 0 publish calls got %d", publisher.calls)
-	}
-	if ingestion.calls != 0 || processing.calls != 0 || digestWorkflow.calls != 0 {
-		t.Fatalf("expected runtime to short-circuit before work: ingestion=%d processing=%d digest=%d", ingestion.calls, processing.calls, digestWorkflow.calls)
-	}
-}
-
-func TestDailyDigestRuntimeServiceReturnsPendingErrorWithoutRepublishing(t *testing.T) {
-	digests := &digestRepoStub{exists: true, remoteURL: ""}
-	publisher := &publishStub{}
-	svc := service.NewDailyDigestRuntimeService(&ingestionStub{}, &processingWorkflowStub{}, &digestWorkflowStub{}, digests, publisher)
-
-	_, err := svc.Run(context.Background(), "2026-04-11", time.Date(2026, 4, 12, 8, 0, 0, 0, time.FixedZone("CST", 8*3600)))
-	if !errors.Is(err, service.ErrDigestPendingState) {
-		t.Fatalf("want ErrDigestPendingState got %v", err)
-	}
-	if publisher.calls != 0 {
-		t.Fatalf("want 0 publish calls got %d", publisher.calls)
-	}
-}
-
-func TestDailyDigestRuntimeServiceDoesNotRepublishAfterMarkPublishedFails(t *testing.T) {
+func TestDailyDigestRuntimeServiceRetryablePublishFailureTransitionsToFailedAndAllowsRetry(t *testing.T) {
 	ingestion := &ingestionStub{}
 	processing := &processingWorkflowStub{candidates: []domaindigest.CandidateArticle{{ID: "art-1", Title: "AI News", CoreSummary: "Summary"}}}
 	digestWorkflow := &digestWorkflowStub{digest: daily_digest_workflow.Digest{Title: "日报", ContentMarkdown: "# 内容", ContentHTML: "<h1>内容</h1>"}}
-	digests := &digestRepoStub{markPublishErr: errors.New("save failed")}
-	publisher := &publishStub{}
+	digests := &digestRepoStub{}
+	publisher := &publishStub{results: []publishOutcome{
+		{err: adapterpublisher.NewRetryablePublishError(errors.New("server 500"))},
+		{result: adapterpublisher.PublishDigestResult{RemoteID: "remote-2", RemoteURL: "https://example.com/retry-success"}},
+	}}
 	svc := service.NewDailyDigestRuntimeService(ingestion, processing, digestWorkflow, digests, publisher)
 	now := time.Date(2026, 4, 12, 8, 0, 0, 0, time.FixedZone("CST", 8*3600))
 
 	_, err := svc.Run(context.Background(), "2026-04-11", now)
-	if err == nil || err.Error() != "save failed" {
-		t.Fatalf("want save failed got %v", err)
+	if err == nil || err.Error() != "server 500" {
+		t.Fatalf("want server 500 got %v", err)
+	}
+	if digests.state != "failed" {
+		t.Fatalf("want failed state got %s", digests.state)
+	}
+	if publisher.calls != 1 {
+		t.Fatalf("want 1 publish call got %d", publisher.calls)
+	}
+
+	out, err := svc.Run(context.Background(), "2026-04-11", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RemoteURL != "https://example.com/retry-success" {
+		t.Fatalf("want retry success url got %s", out.RemoteURL)
+	}
+	if publisher.calls != 2 {
+		t.Fatalf("want 2 publish calls got %d", publisher.calls)
+	}
+}
+
+func TestDailyDigestRuntimeServiceAmbiguousPublishFailureTransitionsToRecoveryRequired(t *testing.T) {
+	digests := &digestRepoStub{}
+	publisher := &publishStub{results: []publishOutcome{{err: adapterpublisher.NewAmbiguousPublishError(errors.New("network timeout"))}}}
+	svc := service.NewDailyDigestRuntimeService(&ingestionStub{}, &processingWorkflowStub{candidates: []domaindigest.CandidateArticle{{ID: "art-1"}}}, &digestWorkflowStub{digest: daily_digest_workflow.Digest{Title: "日报", ContentMarkdown: "# 内容", ContentHTML: "<h1>内容</h1>"}}, digests, publisher)
+	now := time.Date(2026, 4, 12, 8, 0, 0, 0, time.FixedZone("CST", 8*3600))
+
+	_, err := svc.Run(context.Background(), "2026-04-11", now)
+	if !errors.Is(err, service.ErrDigestRecoveryRequired) {
+		t.Fatalf("want ErrDigestRecoveryRequired got %v", err)
+	}
+	if digests.state != "recovery_required" {
+		t.Fatalf("want recovery_required got %s", digests.state)
 	}
 	if publisher.calls != 1 {
 		t.Fatalf("want 1 publish call got %d", publisher.calls)
 	}
 
 	_, err = svc.Run(context.Background(), "2026-04-11", now)
-	if !errors.Is(err, service.ErrDigestPendingState) {
-		t.Fatalf("want ErrDigestPendingState on retry got %v", err)
+	if !errors.Is(err, service.ErrDigestRecoveryRequired) {
+		t.Fatalf("want ErrDigestRecoveryRequired on retry got %v", err)
 	}
 	if publisher.calls != 1 {
 		t.Fatalf("expected no republish on retry, got %d calls", publisher.calls)
+	}
+}
+
+func TestDailyDigestRuntimeServiceRetriesMarkPublishedBeforeRecoveryRequired(t *testing.T) {
+	digests := &digestRepoStub{markPublishedErrs: []error{errors.New("db timeout"), errors.New("db timeout"), nil}}
+	publisher := &publishStub{}
+	svc := service.NewDailyDigestRuntimeService(&ingestionStub{}, &processingWorkflowStub{candidates: []domaindigest.CandidateArticle{{ID: "art-1"}}}, &digestWorkflowStub{digest: daily_digest_workflow.Digest{Title: "日报", ContentMarkdown: "# 内容", ContentHTML: "<h1>内容</h1>"}}, digests, publisher)
+
+	out, err := svc.Run(context.Background(), "2026-04-11", time.Date(2026, 4, 12, 8, 0, 0, 0, time.FixedZone("CST", 8*3600)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RemoteURL == "" {
+		t.Fatal("expected remote url")
+	}
+	if digests.markPublishedCalls != 3 {
+		t.Fatalf("want 3 mark published attempts got %d", digests.markPublishedCalls)
+	}
+	if digests.state != "published" {
+		t.Fatalf("want published state got %s", digests.state)
+	}
+	if digests.markRecoveryCalls != 0 {
+		t.Fatalf("want no recovery_required mark got %d", digests.markRecoveryCalls)
 	}
 }

@@ -11,7 +11,18 @@ import (
 	"rss-platform/internal/workflow/daily_digest_workflow"
 )
 
-var ErrDigestPendingState = errors.New("digest state is pending confirmation")
+var (
+	ErrDigestPublishInProgress = errors.New("digest publish is in progress")
+	ErrDigestRecoveryRequired  = errors.New("digest publish requires recovery")
+)
+
+const (
+	digestStatePublishing       = "publishing"
+	digestStatePublished        = "published"
+	digestStateFailed           = "failed"
+	digestStateRecoveryRequired = "recovery_required"
+	markPublishedRetryLimit     = 3
+)
 
 // ProcessingRunner 定义待入选文章处理所需的最小能力。
 type ProcessingRunner interface {
@@ -23,11 +34,13 @@ type DigestRunner interface {
 	Generate(ctx context.Context, candidates []domaindigest.CandidateArticle) (daily_digest_workflow.Digest, error)
 }
 
-// DigestStore 定义日报占位、查询与发布回写所需的最小能力。
+// DigestStore 定义日报状态机所需的最小能力。
 type DigestStore interface {
-	GetRemoteURL(ctx context.Context, digestDate string) (string, bool, error)
-	Reserve(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest) (bool, error)
+	GetState(ctx context.Context, digestDate string) (state string, remoteURL string, found bool, err error)
+	BeginPublish(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest) (bool, error)
 	MarkPublished(ctx context.Context, digestDate string, publishResult adapterpublisher.PublishDigestResult) error
+	MarkFailed(ctx context.Context, digestDate string, publishError string) error
+	MarkRecoveryRequired(ctx context.Context, digestDate string, publishError string) error
 }
 
 // RunResult 表示一次日报运行的关键输出。
@@ -64,15 +77,14 @@ func NewDailyDigestRuntimeService(
 
 // Run 执行一次日报运行链路，并返回关键结果。
 func (s *DailyDigestRuntimeService) Run(ctx context.Context, digestDate string, now time.Time) (RunResult, error) {
-	remoteURL, exists, err := s.digests.GetRemoteURL(ctx, digestDate)
+	state, remoteURL, found, err := s.digests.GetState(ctx, digestDate)
 	if err != nil {
 		return RunResult{}, err
 	}
-	if exists {
-		if remoteURL != "" {
-			return RunResult{DigestDate: digestDate, RemoteURL: remoteURL}, nil
+	if found {
+		if out, handled, err := s.handleExistingState(digestDate, state, remoteURL); handled {
+			return out, err
 		}
-		return RunResult{}, ErrDigestPendingState
 	}
 
 	windowStart, windowEnd, err := digestWindow(digestDate, now)
@@ -94,19 +106,19 @@ func (s *DailyDigestRuntimeService) Run(ctx context.Context, digestDate string, 
 		return RunResult{}, err
 	}
 
-	reserved, err := s.digests.Reserve(ctx, digestDate, digest)
+	started, err := s.digests.BeginPublish(ctx, digestDate, digest)
 	if err != nil {
 		return RunResult{}, err
 	}
-	if !reserved {
-		remoteURL, exists, err = s.digests.GetRemoteURL(ctx, digestDate)
+	if !started {
+		state, remoteURL, found, err = s.digests.GetState(ctx, digestDate)
 		if err != nil {
 			return RunResult{}, err
 		}
-		if exists && remoteURL != "" {
-			return RunResult{DigestDate: digestDate, RemoteURL: remoteURL}, nil
+		if out, handled, err := s.handleExistingState(digestDate, state, remoteURL); handled {
+			return out, err
 		}
-		return RunResult{}, ErrDigestPendingState
+		return RunResult{}, ErrDigestPublishInProgress
 	}
 
 	publishResult, err := s.publisher.PublishDigest(ctx, adapterpublisher.PublishDigestRequest{
@@ -116,17 +128,59 @@ func (s *DailyDigestRuntimeService) Run(ctx context.Context, digestDate string, 
 		ContentHTML:     digest.ContentHTML,
 	})
 	if err != nil {
-		return RunResult{}, err
+		return RunResult{}, s.handlePublishError(ctx, digestDate, err)
 	}
 
-	if err := s.digests.MarkPublished(ctx, digestDate, publishResult); err != nil {
-		return RunResult{}, err
+	if err := s.markPublishedWithRetry(ctx, digestDate, publishResult); err != nil {
+		markErr := s.digests.MarkRecoveryRequired(ctx, digestDate, err.Error())
+		if markErr != nil {
+			return RunResult{}, errors.Join(ErrDigestRecoveryRequired, err, markErr)
+		}
+		return RunResult{}, errors.Join(ErrDigestRecoveryRequired, err)
 	}
 
-	return RunResult{
-		DigestDate: digestDate,
-		RemoteURL:  publishResult.RemoteURL,
-	}, nil
+	return RunResult{DigestDate: digestDate, RemoteURL: publishResult.RemoteURL}, nil
+}
+
+func (s *DailyDigestRuntimeService) handleExistingState(digestDate, state, remoteURL string) (RunResult, bool, error) {
+	switch state {
+	case digestStatePublished:
+		return RunResult{DigestDate: digestDate, RemoteURL: remoteURL}, true, nil
+	case digestStatePublishing:
+		return RunResult{}, true, ErrDigestPublishInProgress
+	case digestStateRecoveryRequired:
+		return RunResult{}, true, ErrDigestRecoveryRequired
+	default:
+		return RunResult{}, false, nil
+	}
+}
+
+func (s *DailyDigestRuntimeService) handlePublishError(ctx context.Context, digestDate string, publishErr error) error {
+	if adapterpublisher.IsAmbiguousPublishError(publishErr) {
+		markErr := s.digests.MarkRecoveryRequired(ctx, digestDate, publishErr.Error())
+		if markErr != nil {
+			return errors.Join(ErrDigestRecoveryRequired, publishErr, markErr)
+		}
+		return errors.Join(ErrDigestRecoveryRequired, publishErr)
+	}
+
+	markErr := s.digests.MarkFailed(ctx, digestDate, publishErr.Error())
+	if markErr != nil {
+		return errors.Join(publishErr, markErr)
+	}
+	return publishErr
+}
+
+func (s *DailyDigestRuntimeService) markPublishedWithRetry(ctx context.Context, digestDate string, publishResult adapterpublisher.PublishDigestResult) error {
+	var lastErr error
+	for attempt := 0; attempt < markPublishedRetryLimit; attempt++ {
+		if err := s.digests.MarkPublished(ctx, digestDate, publishResult); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return lastErr
 }
 
 func digestWindow(digestDate string, now time.Time) (time.Time, time.Time, error) {

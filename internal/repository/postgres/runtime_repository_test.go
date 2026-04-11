@@ -64,49 +64,67 @@ func TestProcessingRepositorySaveAndListLatestByArticle(t *testing.T) {
 	}
 }
 
-func TestDigestRepositoryReserveMarkPublishedAndGetByDigestDate(t *testing.T) {
+func TestDigestRepositoryStateTransitions(t *testing.T) {
 	db := newRuntimeTestDB(t)
 	migrateRuntimeTables(t, db)
 	repo := postgres.NewDigestRepository(db)
 	ctx := context.Background()
 	digest := daily_digest_workflow.Digest{Title: "第一次日报", Subtitle: "第一版", ContentMarkdown: "# first", ContentHTML: "<h1>first</h1>"}
 
-	reserved, err := repo.Reserve(ctx, "2026-04-11", digest)
+	started, err := repo.BeginPublish(ctx, "2026-04-11", digest)
 	if err != nil {
-		t.Fatalf("reserve digest: %v", err)
+		t.Fatalf("begin publish: %v", err)
 	}
-	if !reserved {
-		t.Fatal("expected first reserve to succeed")
+	if !started {
+		t.Fatal("expected first begin publish to succeed")
 	}
 
-	reserved, err = repo.Reserve(ctx, "2026-04-11", daily_digest_workflow.Digest{Title: "第二次日报", Subtitle: "第二版", ContentMarkdown: "# second", ContentHTML: "<h1>second</h1>"})
+	state, remoteURL, found, err := repo.GetState(ctx, "2026-04-11")
 	if err != nil {
-		t.Fatalf("reserve existing digest: %v", err)
+		t.Fatalf("get publishing state: %v", err)
 	}
-	if reserved {
-		t.Fatal("expected second reserve to be ignored")
+	if !found || state != "publishing" || remoteURL != "" {
+		t.Fatalf("unexpected publishing state found=%v state=%s remote_url=%s", found, state, remoteURL)
 	}
 
-	got, err := repo.GetByDigestDate(ctx, "2026-04-11")
+	if err := repo.MarkFailed(ctx, "2026-04-11", "server 500"); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+	state, _, found, err = repo.GetState(ctx, "2026-04-11")
 	if err != nil {
-		t.Fatalf("get pending digest: %v", err)
+		t.Fatalf("get failed state: %v", err)
 	}
-	if got.RemoteURL != "" {
-		t.Fatalf("want pending digest remote url empty got %s", got.RemoteURL)
-	}
-	if got.Title != "第一次日报" {
-		t.Fatalf("want reserved title 第一次日报 got %s", got.Title)
+	if !found || state != "failed" {
+		t.Fatalf("want failed state got found=%v state=%s", found, state)
 	}
 
-	if err := repo.MarkPublished(ctx, "2026-04-11", adapterpublisher.PublishDigestResult{RemoteURL: "https://example.com/second"}); err != nil {
+	started, err = repo.BeginPublish(ctx, "2026-04-11", daily_digest_workflow.Digest{Title: "第二次日报", Subtitle: "第二版", ContentMarkdown: "# second", ContentHTML: "<h1>second</h1>"})
+	if err != nil {
+		t.Fatalf("begin publish after failed: %v", err)
+	}
+	if !started {
+		t.Fatal("expected failed digest to be restartable")
+	}
+
+	if err := repo.MarkPublished(ctx, "2026-04-11", adapterpublisher.PublishDigestResult{RemoteID: "remote-2", RemoteURL: "https://example.com/second"}); err != nil {
 		t.Fatalf("mark published: %v", err)
 	}
-
-	got, err = repo.GetByDigestDate(ctx, "2026-04-11")
+	state, remoteURL, found, err = repo.GetState(ctx, "2026-04-11")
 	if err != nil {
-		t.Fatalf("get published digest: %v", err)
+		t.Fatalf("get published state: %v", err)
 	}
-	if got.RemoteURL != "https://example.com/second" {
-		t.Fatalf("want published remote url got %s", got.RemoteURL)
+	if !found || state != "published" || remoteURL != "https://example.com/second" {
+		t.Fatalf("unexpected published state found=%v state=%s remote_url=%s", found, state, remoteURL)
+	}
+
+	if err := repo.MarkRecoveryRequired(ctx, "2026-04-11", "decode failed"); err != nil {
+		t.Fatalf("mark recovery required: %v", err)
+	}
+	state, _, found, err = repo.GetState(ctx, "2026-04-11")
+	if err != nil {
+		t.Fatalf("get recovery_required state: %v", err)
+	}
+	if !found || state != "recovery_required" {
+		t.Fatalf("want recovery_required state got found=%v state=%s", found, state)
 	}
 }

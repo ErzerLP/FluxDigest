@@ -149,6 +149,22 @@ func TestMigratorAppliesRealRuntimeStateMigration(t *testing.T) {
 	if remoteURLColumn.DefaultValue != "''" {
 		t.Fatalf("want remote_url default '' got %q", remoteURLColumn.DefaultValue)
 	}
+	publishStateColumn := digestColumns["publish_state"]
+	if publishStateColumn.DefaultValue != "'failed'" {
+		t.Fatalf("want publish_state default 'failed' got %q", publishStateColumn.DefaultValue)
+	}
+	publishErrorColumn := digestColumns["publish_error"]
+	if publishErrorColumn.DefaultValue != "''" {
+		t.Fatalf("want publish_error default '' got %q", publishErrorColumn.DefaultValue)
+	}
+	remoteIDColumn := digestColumns["remote_id"]
+	if remoteIDColumn.DefaultValue != "''" {
+		t.Fatalf("want remote_id default '' got %q", remoteIDColumn.DefaultValue)
+	}
+	updatedAtColumn := digestColumns["updated_at"]
+	if !strings.EqualFold(updatedAtColumn.DefaultValue, "CURRENT_TIMESTAMP") {
+		t.Fatalf("want updated_at default CURRENT_TIMESTAMP got %q", updatedAtColumn.DefaultValue)
+	}
 	digestCreatedAt := digestColumns["created_at"]
 	if !strings.EqualFold(digestCreatedAt.DefaultValue, "CURRENT_TIMESTAMP") {
 		t.Fatalf("want daily_digests.created_at default CURRENT_TIMESTAMP got %q", digestCreatedAt.DefaultValue)
@@ -172,15 +188,20 @@ INSERT INTO daily_digests (
 	}
 
 	var remoteURL string
+	var publishState string
 	var createdAt string
-	if err := db.QueryRow(`SELECT remote_url, created_at FROM daily_digests WHERE id = ?`, "digest-1").Scan(&remoteURL, &createdAt); err != nil {
+	var updatedAt string
+	if err := db.QueryRow(`SELECT remote_url, publish_state, created_at, updated_at FROM daily_digests WHERE id = ?`, "digest-1").Scan(&remoteURL, &publishState, &createdAt, &updatedAt); err != nil {
 		t.Fatalf("query daily_digests defaults: %v", err)
 	}
 	if remoteURL != "" {
 		t.Fatalf("want empty remote_url got %q", remoteURL)
 	}
-	if createdAt == "" {
-		t.Fatal("want created_at default value, got empty")
+	if publishState != "failed" {
+		t.Fatalf("want failed publish_state got %q", publishState)
+	}
+	if createdAt == "" || updatedAt == "" {
+		t.Fatal("want timestamp defaults, got empty")
 	}
 }
 

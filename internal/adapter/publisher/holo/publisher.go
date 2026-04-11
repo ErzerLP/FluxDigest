@@ -37,12 +37,12 @@ func (p *Publisher) PublishDigest(ctx context.Context, req adapterpublisher.Publ
 		"tags":             req.Tags,
 	})
 	if err != nil {
-		return adapterpublisher.PublishDigestResult{}, err
+		return adapterpublisher.PublishDigestResult{}, adapterpublisher.NewRetryablePublishError(err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return adapterpublisher.PublishDigestResult{}, err
+		return adapterpublisher.PublishDigestResult{}, adapterpublisher.NewRetryablePublishError(err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if p.token != "" {
@@ -51,13 +51,13 @@ func (p *Publisher) PublishDigest(ctx context.Context, req adapterpublisher.Publ
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		return adapterpublisher.PublishDigestResult{}, err
+		return adapterpublisher.PublishDigestResult{}, adapterpublisher.NewAmbiguousPublishError(err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(resp.Body)
-		return adapterpublisher.PublishDigestResult{}, fmt.Errorf("holo publish failed: status=%d body=%s", resp.StatusCode, string(body))
+		return adapterpublisher.PublishDigestResult{}, adapterpublisher.NewRetryablePublishError(fmt.Errorf("holo publish failed: status=%d body=%s", resp.StatusCode, string(body)))
 	}
 
 	var out struct {
@@ -65,7 +65,7 @@ func (p *Publisher) PublishDigest(ctx context.Context, req adapterpublisher.Publ
 		URL string `json:"url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return adapterpublisher.PublishDigestResult{}, err
+		return adapterpublisher.PublishDigestResult{}, adapterpublisher.NewAmbiguousPublishError(err)
 	}
 
 	return adapterpublisher.PublishDigestResult{RemoteID: out.ID, RemoteURL: out.URL}, nil

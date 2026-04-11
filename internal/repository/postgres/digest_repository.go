@@ -13,6 +13,13 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+const (
+	digestStatePublishing       = "publishing"
+	digestStatePublished        = "published"
+	digestStateFailed           = "failed"
+	digestStateRecoveryRequired = "recovery_required"
+)
+
 // DailyDigestRecord 表示日报运行期持久化结果。
 type DailyDigestRecord struct {
 	ID              string
@@ -21,8 +28,12 @@ type DailyDigestRecord struct {
 	Subtitle        string
 	ContentMarkdown string
 	ContentHTML     string
+	RemoteID        string
 	RemoteURL       string
+	PublishState    string
+	PublishError    string
 	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // DigestRepository 负责保存日报运行结果。
@@ -35,22 +46,49 @@ func NewDigestRepository(db *gorm.DB) *DigestRepository {
 	return &DigestRepository{db: db}
 }
 
-// Reserve 为指定日报日期保留占位记录，已存在时返回 false。
-func (r *DigestRepository) Reserve(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest) (bool, error) {
-	values := map[string]any{
+// BeginPublish 为日报进入 publishing 状态；首次发布与 failed 重试都会成功。
+func (r *DigestRepository) BeginPublish(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest) (bool, error) {
+	now := time.Now()
+	insertValues := map[string]any{
 		"id":               ensureID(""),
 		"digest_date":      digestDate,
 		"title":            digest.Title,
 		"subtitle":         digest.Subtitle,
 		"content_markdown": digest.ContentMarkdown,
 		"content_html":     digest.ContentHTML,
+		"remote_id":        "",
 		"remote_url":       "",
+		"publish_state":    digestStatePublishing,
+		"publish_error":    "",
+		"updated_at":       now,
 	}
 
 	result := r.db.WithContext(ctx).
 		Table(models.DailyDigestModel{}.TableName()).
 		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(values)
+		Create(insertValues)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 1 {
+		return true, nil
+	}
+
+	updateValues := map[string]any{
+		"title":            digest.Title,
+		"subtitle":         digest.Subtitle,
+		"content_markdown": digest.ContentMarkdown,
+		"content_html":     digest.ContentHTML,
+		"remote_id":        "",
+		"remote_url":       "",
+		"publish_state":    digestStatePublishing,
+		"publish_error":    "",
+		"updated_at":       now,
+	}
+	result = r.db.WithContext(ctx).
+		Table(models.DailyDigestModel{}.TableName()).
+		Where("digest_date = ? AND publish_state = ?", digestDate, digestStateFailed).
+		Updates(updateValues)
 	if result.Error != nil {
 		return false, result.Error
 	}
@@ -58,58 +96,45 @@ func (r *DigestRepository) Reserve(ctx context.Context, digestDate string, diges
 	return result.RowsAffected == 1, nil
 }
 
-// MarkPublished 为已保留的日报记录回写发布结果。
+// MarkPublished 将 publishing 结果回写为 published。
 func (r *DigestRepository) MarkPublished(ctx context.Context, digestDate string, publishResult adapterpublisher.PublishDigestResult) error {
-	result := r.db.WithContext(ctx).
-		Table(models.DailyDigestModel{}.TableName()).
-		Where("digest_date = ?", digestDate).
-		Updates(map[string]any{"remote_url": publishResult.RemoteURL})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return r.updatePublishState(ctx, digestDate, map[string]any{
+		"remote_id":     publishResult.RemoteID,
+		"remote_url":    publishResult.RemoteURL,
+		"publish_state": digestStatePublished,
+		"publish_error": "",
+		"updated_at":    time.Now(),
+	})
 }
 
-// GetRemoteURL 返回指定 digestDate 的发布链接与存在状态。
-func (r *DigestRepository) GetRemoteURL(ctx context.Context, digestDate string) (string, bool, error) {
+// MarkFailed 将确定未发出的失败写为 failed，允许后续自动重试。
+func (r *DigestRepository) MarkFailed(ctx context.Context, digestDate string, publishError string) error {
+	return r.updatePublishState(ctx, digestDate, map[string]any{
+		"publish_state": digestStateFailed,
+		"publish_error": publishError,
+		"updated_at":    time.Now(),
+	})
+}
+
+// MarkRecoveryRequired 将模糊副作用失败写为 recovery_required，禁止自动重发。
+func (r *DigestRepository) MarkRecoveryRequired(ctx context.Context, digestDate string, publishError string) error {
+	return r.updatePublishState(ctx, digestDate, map[string]any{
+		"publish_state": digestStateRecoveryRequired,
+		"publish_error": publishError,
+		"updated_at":    time.Now(),
+	})
+}
+
+// GetState 返回日报当前发布状态、远端链接与存在性。
+func (r *DigestRepository) GetState(ctx context.Context, digestDate string) (string, string, bool, error) {
 	record, err := r.GetByDigestDate(ctx, digestDate)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", false, nil
+			return "", "", false, nil
 		}
-		return "", false, err
+		return "", "", false, err
 	}
-	return record.RemoteURL, true, nil
-}
-
-// Save 按显式业务日期幂等写入日报结果。
-func (r *DigestRepository) Save(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest, publishResult adapterpublisher.PublishDigestResult) error {
-	values := map[string]any{
-		"id":               ensureID(""),
-		"digest_date":      digestDate,
-		"title":            digest.Title,
-		"subtitle":         digest.Subtitle,
-		"content_markdown": digest.ContentMarkdown,
-		"content_html":     digest.ContentHTML,
-		"remote_url":       publishResult.RemoteURL,
-	}
-
-	return r.db.WithContext(ctx).
-		Table(models.DailyDigestModel{}.TableName()).
-		Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "digest_date"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"title",
-				"subtitle",
-				"content_markdown",
-				"content_html",
-				"remote_url",
-			}),
-		}).
-		Create(values).Error
+	return record.PublishState, record.RemoteURL, true, nil
 }
 
 // GetByDigestDate 按日期读取已保存的日报结果。
@@ -128,7 +153,25 @@ func (r *DigestRepository) GetByDigestDate(ctx context.Context, digestDate strin
 		Subtitle:        model.Subtitle,
 		ContentMarkdown: model.ContentMarkdown,
 		ContentHTML:     model.ContentHTML,
+		RemoteID:        model.RemoteID,
 		RemoteURL:       model.RemoteURL,
+		PublishState:    model.PublishState,
+		PublishError:    model.PublishError,
 		CreatedAt:       model.CreatedAt,
+		UpdatedAt:       model.UpdatedAt,
 	}, nil
+}
+
+func (r *DigestRepository) updatePublishState(ctx context.Context, digestDate string, values map[string]any) error {
+	result := r.db.WithContext(ctx).
+		Table(models.DailyDigestModel{}.TableName()).
+		Where("digest_date = ?", digestDate).
+		Updates(values)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
