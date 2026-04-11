@@ -36,27 +36,57 @@ func TestProcessingRepositorySaveAndListLatestByArticle(t *testing.T) {
 	db := newRuntimeTestDB(t)
 	migrateRuntimeTables(t, db)
 	repo := postgres.NewProcessingRepository(db)
+	ctx := context.Background()
 
-	err := repo.Save(context.Background(), postgres.ProcessedArticleRecord{
+	first := postgres.ProcessedArticleRecord{
 		ArticleID:         "art-1",
-		TitleTranslated:   "标题",
-		SummaryTranslated: "摘要",
-		ContentTranslated: "正文",
-		CoreSummary:       "核心总结",
-		KeyPoints:         []string{"a", "b"},
-		TopicCategory:     "AI",
-		ImportanceScore:   0.8,
-	})
-	if err != nil {
+		TitleTranslated:   "标题-1",
+		SummaryTranslated: "摘要-1",
+		ContentTranslated: "正文-1",
+		CoreSummary:       "核心总结-1",
+		KeyPoints:         []string{"a"},
+		TopicCategory:     "Old",
+		ImportanceScore:   0.6,
+	}
+	if err := repo.Save(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := repo.GetLatestByArticleID(context.Background(), "art-1")
+	second := postgres.ProcessedArticleRecord{
+		ArticleID:         "art-1",
+		TitleTranslated:   "标题-2",
+		SummaryTranslated: "摘要-2",
+		ContentTranslated: "正文-2",
+		CoreSummary:       "核心总结-2",
+		KeyPoints:         []string{"a", "b"},
+		TopicCategory:     "AI",
+		ImportanceScore:   0.8,
+	}
+	if err := repo.Save(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+
+	var rows []models.ArticleProcessingModel
+	if err := db.WithContext(ctx).Where("article_id = ?", "art-1").Order("created_at ASC").Find(&rows).Error; err != nil {
+		t.Fatalf("list processing rows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("want 2 rows got %d", len(rows))
+	}
+	sharedCreatedAt := time.Date(2026, 4, 11, 9, 0, 0, 0, time.UTC)
+	if err := db.WithContext(ctx).Model(&models.ArticleProcessingModel{}).Where("article_id = ?", "art-1").Update("created_at", sharedCreatedAt).Error; err != nil {
+		t.Fatalf("align created_at: %v", err)
+	}
+
+	got, err := repo.GetLatestByArticleID(ctx, "art-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.TopicCategory != "AI" {
 		t.Fatalf("want AI got %s", got.TopicCategory)
+	}
+	if got.TitleTranslated != "标题-2" {
+		t.Fatalf("want latest translated title 标题-2 got %s", got.TitleTranslated)
 	}
 	if len(got.KeyPoints) != 2 || got.KeyPoints[0] != "a" || got.KeyPoints[1] != "b" {
 		t.Fatalf("unexpected key points: %#v", got.KeyPoints)
@@ -68,10 +98,8 @@ func TestDigestRepositorySaveUpsertsAndGetByDigestDate(t *testing.T) {
 	migrateRuntimeTables(t, db)
 	repo := postgres.NewDigestRepository(db)
 	ctx := context.Background()
-	zone := time.FixedZone("CST", 8*3600)
 
-	firstRunAt := time.Date(2026, 4, 11, 7, 0, 0, 0, zone)
-	if err := repo.Save(ctx, firstRunAt, daily_digest_workflow.Digest{
+	if err := repo.Save(ctx, "2026-04-11", daily_digest_workflow.Digest{
 		Title:           "第一次日报",
 		Subtitle:        "第一版",
 		ContentMarkdown: "# first",
@@ -80,8 +108,7 @@ func TestDigestRepositorySaveUpsertsAndGetByDigestDate(t *testing.T) {
 		t.Fatalf("save first digest: %v", err)
 	}
 
-	secondRunAt := time.Date(2026, 4, 11, 23, 30, 0, 0, zone)
-	if err := repo.Save(ctx, secondRunAt, daily_digest_workflow.Digest{
+	if err := repo.Save(ctx, "2026-04-11", daily_digest_workflow.Digest{
 		Title:           "第二次日报",
 		Subtitle:        "第二版",
 		ContentMarkdown: "# second",

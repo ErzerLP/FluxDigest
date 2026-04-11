@@ -34,9 +34,8 @@ func NewDigestRepository(db *gorm.DB) *DigestRepository {
 	return &DigestRepository{db: db}
 }
 
-// Save 按稳定日语义幂等写入日报结果。
-func (r *DigestRepository) Save(ctx context.Context, runAt time.Time, digest daily_digest_workflow.Digest, publishResult adapterpublisher.PublishDigestResult) error {
-	digestDate := runAt.Format("2006-01-02")
+// Save 按显式业务日期幂等写入日报结果。
+func (r *DigestRepository) Save(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest, publishResult adapterpublisher.PublishDigestResult) error {
 	values := map[string]any{
 		"id":               ensureID(""),
 		"digest_date":      digestDate,

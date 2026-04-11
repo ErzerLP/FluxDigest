@@ -38,14 +38,14 @@ func (s digestWorkflowStub) Generate(_ context.Context, _ []domaindigest.Candida
 
 type digestRepoStub struct {
 	saved         bool
-	runAt         time.Time
+	digestDate    string
 	digest        daily_digest_workflow.Digest
 	publishResult adapterpublisher.PublishDigestResult
 }
 
-func (s *digestRepoStub) Save(_ context.Context, runAt time.Time, digest daily_digest_workflow.Digest, publishResult adapterpublisher.PublishDigestResult) error {
+func (s *digestRepoStub) Save(_ context.Context, digestDate string, digest daily_digest_workflow.Digest, publishResult adapterpublisher.PublishDigestResult) error {
 	s.saved = true
-	s.runAt = runAt
+	s.digestDate = digestDate
 	s.digest = digest
 	s.publishResult = publishResult
 	return nil
@@ -78,8 +78,8 @@ func TestDailyDigestRuntimeServiceRunsEndToEndAndPersistsDigest(t *testing.T) {
 		publishStub{},
 	)
 
-	now := time.Date(2026, 4, 11, 7, 0, 0, 0, time.FixedZone("CST", 8*3600))
-	out, err := svc.Run(context.Background(), now)
+	now := time.Date(2026, 4, 12, 1, 30, 0, 0, time.FixedZone("CST", 8*3600))
+	out, err := svc.Run(context.Background(), "2026-04-11", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,10 @@ func TestDailyDigestRuntimeServiceRunsEndToEndAndPersistsDigest(t *testing.T) {
 	if !digests.saved {
 		t.Fatal("expected digest repo save to be called")
 	}
-	wantSince := time.Date(2026, 4, 11, 0, 0, 0, 0, now.Location())
+	if digests.digestDate != "2026-04-11" {
+		t.Fatalf("want saved digest date 2026-04-11 got %s", digests.digestDate)
+	}
+	wantSince := time.Date(2026, 4, 11, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
 	if !ingestion.since.Equal(wantSince) {
 		t.Fatalf("want since %s got %s", wantSince.Format(time.RFC3339), ingestion.since.Format(time.RFC3339))
 	}

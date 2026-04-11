@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	adapterpublisher "rss-platform/internal/adapter/publisher"
@@ -21,7 +22,7 @@ type DigestRunner interface {
 
 // DigestWriter 定义日报结果持久化所需的最小能力。
 type DigestWriter interface {
-	Save(ctx context.Context, runAt time.Time, digest daily_digest_workflow.Digest, publishResult adapterpublisher.PublishDigestResult) error
+	Save(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest, publishResult adapterpublisher.PublishDigestResult) error
 }
 
 // RunResult 表示一次日报运行的关键输出。
@@ -57,9 +58,13 @@ func NewDailyDigestRuntimeService(
 }
 
 // Run 执行一次日报运行链路，并返回关键结果。
-func (s *DailyDigestRuntimeService) Run(ctx context.Context, now time.Time) (RunResult, error) {
-	runAt := now.In(shanghaiLocation())
-	since := time.Date(runAt.Year(), runAt.Month(), runAt.Day(), 0, 0, 0, 0, runAt.Location())
+func (s *DailyDigestRuntimeService) Run(ctx context.Context, digestDate string, now time.Time) (RunResult, error) {
+	_ = now
+
+	since, err := parseDigestDateStart(digestDate)
+	if err != nil {
+		return RunResult{}, err
+	}
 
 	if err := s.ingestion.FetchAndPersist(ctx, since); err != nil {
 		return RunResult{}, err
@@ -85,12 +90,20 @@ func (s *DailyDigestRuntimeService) Run(ctx context.Context, now time.Time) (Run
 		return RunResult{}, err
 	}
 
-	if err := s.digests.Save(ctx, runAt, digest, publishResult); err != nil {
+	if err := s.digests.Save(ctx, digestDate, digest, publishResult); err != nil {
 		return RunResult{}, err
 	}
 
 	return RunResult{
-		DigestDate: runAt.Format("2006-01-02"),
+		DigestDate: digestDate,
 		RemoteURL:  publishResult.RemoteURL,
 	}, nil
+}
+
+func parseDigestDateStart(digestDate string) (time.Time, error) {
+	since, err := time.ParseInLocation("2006-01-02", digestDate, shanghaiLocation())
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse digest date %s: %w", digestDate, err)
+	}
+	return since, nil
 }

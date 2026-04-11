@@ -6,6 +6,7 @@ import (
 
 	"rss-platform/internal/repository/postgres/models"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -45,7 +46,7 @@ func (r *ProcessingRepository) Save(ctx context.Context, input ProcessedArticleR
 	}
 
 	model := models.ArticleProcessingModel{
-		ID:                ensureID(input.ID),
+		ID:                ensureProcessingID(input.ID),
 		ArticleID:         input.ArticleID,
 		TitleTranslated:   input.TitleTranslated,
 		SummaryTranslated: input.SummaryTranslated,
@@ -86,4 +87,17 @@ func (r *ProcessingRepository) GetLatestByArticleID(ctx context.Context, article
 		TopicCategory:     model.TopicCategory,
 		ImportanceScore:   model.ImportanceScore,
 	}, nil
+}
+
+func ensureProcessingID(id string) string {
+	if id != "" {
+		return id
+	}
+
+	orderedID, err := uuid.NewV7()
+	if err != nil {
+		return ensureID("")
+	}
+
+	return orderedID.String()
 }
