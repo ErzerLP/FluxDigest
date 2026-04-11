@@ -7,13 +7,15 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"rss-platform/internal/service"
 )
 
 var errJobTriggerRequired = errors.New("job trigger is required")
 
 // JobTrigger 定义手动触发日报任务所需的最小能力。
 type JobTrigger interface {
-	TriggerDailyDigest(ctx context.Context, now time.Time) error
+	TriggerDailyDigest(ctx context.Context, now time.Time) (service.JobTriggerResult, error)
 }
 
 type triggerDailyDigestRequest struct {
@@ -45,14 +47,24 @@ func RegisterJobRoutes(group *gin.RouterGroup, svc JobTrigger) {
 			}
 		}
 
-		if err := svc.TriggerDailyDigest(c.Request.Context(), triggerAt); err != nil {
+		result, err := svc.TriggerDailyDigest(c.Request.Context(), triggerAt)
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		c.JSON(http.StatusAccepted, gin.H{
-			"status":     "accepted",
-			"trigger_at": triggerAt.Format(time.RFC3339),
+		statusCode := http.StatusAccepted
+		if result.Status == "skipped" {
+			statusCode = http.StatusOK
+		}
+		if result.Status == "" {
+			result.Status = "accepted"
+		}
+
+		c.JSON(statusCode, gin.H{
+			"digest_date": result.DigestDate,
+			"status":      result.Status,
+			"trigger_at":  triggerAt.Format(time.RFC3339),
 		})
 	})
 }

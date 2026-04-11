@@ -7,6 +7,23 @@ import (
 	"testing"
 )
 
+func TestDefaultRouterConfigDoesNotInjectPlaceholderReaders(t *testing.T) {
+	cfg := defaultRouterConfig()
+
+	if cfg.articleReader != nil {
+		t.Fatal("want nil articleReader by default")
+	}
+	if cfg.digestReader != nil {
+		t.Fatal("want nil digestReader by default")
+	}
+	if cfg.profileReader != nil {
+		t.Fatal("want nil profileReader by default")
+	}
+	if cfg.metrics == nil {
+		t.Fatal("want metrics initialized")
+	}
+}
+
 func TestRouterExposesHealthz(t *testing.T) {
 	router := NewRouter()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)

@@ -44,6 +44,8 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Article'
+        '503':
+          description: Article reader is not configured
   /api/v1/digests/latest:
     get:
       summary: Get latest digest
@@ -54,6 +56,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Digest'
+        '503':
+          description: Digest reader is not configured
   /api/v1/profiles/{profileType}/active:
     get:
       summary: Get active profile by type
@@ -70,6 +74,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Profile'
+        '503':
+          description: Profile reader is not configured
   /api/v1/jobs/daily-digest:
     post:
       summary: Trigger daily digest job
@@ -86,19 +92,18 @@ paths:
                   type: string
                   format: date-time
       responses:
+        '200':
+          description: Job skipped because the same digest date is already queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobTriggerResponse'
         '202':
           description: Job accepted
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: accepted
-                  trigger_at:
-                    type: string
-                    format: date-time
+                $ref: '#/components/schemas/JobTriggerResponse'
         '400':
           description: Invalid request body or trigger_at
         '401':
@@ -119,39 +124,58 @@ components:
       properties:
         id:
           type: string
+        miniflux_entry_id:
+          type: integer
+          format: int64
+        feed_id:
+          type: integer
+          format: int64
+        feed_title:
+          type: string
         title:
           type: string
-    DigestSectionItem:
-      type: object
-      properties:
-        article_id:
+        author:
           type: string
-        title:
+        url:
+          type: string
+          format: uri
+        title_translated:
+          type: string
+        summary_translated:
+          type: string
+        content_translated:
           type: string
         core_summary:
           type: string
-    DigestSection:
-      type: object
-      properties:
-        name:
-          type: string
-        items:
+        key_points:
           type: array
           items:
-            $ref: '#/components/schemas/DigestSectionItem'
+            type: string
+        topic_category:
+          type: string
+        importance_score:
+          type: number
+          format: float
     Digest:
       type: object
       properties:
+        digest_date:
+          type: string
+          format: date
         title:
           type: string
         subtitle:
           type: string
-        opening_note:
+        content_markdown:
           type: string
-        sections:
-          type: array
-          items:
-            $ref: '#/components/schemas/DigestSection'
+        content_html:
+          type: string
+        remote_url:
+          type: string
+        publish_state:
+          type: string
+        publish_error:
+          type: string
     Profile:
       type: object
       properties:
@@ -159,3 +183,22 @@ components:
           type: string
         name:
           type: string
+        version:
+          type: integer
+        is_active:
+          type: boolean
+        payload:
+          type: object
+          additionalProperties: true
+    JobTriggerResponse:
+      type: object
+      properties:
+        digest_date:
+          type: string
+          format: date
+        status:
+          type: string
+          enum: [accepted, skipped]
+        trigger_at:
+          type: string
+          format: date-time

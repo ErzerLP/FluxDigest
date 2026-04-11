@@ -11,5 +11,6 @@ FROM gcr.io/distroless/base-debian12
 WORKDIR /app
 COPY --from=builder /out/rss-api /app/rss-api
 COPY --from=builder /src/configs /app/configs
+COPY --from=builder /src/migrations /app/migrations
 EXPOSE 8080
 ENTRYPOINT ["/app/rss-api"]

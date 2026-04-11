@@ -94,27 +94,6 @@ func NewRouter(options ...Option) *gin.Engine {
 
 func defaultRouterConfig() routerConfig {
 	return routerConfig{
-		articleReader: defaultArticleReader{},
-		digestReader:  defaultDigestReader{},
-		profileReader: defaultProfileReader{},
-		metrics:       telemetry.NewMetrics(),
+		metrics: telemetry.NewMetrics(),
 	}
-}
-
-type defaultArticleReader struct{}
-
-func (defaultArticleReader) ListArticles() []map[string]any {
-	return []map[string]any{}
-}
-
-type defaultDigestReader struct{}
-
-func (defaultDigestReader) LatestDigest() map[string]any {
-	return map[string]any{"title": "", "sections": []any{}}
-}
-
-type defaultProfileReader struct{}
-
-func (defaultProfileReader) ActiveProfile(profileType string) map[string]any {
-	return map[string]any{"profile_type": profileType, "name": ""}
 }

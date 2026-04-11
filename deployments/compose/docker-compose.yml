@@ -27,6 +27,186 @@ services:
       timeout: 5s
       retries: 5
 
+  mock-miniflux:
+    image: python:3.12-alpine
+    command:
+      - python
+      - -c
+      - |
+        import json
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def _write(self, status, payload):
+                body = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/healthz":
+                    self._write(200, {"status": "ok"})
+                    return
+                if self.path.startswith("/v1/entries"):
+                    self._write(200, {
+                        "entries": [{
+                            "id": 101,
+                            "feed_id": 11,
+                            "title": "Model News",
+                            "author": "Alice",
+                            "url": "https://example.com/model-news",
+                            "content": "OpenAI released a new model update with lower latency.",
+                            "published_at": "2026-04-10T22:30:00Z",
+                            "feed": {"id": 11, "title": "Tech Feed"}
+                        }]
+                    })
+                    return
+
+                self._write(404, {"error": "not found"})
+
+            def log_message(self, fmt, *args):
+                return
+
+        HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz').read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  mock-llm:
+    image: python:3.12-alpine
+    command:
+      - python
+      - -c
+      - |
+        import json
+        import time
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        def extract_prompt(messages):
+            if not messages:
+                return ""
+            content = messages[-1].get("content", "")
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        parts.append(item.get("text", ""))
+                return "\n".join(parts)
+            return content
+
+        def plan_response(prompt):
+            start = prompt.find("{")
+            end = prompt.rfind("}")
+            if start >= 0 and end >= start:
+                try:
+                    payload = json.loads(prompt[start:end + 1])
+                    article = (payload.get("articles") or [{}])[0]
+                    article_id = article.get("id", "art-1")
+                    title = article.get("title", "Model News")
+                    summary = article.get("core_summary", "核心观点")
+                    return json.dumps({
+                        "title": "今日 AI 日报",
+                        "subtitle": "由 compose smoke 生成",
+                        "opening_note": "以下为自动生成的验证内容。",
+                        "sections": [{
+                            "name": "重点速览",
+                            "items": [{
+                                "article_id": article_id,
+                                "title": title,
+                                "core_summary": summary
+                            }]
+                        }]
+                    }, ensure_ascii=False)
+                except Exception:
+                    pass
+
+            return json.dumps({
+                "title": "今日 AI 日报",
+                "subtitle": "由 compose smoke 生成",
+                "opening_note": "以下为自动生成的验证内容。",
+                "sections": [{
+                    "name": "重点速览",
+                    "items": [{
+                        "article_id": "art-1",
+                        "title": "Model News",
+                        "core_summary": "模型延迟显著下降。"
+                    }]
+                }]
+            }, ensure_ascii=False)
+
+        def completion_content(prompt):
+            if "title_translated" in prompt and "summary_translated" in prompt:
+                return json.dumps({
+                    "title_translated": "模型新闻",
+                    "summary_translated": "这是用于 compose smoke 的摘要。",
+                    "content_translated": "这是用于 compose smoke 的正文翻译。"
+                }, ensure_ascii=False)
+            if "importance_score" in prompt and "topic_category" in prompt:
+                return json.dumps({
+                    "core_summary": "模型延迟显著下降。",
+                    "key_points": ["推理成本下降", "响应速度更快"],
+                    "topic_category": "AI",
+                    "importance_score": 0.9
+                }, ensure_ascii=False)
+            return plan_response(prompt)
+
+        class Handler(BaseHTTPRequestHandler):
+            def _write(self, status, payload):
+                body = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/healthz":
+                    self._write(200, {"status": "ok"})
+                    return
+
+                self._write(404, {"error": "not found"})
+
+            def do_POST(self):
+                if not self.path.endswith("/chat/completions"):
+                    self._write(404, {"error": "not found"})
+                    return
+
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length or 0)
+                payload = json.loads(body or b"{}")
+                prompt = extract_prompt(payload.get("messages") or [])
+                content = completion_content(prompt)
+                self._write(200, {
+                    "id": "chatcmpl-smoke",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": payload.get("model", "gpt-4.1-mini"),
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": content},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2
+                    }
+                })
+
+            def log_message(self, fmt, *args):
+                return
+
+        HTTPServer(("0.0.0.0", 8081), Handler).serve_forever()
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz').read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   rss-api:
     build:
       context: ../..
@@ -50,11 +230,27 @@ services:
       context: ../..
       dockerfile: deployments/docker/worker.Dockerfile
     environment:
+      APP_DATABASE_DSN: postgres://rss:rss@postgres:5432/rss?sslmode=disable
       APP_REDIS_ADDR: redis:6379
       APP_JOB_QUEUE: default
+      APP_MINIFLUX_BASE_URL: http://mock-miniflux:8080
+      APP_MINIFLUX_AUTH_TOKEN: dev-miniflux-token
+      APP_LLM_BASE_URL: http://mock-llm:8081/v1
+      APP_LLM_API_KEY: dev-llm-token
+      APP_LLM_MODEL: gpt-4.1-mini
       APP_WORKER_CONCURRENCY: 10
+      APP_PUBLISH_CHANNEL: markdown
+      APP_PUBLISH_OUTPUT_DIR: /app/data/output
+    volumes:
+      - rss-output:/app/data/output
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
+        condition: service_healthy
+      mock-miniflux:
+        condition: service_healthy
+      mock-llm:
         condition: service_healthy
 
   rss-scheduler:
@@ -71,3 +267,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  rss-output:

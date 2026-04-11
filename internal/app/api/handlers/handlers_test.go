@@ -14,33 +14,47 @@ import (
 	apiapp "rss-platform/internal/app/api"
 	"rss-platform/internal/app/api/handlers"
 	"rss-platform/internal/app/api/middleware"
+	"rss-platform/internal/service"
 )
 
 type digestServiceStub struct{}
 
-func (digestServiceStub) LatestDigest() map[string]any {
-	return map[string]any{"title": "今日 AI 日报", "sections": []any{}}
+func (digestServiceStub) LatestDigest(context.Context) (service.DigestView, error) {
+	return service.DigestView{Title: "今日 AI 日报"}, nil
 }
 
 type articleServiceStub struct{}
 
-func (articleServiceStub) ListArticles() []map[string]any {
-	return []map[string]any{{"id": "art-1", "title": "Model News"}}
+func (articleServiceStub) ListArticles(context.Context) ([]service.ArticleView, error) {
+	return []service.ArticleView{{
+		ID:              "art-1",
+		Title:           "Model News",
+		TitleTranslated: "模型新闻",
+		CoreSummary:     "核心观点",
+	}}, nil
 }
 
 type profileServiceStub struct{}
 
-func (profileServiceStub) ActiveProfile(profileType string) map[string]any {
-	return map[string]any{"profile_type": profileType, "name": "default-" + profileType}
+func (profileServiceStub) ActiveProfile(_ context.Context, profileType string) (service.ProfileView, error) {
+	return service.ProfileView{ProfileType: profileType, Name: "default-" + profileType, Payload: map[string]any{}}, nil
 }
 
 type jobTriggerStub struct {
-	calls []time.Time
+	calls   []time.Time
+	results []service.JobTriggerResult
 }
 
-func (s *jobTriggerStub) TriggerDailyDigest(_ context.Context, now time.Time) error {
+func (s *jobTriggerStub) TriggerDailyDigest(_ context.Context, now time.Time) (service.JobTriggerResult, error) {
 	s.calls = append(s.calls, now)
-	return nil
+
+	if len(s.results) == 0 {
+		return service.JobTriggerResult{DigestDate: now.Format("2006-01-02"), Status: "accepted"}, nil
+	}
+
+	result := s.results[0]
+	s.results = s.results[1:]
+	return result, nil
 }
 
 func TestLatestDigestRouteReturnsJSON(t *testing.T) {
@@ -62,6 +76,70 @@ func TestLatestDigestRouteReturnsJSON(t *testing.T) {
 	}
 	if body["title"] != "今日 AI 日报" {
 		t.Fatalf("want title %q got %#v", "今日 AI 日报", body["title"])
+	}
+	if _, ok := body["sections"]; ok {
+		t.Fatalf("did not expect sections in response: %#v", body["sections"])
+	}
+}
+
+func TestArticleRouteWithoutReaderReturnsServiceUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterArticleRoutes(router.Group("/api/v1"), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/articles", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 got %d", rec.Code)
+	}
+}
+
+func TestDigestRouteWithoutReaderReturnsServiceUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterDigestRoutes(router.Group("/api/v1"), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/digests/latest", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 got %d", rec.Code)
+	}
+}
+
+func TestProfileRouteWithoutReaderReturnsServiceUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterProfileRoutes(router.Group("/api/v1"), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/ai/active", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 got %d", rec.Code)
+	}
+}
+
+func TestJobRouteReturnsSkippedWhenDigestAlreadyQueued(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	trigger := &jobTriggerStub{results: []service.JobTriggerResult{{DigestDate: "2026-04-11", Status: "skipped"}}}
+	router := gin.New()
+	handlers.RegisterJobRoutes(router.Group("/api/v1"), trigger)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/daily-digest", bytes.NewBufferString(`{"trigger_at":"2026-04-11T07:00:00+08:00"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"skipped"`)) {
+		t.Fatalf("unexpected body %s", rec.Body.String())
 	}
 }
 
@@ -134,6 +212,9 @@ func TestRouterRegistersVersionedRoutesAndProtectsJobs(t *testing.T) {
 
 	if authorizedRec.Code != http.StatusAccepted {
 		t.Fatalf("want job route 202 got %d", authorizedRec.Code)
+	}
+	if !bytes.Contains(authorizedRec.Body.Bytes(), []byte(`"status":"accepted"`)) {
+		t.Fatalf("want accepted body got %s", authorizedRec.Body.String())
 	}
 	if len(trigger.calls) != 1 {
 		t.Fatalf("want 1 job trigger call got %d", len(trigger.calls))

@@ -2,17 +2,19 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"gorm.io/gorm"
 
 	"rss-platform/internal/app/api"
 	"rss-platform/internal/config"
+	postgresrepo "rss-platform/internal/repository/postgres"
 	"rss-platform/internal/service"
 	asynqtask "rss-platform/internal/task/asynq"
 	"rss-platform/internal/telemetry"
@@ -24,7 +26,7 @@ type dbCloser interface {
 	Close() error
 }
 
-type connectPostgresFunc func(ctx context.Context, dsn string) (dbCloser, error)
+type connectPostgresFunc func(ctx context.Context, dsn string) (*gorm.DB, dbCloser, error)
 
 func main() {
 	cfg, err := config.Load()
@@ -77,30 +79,92 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, queue service.Daily
 		metrics = telemetry.NewMetrics()
 	}
 
-	db, err := connect(ctx, cfg.Database.DSN)
+	db, closer, err := connect(ctx, cfg.Database.DSN)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	if err := ensureRuntimeState(ctx, db); err != nil {
+		_ = closer.Close()
+		return nil, nil, err
+	}
+
+	articleQueryService := service.NewArticleQueryService(db)
+	digestQueryService := service.NewDigestQueryService(db)
+	profileQueryService := service.NewProfileQueryService(db)
 	router := api.NewRouter(
 		api.WithAPIKey(cfg.Job.APIKey),
 		api.WithMetrics(metrics),
+		api.WithArticleReader(articleQueryService),
+		api.WithDigestReader(digestQueryService),
+		api.WithProfileReader(profileQueryService),
 		api.WithJobTrigger(service.NewJobService(queue, metrics)),
 	)
 
-	return router, db, nil
+	return router, closer, nil
 }
 
-func connectPostgres(ctx context.Context, dsn string) (dbCloser, error) {
-	db, err := sql.Open("pgx", dsn)
+func connectPostgres(ctx context.Context, dsn string) (*gorm.DB, dbCloser, error) {
+	db, err := postgresrepo.Open(dsn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, err
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, nil, err
 	}
-	return db, nil
+	if err := sqlDB.PingContext(ctx); err != nil {
+		_ = sqlDB.Close()
+		return nil, nil, err
+	}
+
+	return db, sqlDB, nil
+}
+
+func ensureRuntimeState(ctx context.Context, db *gorm.DB) error {
+	if db == nil {
+		return errors.New("database is required")
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+
+	migrationsDir, err := resolveMigrationsDir()
+	if err != nil {
+		return err
+	}
+
+	bootstrap := service.NewRuntimeBootstrapService(
+		postgresrepo.NewMigrator(sqlDB, migrationsDir),
+		service.NewProfileService(postgresrepo.NewProfileRepository(db)),
+	)
+
+	return bootstrap.Ensure(ctx)
+}
+
+func resolveMigrationsDir() (string, error) {
+	current, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		candidate := filepath.Join(current, "migrations")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate, nil
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+
+	return "", errors.New("migrations directory not found")
 }
 
 type dailyDigestQueue struct {
@@ -114,6 +178,18 @@ func (q dailyDigestQueue) EnqueueDailyDigest(ctx context.Context, digestDate str
 		return err
 	}
 
-	_, err = q.client.EnqueueContext(ctx, task, asynq.Queue(q.queue))
+	_, err = q.client.EnqueueContext(
+		ctx,
+		task,
+		asynq.Queue(q.queue),
+		asynq.TaskID(dailyDigestTaskID(digestDate)),
+	)
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
+		return service.ErrDailyDigestAlreadyQueued
+	}
 	return err
+}
+
+func dailyDigestTaskID(digestDate string) string {
+	return "daily-digest:" + digestDate
 }

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/hibiken/asynq"
 
@@ -31,7 +33,7 @@ func main() {
 	}()
 
 	queue := dailyDigestQueue{client: client, queue: cfg.Job.Queue}
-	cron := appscheduler.Start(service.NewJobService(queue))
+	cron := appscheduler.Start(schedulerTrigger{job: service.NewJobService(queue)})
 	log.Println("rss-scheduler started")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -45,12 +47,37 @@ type dailyDigestQueue struct {
 	queue  string
 }
 
+type schedulerTrigger struct {
+	job *service.JobService
+}
+
+func (t schedulerTrigger) TriggerDailyDigest(ctx context.Context, now time.Time) error {
+	if t.job == nil {
+		return nil
+	}
+
+	_, err := t.job.TriggerDailyDigest(ctx, now)
+	return err
+}
+
 func (q dailyDigestQueue) EnqueueDailyDigest(ctx context.Context, digestDate string) error {
 	task, err := asynqtask.NewDailyDigestTask(digestDate)
 	if err != nil {
 		return err
 	}
 
-	_, err = q.client.EnqueueContext(ctx, task, asynq.Queue(q.queue))
+	_, err = q.client.EnqueueContext(
+		ctx,
+		task,
+		asynq.Queue(q.queue),
+		asynq.TaskID(dailyDigestTaskID(digestDate)),
+	)
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
+		return service.ErrDailyDigestAlreadyQueued
+	}
 	return err
+}
+
+func dailyDigestTaskID(digestDate string) string {
+	return "daily-digest:" + digestDate
 }

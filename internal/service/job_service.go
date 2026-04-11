@@ -3,11 +3,17 @@ package service
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 )
 
 var errDailyDigestQueueRequired = errors.New("daily digest queue is required")
+var ErrDailyDigestAlreadyQueued = errors.New("daily digest already queued")
+
+// JobTriggerResult 表示手动或计划触发日报后的真实受理状态。
+type JobTriggerResult struct {
+	DigestDate string
+	Status     string
+}
 
 // DailyDigestQueue 定义日报任务入队所需的最小能力。
 type DailyDigestQueue interface {
@@ -22,10 +28,8 @@ type JobMetrics interface {
 
 // JobService 负责按 digestDate 做最小幂等触发。
 type JobService struct {
-	queue      DailyDigestQueue
-	metrics    JobMetrics
-	mu         sync.Mutex
-	lastDigest string
+	queue   DailyDigestQueue
+	metrics JobMetrics
 }
 
 // NewJobService 创建 JobService。
@@ -38,38 +42,36 @@ func NewJobService(queue DailyDigestQueue, metrics ...JobMetrics) *JobService {
 }
 
 // TriggerDailyDigest 按上海日历日触发日报任务，重复日期会被跳过。
-func (s *JobService) TriggerDailyDigest(ctx context.Context, now time.Time) error {
+func (s *JobService) TriggerDailyDigest(ctx context.Context, now time.Time) (JobTriggerResult, error) {
 	if s.queue == nil {
-		return errDailyDigestQueueRequired
+		return JobTriggerResult{}, errDailyDigestQueueRequired
 	}
 
 	digestDate := now.In(shanghaiLocation()).Format("2006-01-02")
 
-	s.mu.Lock()
-	if s.lastDigest == digestDate {
-		s.mu.Unlock()
-		if s.metrics != nil {
-			s.metrics.IncDailyDigestSkipped()
-		}
-		return nil
-	}
-	s.lastDigest = digestDate
-	s.mu.Unlock()
-
 	if err := s.queue.EnqueueDailyDigest(ctx, digestDate); err != nil {
-		s.mu.Lock()
-		if s.lastDigest == digestDate {
-			s.lastDigest = ""
+		if errors.Is(err, ErrDailyDigestAlreadyQueued) {
+			if s.metrics != nil {
+				s.metrics.IncDailyDigestSkipped()
+			}
+			return JobTriggerResult{DigestDate: digestDate, Status: "skipped"}, nil
 		}
-		s.mu.Unlock()
-		return err
+		return JobTriggerResult{}, err
 	}
 
 	if s.metrics != nil {
 		s.metrics.IncDailyDigestTriggered()
 	}
 
-	return nil
+	return JobTriggerResult{DigestDate: digestDate, Status: "accepted"}, nil
+}
+
+func IsDailyDigestAlreadyQueued(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return errors.Is(err, ErrDailyDigestAlreadyQueued)
 }
 
 func shanghaiLocation() *time.Location {
