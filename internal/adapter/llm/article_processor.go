@@ -15,7 +15,17 @@ import (
 	"rss-platform/internal/domain/processing"
 )
 
-var errChatInvokerRequired = errors.New("llm chat invoker is required")
+var (
+	errChatInvokerRequired    = errors.New("llm chat invoker is required")
+	errCoreSummaryRequired    = errors.New("analysis core_summary is required")
+	errTopicCategoryRequired  = errors.New("analysis topic_category is required")
+	errImportanceScoreInvalid = errors.New("analysis importance_score must be between 0 and 1")
+)
+
+type promptTemplate struct {
+	path string
+	text string
+}
 
 // ChatInvoker 定义最小文本生成边界。
 type ChatInvoker interface {
@@ -25,16 +35,25 @@ type ChatInvoker interface {
 // ArticleProcessor 负责翻译与分析单篇文章。
 type ArticleProcessor struct {
 	chat                ChatInvoker
-	translationTemplate string
-	analysisTemplate    string
+	translationTemplate promptTemplate
+	analysisTemplate    promptTemplate
 }
 
 // NewArticleProcessor 创建文章处理适配器。
 func NewArticleProcessor(chat ChatInvoker, translationTemplate, analysisTemplate string) *ArticleProcessor {
 	return &ArticleProcessor{
 		chat:                chat,
-		translationTemplate: translationTemplate,
-		analysisTemplate:    analysisTemplate,
+		translationTemplate: promptTemplate{path: translationTemplate},
+		analysisTemplate:    promptTemplate{path: analysisTemplate},
+	}
+}
+
+// NewArticleProcessorFromTemplateText 创建不依赖运行时文件路径的文章处理适配器。
+func NewArticleProcessorFromTemplateText(chat ChatInvoker, translationTemplateText, analysisTemplateText string) *ArticleProcessor {
+	return &ArticleProcessor{
+		chat:                chat,
+		translationTemplate: promptTemplate{text: translationTemplateText},
+		analysisTemplate:    promptTemplate{text: analysisTemplateText},
 	}
 }
 
@@ -113,21 +132,30 @@ func (p *ArticleProcessor) Analyze(ctx context.Context, input article.SourceArti
 	if err := json.Unmarshal([]byte(normalizeJSONObject(raw)), &out); err != nil {
 		return processing.Analysis{}, err
 	}
-	return processing.Analysis{
+	analysis := processing.Analysis{
 		CoreSummary:     out.CoreSummary,
 		KeyPoints:       out.KeyPoints,
 		TopicCategory:   out.TopicCategory,
 		ImportanceScore: out.ImportanceScore,
-	}, nil
+	}
+	if err := validateAnalysis(analysis); err != nil {
+		return processing.Analysis{}, err
+	}
+	return analysis, nil
 }
 
-func buildPrompt(templatePath string, input article.SourceArticle, schemaHint string) (string, error) {
-	templateText, err := loadTemplate(templatePath)
+func buildPrompt(promptSpec promptTemplate, input article.SourceArticle, schemaHint string) (string, error) {
+	templateText, err := loadTemplate(promptSpec)
 	if err != nil {
 		return "", err
 	}
 
-	tmpl, err := template.New(filepath.Base(templatePath)).Parse(templateText)
+	name := filepath.Base(promptSpec.path)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		name = "inline-template"
+	}
+
+	tmpl, err := template.New(name).Parse(templateText)
 	if err != nil {
 		return "", err
 	}
@@ -155,8 +183,12 @@ func buildPrompt(templatePath string, input article.SourceArticle, schemaHint st
 	return prompt.String(), nil
 }
 
-func loadTemplate(path string) (string, error) {
-	resolved, err := resolvePath(path)
+func loadTemplate(promptSpec promptTemplate) (string, error) {
+	if promptSpec.text != "" {
+		return promptSpec.text, nil
+	}
+
+	resolved, err := resolvePath(promptSpec.path)
 	if err != nil {
 		return "", err
 	}
@@ -166,6 +198,20 @@ func loadTemplate(path string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func validateAnalysis(analysis processing.Analysis) error {
+	if strings.TrimSpace(analysis.CoreSummary) == "" {
+		return errCoreSummaryRequired
+	}
+	if strings.TrimSpace(analysis.TopicCategory) == "" {
+		return errTopicCategoryRequired
+	}
+	if analysis.ImportanceScore < 0 || analysis.ImportanceScore > 1 {
+		return errImportanceScoreInvalid
+	}
+
+	return nil
 }
 
 func resolvePath(path string) (string, error) {

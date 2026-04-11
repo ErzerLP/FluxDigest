@@ -33,3 +33,30 @@ func TestOpenAIRunnerRunParsesPlanJSON(t *testing.T) {
 		t.Fatalf("want art-1 got %s", got)
 	}
 }
+
+func TestOpenAIRunnerRunRejectsMissingRequiredFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+	}{
+		{
+			name:     "missing title",
+			response: `{"sections":[{"name":"重点速览","items":[{"article_id":"art-1","title":"Model News","core_summary":"核心总结"}]}]}`,
+		},
+		{
+			name:     "missing sections",
+			response: `{"title":"今日 AI 日报","sections":[]}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := digest_planning.NewOpenAIRunner(&promptRunnerStub{response: tc.response})
+
+			_, err := runner.Run(context.Background(), "prompt")
+			if err == nil {
+				t.Fatal("want validation error")
+			}
+		})
+	}
+}

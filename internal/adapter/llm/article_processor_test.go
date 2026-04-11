@@ -72,3 +72,35 @@ func TestArticleProcessorAnalyzePromptUsesUnifiedSchema(t *testing.T) {
 		t.Fatalf("analysis prompt should contain exactly one schema contract, got %s", prompt)
 	}
 }
+
+func TestArticleProcessorAnalyzeRejectsInvalidAnalysisJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+	}{
+		{
+			name:     "missing core summary",
+			response: `{"key_points":["a"],"topic_category":"AI","importance_score":0.9}`,
+		},
+		{
+			name:     "missing topic category",
+			response: `{"core_summary":"核心总结","key_points":["a"],"importance_score":0.9}`,
+		},
+		{
+			name:     "negative importance score",
+			response: `{"core_summary":"核心总结","key_points":["a"],"topic_category":"AI","importance_score":-0.1}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &chatModelStub{responses: []string{tc.response}}
+			processor := llm.NewArticleProcessor(model, "configs/prompts/translation.tmpl", "configs/prompts/analysis.tmpl")
+
+			_, err := processor.Analyze(context.Background(), article.SourceArticle{Title: "Original", ContentText: "Hello"})
+			if err == nil {
+				t.Fatal("want validation error")
+			}
+		})
+	}
+}

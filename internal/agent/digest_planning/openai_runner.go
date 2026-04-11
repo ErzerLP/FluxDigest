@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
-var errPromptRunnerRequired = errors.New("digest planning prompt runner is required")
+var (
+	errPromptRunnerRequired = errors.New("digest planning prompt runner is required")
+	errPlanTitleRequired    = errors.New("digest plan title is required")
+	errPlanSectionsRequired = errors.New("digest plan sections are required")
+)
 
 // PromptRunner 定义最小文本生成边界。
 type PromptRunner interface {
@@ -39,6 +44,9 @@ func (r *OpenAIRunner) Run(ctx context.Context, prompt string) (Plan, error) {
 	if err := json.Unmarshal([]byte(normalizePlanJSON(raw)), &plan); err != nil {
 		return Plan{}, err
 	}
+	if err := validatePlan(plan); err != nil {
+		return Plan{}, err
+	}
 	return plan, nil
 }
 
@@ -56,4 +64,32 @@ func normalizePlanJSON(raw string) string {
 	}
 
 	return trimmed
+}
+
+func validatePlan(plan Plan) error {
+	if strings.TrimSpace(plan.Title) == "" {
+		return errPlanTitleRequired
+	}
+	if len(plan.Sections) == 0 {
+		return errPlanSectionsRequired
+	}
+
+	for i, section := range plan.Sections {
+		if strings.TrimSpace(section.Name) == "" {
+			return fmt.Errorf("digest plan section[%d] name is required", i)
+		}
+		if len(section.Items) == 0 {
+			return fmt.Errorf("digest plan section[%d] items are required", i)
+		}
+		for j, item := range section.Items {
+			if strings.TrimSpace(item.ArticleID) == "" {
+				return fmt.Errorf("digest plan section[%d] item[%d] article_id is required", i, j)
+			}
+			if strings.TrimSpace(item.Title) == "" {
+				return fmt.Errorf("digest plan section[%d] item[%d] title is required", i, j)
+			}
+		}
+	}
+
+	return nil
 }
