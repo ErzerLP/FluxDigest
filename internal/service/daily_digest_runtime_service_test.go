@@ -112,10 +112,13 @@ func (s *digestRepoStub) MarkFailed(_ context.Context, digestDate string, publis
 	return nil
 }
 
-func (s *digestRepoStub) MarkRecoveryRequired(_ context.Context, digestDate string, publishError string) error {
+func (s *digestRepoStub) MarkRecoveryRequired(_ context.Context, digestDate string, publishResult adapterpublisher.PublishDigestResult, publishError string) error {
 	s.markRecoveryCalls++
 	s.lastDigestDate = digestDate
 	s.state = "recovery_required"
+	s.remoteID = publishResult.RemoteID
+	s.remoteURL = publishResult.RemoteURL
+	s.lastPublish = publishResult
 	s.publishError = publishError
 	return nil
 }
@@ -255,5 +258,28 @@ func TestDailyDigestRuntimeServiceRetriesMarkPublishedBeforeRecoveryRequired(t *
 	}
 	if digests.markRecoveryCalls != 0 {
 		t.Fatalf("want no recovery_required mark got %d", digests.markRecoveryCalls)
+	}
+}
+
+func TestDailyDigestRuntimeServiceMarkPublishedFailureTransitionsToRecoveryRequiredWithRemoteInfo(t *testing.T) {
+	digests := &digestRepoStub{markPublishedErrs: []error{errors.New("db timeout"), errors.New("db timeout"), errors.New("db timeout")}}
+	publisher := &publishStub{results: []publishOutcome{{result: adapterpublisher.PublishDigestResult{RemoteID: "remote-1", RemoteURL: "https://example.com/published"}}}}
+	svc := service.NewDailyDigestRuntimeService(&ingestionStub{}, &processingWorkflowStub{candidates: []domaindigest.CandidateArticle{{ID: "art-1"}}}, &digestWorkflowStub{digest: daily_digest_workflow.Digest{Title: "日报", ContentMarkdown: "# 内容", ContentHTML: "<h1>内容</h1>"}}, digests, publisher)
+
+	_, err := svc.Run(context.Background(), "2026-04-11", time.Date(2026, 4, 12, 8, 0, 0, 0, time.FixedZone("CST", 8*3600)))
+	if !errors.Is(err, service.ErrDigestRecoveryRequired) {
+		t.Fatalf("want ErrDigestRecoveryRequired got %v", err)
+	}
+	if digests.state != "recovery_required" {
+		t.Fatalf("want recovery_required state got %s", digests.state)
+	}
+	if digests.remoteID != "remote-1" {
+		t.Fatalf("want remote-1 got %s", digests.remoteID)
+	}
+	if digests.remoteURL != "https://example.com/published" {
+		t.Fatalf("want published url got %s", digests.remoteURL)
+	}
+	if publisher.calls != 1 {
+		t.Fatalf("want 1 publish call got %d", publisher.calls)
 	}
 }

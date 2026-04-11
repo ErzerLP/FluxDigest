@@ -40,7 +40,7 @@ type DigestStore interface {
 	BeginPublish(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest) (bool, error)
 	MarkPublished(ctx context.Context, digestDate string, publishResult adapterpublisher.PublishDigestResult) error
 	MarkFailed(ctx context.Context, digestDate string, publishError string) error
-	MarkRecoveryRequired(ctx context.Context, digestDate string, publishError string) error
+	MarkRecoveryRequired(ctx context.Context, digestDate string, publishResult adapterpublisher.PublishDigestResult, publishError string) error
 }
 
 // RunResult 表示一次日报运行的关键输出。
@@ -132,7 +132,7 @@ func (s *DailyDigestRuntimeService) Run(ctx context.Context, digestDate string, 
 	}
 
 	if err := s.markPublishedWithRetry(ctx, digestDate, publishResult); err != nil {
-		markErr := s.digests.MarkRecoveryRequired(ctx, digestDate, err.Error())
+		markErr := s.digests.MarkRecoveryRequired(ctx, digestDate, publishResult, err.Error())
 		if markErr != nil {
 			return RunResult{}, errors.Join(ErrDigestRecoveryRequired, err, markErr)
 		}
@@ -157,7 +157,7 @@ func (s *DailyDigestRuntimeService) handleExistingState(digestDate, state, remot
 
 func (s *DailyDigestRuntimeService) handlePublishError(ctx context.Context, digestDate string, publishErr error) error {
 	if adapterpublisher.IsAmbiguousPublishError(publishErr) {
-		markErr := s.digests.MarkRecoveryRequired(ctx, digestDate, publishErr.Error())
+		markErr := s.digests.MarkRecoveryRequired(ctx, digestDate, adapterpublisher.PublishDigestResult{}, publishErr.Error())
 		if markErr != nil {
 			return errors.Join(ErrDigestRecoveryRequired, publishErr, markErr)
 		}

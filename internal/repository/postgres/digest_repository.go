@@ -116,9 +116,11 @@ func (r *DigestRepository) MarkFailed(ctx context.Context, digestDate string, pu
 	})
 }
 
-// MarkRecoveryRequired 将模糊副作用失败写为 recovery_required，禁止自动重发。
-func (r *DigestRepository) MarkRecoveryRequired(ctx context.Context, digestDate string, publishError string) error {
+// MarkRecoveryRequired 将模糊副作用失败写为 recovery_required，必要时保留远端对账信息。
+func (r *DigestRepository) MarkRecoveryRequired(ctx context.Context, digestDate string, publishResult adapterpublisher.PublishDigestResult, publishError string) error {
 	return r.updatePublishState(ctx, digestDate, map[string]any{
+		"remote_id":     publishResult.RemoteID,
+		"remote_url":    publishResult.RemoteURL,
 		"publish_state": digestStateRecoveryRequired,
 		"publish_error": publishError,
 		"updated_at":    time.Now(),

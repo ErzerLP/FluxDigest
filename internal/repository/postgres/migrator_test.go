@@ -205,6 +205,53 @@ INSERT INTO daily_digests (
 	}
 }
 
+func TestMigratorBackfillsPublishedDigestStateFromLegacyRemoteURL(t *testing.T) {
+	tempDir := t.TempDir()
+	db := openSQLiteDB(t, filepath.Join(tempDir, "runtime.db"))
+
+	if _, err := db.Exec(`
+CREATE TABLE schema_migrations (
+  filename TEXT PRIMARY KEY,
+  applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO schema_migrations (filename) VALUES ('0001_init.up.sql');
+INSERT INTO schema_migrations (filename) VALUES ('0002_runtime_state.up.sql');
+
+CREATE TABLE daily_digests (
+  id VARCHAR(36) PRIMARY KEY,
+  digest_date DATE NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  subtitle TEXT NOT NULL,
+  content_markdown TEXT NOT NULL,
+  content_html TEXT NOT NULL,
+  remote_url TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO daily_digests (
+  id, digest_date, title, subtitle, content_markdown, content_html, remote_url
+) VALUES (
+  'digest-legacy', '2026-04-11', '旧日报', '旧副标题', '# legacy', '<p>legacy</p>', 'https://example.com/already-published'
+);
+`); err != nil {
+		t.Fatalf("prepare legacy digest table: %v", err)
+	}
+
+	migrator := NewMigrator(db, projectMigrationsDir(t))
+	if err := migrator.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate legacy digest table: %v", err)
+	}
+
+	var publishState string
+	if err := db.QueryRow(`SELECT publish_state FROM daily_digests WHERE id = ?`, "digest-legacy").Scan(&publishState); err != nil {
+		t.Fatalf("query backfilled publish_state: %v", err)
+	}
+	if publishState != "published" {
+		t.Fatalf("want published publish_state got %q", publishState)
+	}
+}
+
 type pragmaColumn struct {
 	Name         string
 	Type         string

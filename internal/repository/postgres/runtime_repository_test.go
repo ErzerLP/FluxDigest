@@ -117,8 +117,12 @@ func TestDigestRepositoryStateTransitions(t *testing.T) {
 		t.Fatalf("unexpected published state found=%v state=%s remote_url=%s", found, state, remoteURL)
 	}
 
-	if err := repo.MarkRecoveryRequired(ctx, "2026-04-11", "decode failed"); err != nil {
+	if err := repo.MarkRecoveryRequired(ctx, "2026-04-11", adapterpublisher.PublishDigestResult{RemoteID: "remote-2", RemoteURL: "https://example.com/second"}, "decode failed"); err != nil {
 		t.Fatalf("mark recovery required: %v", err)
+	}
+	record, err := repo.GetByDigestDate(ctx, "2026-04-11")
+	if err != nil {
+		t.Fatalf("get recovery_required record: %v", err)
 	}
 	state, _, found, err = repo.GetState(ctx, "2026-04-11")
 	if err != nil {
@@ -126,5 +130,11 @@ func TestDigestRepositoryStateTransitions(t *testing.T) {
 	}
 	if !found || state != "recovery_required" {
 		t.Fatalf("want recovery_required state got found=%v state=%s", found, state)
+	}
+	if record.RemoteID != "remote-2" {
+		t.Fatalf("want remote-2 got %s", record.RemoteID)
+	}
+	if record.RemoteURL != "https://example.com/second" {
+		t.Fatalf("want https://example.com/second got %s", record.RemoteURL)
 	}
 }
