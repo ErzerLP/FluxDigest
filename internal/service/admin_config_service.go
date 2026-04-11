@@ -14,6 +14,7 @@ type adminConfigProfileRepo interface {
 }
 
 var errAdminConfigRepoMissing = errors.New("admin config repo is required")
+var errSecretValueRequired = errors.New("secret value required")
 
 // AdminConfigService 负责读取与更新管理员配置。
 type AdminConfigService struct {
@@ -82,10 +83,13 @@ func (s *AdminConfigService) UpdateLLM(ctx context.Context, input UpdateLLMConfi
 		return profile.Version{}, err
 	}
 
-	payload := map[string]any{
-		"base_url": input.BaseURL,
-		"model":    input.Model,
+	if input.APIKey.Mode == SecretModeReplace && input.APIKey.Value == "" {
+		return profile.Version{}, errSecretValueRequired
 	}
+
+	payload := clonePayload(currentPayload)
+	payload["base_url"] = input.BaseURL
+	payload["model"] = input.Model
 
 	applySecret(payload, currentPayload, "api_key", input.APIKey)
 
@@ -155,6 +159,17 @@ func applySecret(payload map[string]any, current map[string]any, key string, inp
 			payload[key] = existing
 		}
 	}
+}
+
+func clonePayload(payload map[string]any) map[string]any {
+	if payload == nil {
+		return map[string]any{}
+	}
+	clone := make(map[string]any, len(payload))
+	for key, value := range payload {
+		clone[key] = value
+	}
+	return clone
 }
 
 func stringValue(payload map[string]any, key string) string {

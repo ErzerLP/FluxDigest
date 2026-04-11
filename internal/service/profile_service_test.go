@@ -44,15 +44,15 @@ func TestProfileServiceSeedsDefaults(t *testing.T) {
 		t.Fatalf("want 5 got %d", len(repo.created))
 	}
 
-	var aiPayload map[string]any
-	if err := json.Unmarshal(repo.created[0].PayloadJSON, &aiPayload); err != nil {
+	var llmPayload map[string]any
+	if err := json.Unmarshal(repo.created[0].PayloadJSON, &llmPayload); err != nil {
 		t.Fatalf("unmarshal llm payload: %v", err)
 	}
-	if aiPayload["model"] != "gpt-4.1-mini" {
-		t.Fatalf("missing default llm model in payload: %+v", aiPayload)
+	if llmPayload["model"] != "gpt-4.1-mini" {
+		t.Fatalf("missing default llm model in payload: %+v", llmPayload)
 	}
-	if aiPayload["timeout_ms"] != float64(30000) {
-		t.Fatalf("missing default llm timeout in payload: %+v", aiPayload)
+	if llmPayload["timeout_ms"] != float64(30000) {
+		t.Fatalf("missing default llm timeout in payload: %+v", llmPayload)
 	}
 }
 
