@@ -40,19 +40,19 @@ func TestProfileServiceSeedsDefaults(t *testing.T) {
 	if err := svc.SeedDefaults(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(repo.created) != 4 {
-		t.Fatalf("want 4 got %d", len(repo.created))
+	if len(repo.created) != 5 {
+		t.Fatalf("want 5 got %d", len(repo.created))
 	}
 
 	var aiPayload map[string]any
 	if err := json.Unmarshal(repo.created[0].PayloadJSON, &aiPayload); err != nil {
-		t.Fatalf("unmarshal ai payload: %v", err)
+		t.Fatalf("unmarshal llm payload: %v", err)
 	}
-	if aiPayload["translation_prompt_template"] != "configs/prompts/translation.tmpl" {
-		t.Fatalf("missing translation prompt template path in ai payload: %+v", aiPayload)
+	if aiPayload["model"] != "gpt-4.1-mini" {
+		t.Fatalf("missing default llm model in payload: %+v", aiPayload)
 	}
-	if aiPayload["analysis_prompt_template"] != "configs/prompts/analysis.tmpl" {
-		t.Fatalf("missing analysis prompt template path in ai payload: %+v", aiPayload)
+	if aiPayload["timeout_ms"] != float64(30000) {
+		t.Fatalf("missing default llm timeout in payload: %+v", aiPayload)
 	}
 }
 
@@ -67,7 +67,7 @@ func TestProfileServiceSeedDefaultsIsIdempotentWhenActiveExists(t *testing.T) {
 		t.Fatalf("second seed: %v", err)
 	}
 
-	if len(repo.created) != 4 {
-		t.Fatalf("want 4 created records after two seed calls, got %d", len(repo.created))
+	if len(repo.created) != 5 {
+		t.Fatalf("want 5 created records after two seed calls, got %d", len(repo.created))
 	}
 }

@@ -29,38 +29,55 @@ func (s *ProfileService) SeedDefaults(ctx context.Context) error {
 		payload     map[string]any
 	}{
 		{
-			profileType: "ai",
-			name:        "default-ai",
+			profileType: profile.TypeLLM,
+			name:        "default-llm",
 			payload: map[string]any{
-				"provider":                    "openai",
-				"model":                       "gpt-4.1-mini",
-				"temperature":                 0.2,
-				"translation_prompt_template": "configs/prompts/translation.tmpl",
-				"analysis_prompt_template":    "configs/prompts/analysis.tmpl",
+				"base_url":   "",
+				"model":      "gpt-4.1-mini",
+				"timeout_ms": 30000,
+				"is_enabled": true,
 			},
 		},
 		{
-			profileType: "digest",
-			name:        "default-digest",
+			profileType: profile.TypeMiniflux,
+			name:        "default-miniflux",
 			payload: map[string]any{
-				"prompt_path": "configs/prompts/digest.tmpl",
-				"max_items":   10,
+				"base_url":       "",
+				"api_token":      "",
+				"fetch_limit":    100,
+				"lookback_hours": 24,
+				"is_enabled":     true,
 			},
 		},
 		{
-			profileType: "publish",
+			profileType: profile.TypePrompts,
+			name:        "default-prompts",
+			payload: map[string]any{
+				"target_language":    "zh-CN",
+				"translation_prompt": "",
+				"analysis_prompt":    "",
+				"digest_prompt":      "",
+				"is_enabled":         true,
+			},
+		},
+		{
+			profileType: profile.TypePublish,
 			name:        "default-publish",
 			payload: map[string]any{
-				"channel": "markdown",
-				"enabled": true,
+				"target_type":    "holo",
+				"endpoint":       "",
+				"auth_token":     "",
+				"content_format": "markdown",
+				"is_enabled":     true,
 			},
 		},
 		{
-			profileType: "api",
-			name:        "default-api",
+			profileType: profile.TypeScheduler,
+			name:        "default-scheduler",
 			payload: map[string]any{
-				"timeout_seconds": 30,
-				"retry":           1,
+				"schedule_enabled": true,
+				"schedule_time":    "07:00",
+				"timezone":         "Asia/Shanghai",
 			},
 		},
 	}
