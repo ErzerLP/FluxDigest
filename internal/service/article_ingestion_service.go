@@ -19,7 +19,7 @@ type ArticleWriter interface {
 
 // ArticleIngestionRunner 定义运行期抓取与持久化边界。
 type ArticleIngestionRunner interface {
-	FetchAndPersist(ctx context.Context, since time.Time) error
+	FetchAndPersist(ctx context.Context, windowStart, windowEnd time.Time) error
 }
 
 // ArticleIngestionService 负责抓取来源文章并落库。
@@ -33,9 +33,9 @@ func NewArticleIngestionService(client *miniflux.Client, repo ArticleWriter) *Ar
 	return &ArticleIngestionService{client: client, repo: repo}
 }
 
-// FetchAndPersist 抓取 since 之后的文章并逐条落库。
-func (s *ArticleIngestionService) FetchAndPersist(ctx context.Context, since time.Time) error {
-	entries, err := s.client.ListEntries(ctx, since)
+// FetchAndPersist 抓取窗口内文章并逐条落库。
+func (s *ArticleIngestionService) FetchAndPersist(ctx context.Context, windowStart, windowEnd time.Time) error {
+	entries, err := s.client.ListEntries(ctx, windowStart, windowEnd)
 	if err != nil {
 		return err
 	}

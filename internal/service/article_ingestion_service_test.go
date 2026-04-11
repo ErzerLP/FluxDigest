@@ -28,11 +28,12 @@ func TestArticleIngestionServiceFetchAndPersistMapsFeedTitleAndCallsUpsert(t *te
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"entries": []map[string]any{{
-				"id":      1001,
-				"title":   "New Model",
-				"author":  "Alice",
-				"url":     "https://example.com/a",
-				"content": "<p>Hello</p>",
+				"id":           1001,
+				"title":        "New Model",
+				"author":       "Alice",
+				"url":          "https://example.com/a",
+				"content":      "<p>Hello</p>",
+				"published_at": time.Date(2026, 4, 11, 9, 0, 0, 0, time.UTC).Format(time.RFC3339),
 				"feed": map[string]any{
 					"id":    901,
 					"title": "AI Weekly",
@@ -46,7 +47,9 @@ func TestArticleIngestionServiceFetchAndPersistMapsFeedTitleAndCallsUpsert(t *te
 	repo := &articleWriterStub{}
 	svc := service.NewArticleIngestionService(client, repo)
 
-	if err := svc.FetchAndPersist(context.Background(), time.Unix(1712803200, 0)); err != nil {
+	start := time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	if err := svc.FetchAndPersist(context.Background(), start, end); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,5 +65,50 @@ func TestArticleIngestionServiceFetchAndPersistMapsFeedTitleAndCallsUpsert(t *te
 	wantFingerprint := hex.EncodeToString(wantHash[:])
 	if got.Fingerprint != wantFingerprint {
 		t.Fatalf("fingerprint mismatch: want %s got %s", wantFingerprint, got.Fingerprint)
+	}
+}
+
+func TestArticleIngestionServiceFetchAndPersistFiltersEntriesAfterWindowEnd(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"entries": []map[string]any{
+				{
+					"id":           1001,
+					"title":        "Included",
+					"author":       "Alice",
+					"url":          "https://example.com/a",
+					"content":      "<p>Hello</p>",
+					"published_at": time.Date(2026, 4, 11, 10, 0, 0, 0, time.UTC).Format(time.RFC3339),
+					"feed":         map[string]any{"id": 901, "title": "AI Weekly"},
+				},
+				{
+					"id":           1002,
+					"title":        "Excluded",
+					"author":       "Bob",
+					"url":          "https://example.com/b",
+					"content":      "<p>Too late</p>",
+					"published_at": time.Date(2026, 4, 12, 1, 0, 0, 0, time.UTC).Format(time.RFC3339),
+					"feed":         map[string]any{"id": 902, "title": "Nightly"},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := miniflux.NewClient(server.URL, "secret-token")
+	repo := &articleWriterStub{}
+	svc := service.NewArticleIngestionService(client, repo)
+
+	start := time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	if err := svc.FetchAndPersist(context.Background(), start, end); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(repo.upserts) != 1 {
+		t.Fatalf("want 1 upsert got %d", len(repo.upserts))
+	}
+	if repo.upserts[0].Title != "Included" {
+		t.Fatalf("want only included entry got %s", repo.upserts[0].Title)
 	}
 }

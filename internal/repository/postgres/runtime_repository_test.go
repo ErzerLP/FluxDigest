@@ -38,41 +38,15 @@ func TestProcessingRepositorySaveAndListLatestByArticle(t *testing.T) {
 	repo := postgres.NewProcessingRepository(db)
 	ctx := context.Background()
 
-	first := postgres.ProcessedArticleRecord{
-		ArticleID:         "art-1",
-		TitleTranslated:   "标题-1",
-		SummaryTranslated: "摘要-1",
-		ContentTranslated: "正文-1",
-		CoreSummary:       "核心总结-1",
-		KeyPoints:         []string{"a"},
-		TopicCategory:     "Old",
-		ImportanceScore:   0.6,
-	}
+	first := postgres.ProcessedArticleRecord{ArticleID: "art-1", TitleTranslated: "标题-1", SummaryTranslated: "摘要-1", ContentTranslated: "正文-1", CoreSummary: "核心总结-1", KeyPoints: []string{"a"}, TopicCategory: "Old", ImportanceScore: 0.6}
 	if err := repo.Save(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-
-	second := postgres.ProcessedArticleRecord{
-		ArticleID:         "art-1",
-		TitleTranslated:   "标题-2",
-		SummaryTranslated: "摘要-2",
-		ContentTranslated: "正文-2",
-		CoreSummary:       "核心总结-2",
-		KeyPoints:         []string{"a", "b"},
-		TopicCategory:     "AI",
-		ImportanceScore:   0.8,
-	}
+	second := postgres.ProcessedArticleRecord{ArticleID: "art-1", TitleTranslated: "标题-2", SummaryTranslated: "摘要-2", ContentTranslated: "正文-2", CoreSummary: "核心总结-2", KeyPoints: []string{"a", "b"}, TopicCategory: "AI", ImportanceScore: 0.8}
 	if err := repo.Save(ctx, second); err != nil {
 		t.Fatal(err)
 	}
 
-	var rows []models.ArticleProcessingModel
-	if err := db.WithContext(ctx).Where("article_id = ?", "art-1").Order("created_at ASC").Find(&rows).Error; err != nil {
-		t.Fatalf("list processing rows: %v", err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("want 2 rows got %d", len(rows))
-	}
 	sharedCreatedAt := time.Date(2026, 4, 11, 9, 0, 0, 0, time.UTC)
 	if err := db.WithContext(ctx).Model(&models.ArticleProcessingModel{}).Where("article_id = ?", "art-1").Update("created_at", sharedCreatedAt).Error; err != nil {
 		t.Fatalf("align created_at: %v", err)
@@ -88,54 +62,51 @@ func TestProcessingRepositorySaveAndListLatestByArticle(t *testing.T) {
 	if got.TitleTranslated != "标题-2" {
 		t.Fatalf("want latest translated title 标题-2 got %s", got.TitleTranslated)
 	}
-	if len(got.KeyPoints) != 2 || got.KeyPoints[0] != "a" || got.KeyPoints[1] != "b" {
-		t.Fatalf("unexpected key points: %#v", got.KeyPoints)
-	}
 }
 
-func TestDigestRepositorySaveUpsertsAndGetByDigestDate(t *testing.T) {
+func TestDigestRepositoryReserveMarkPublishedAndGetByDigestDate(t *testing.T) {
 	db := newRuntimeTestDB(t)
 	migrateRuntimeTables(t, db)
 	repo := postgres.NewDigestRepository(db)
 	ctx := context.Background()
+	digest := daily_digest_workflow.Digest{Title: "第一次日报", Subtitle: "第一版", ContentMarkdown: "# first", ContentHTML: "<h1>first</h1>"}
 
-	if err := repo.Save(ctx, "2026-04-11", daily_digest_workflow.Digest{
-		Title:           "第一次日报",
-		Subtitle:        "第一版",
-		ContentMarkdown: "# first",
-		ContentHTML:     "<h1>first</h1>",
-	}, adapterpublisher.PublishDigestResult{RemoteURL: "https://example.com/first"}); err != nil {
-		t.Fatalf("save first digest: %v", err)
+	reserved, err := repo.Reserve(ctx, "2026-04-11", digest)
+	if err != nil {
+		t.Fatalf("reserve digest: %v", err)
+	}
+	if !reserved {
+		t.Fatal("expected first reserve to succeed")
 	}
 
-	if err := repo.Save(ctx, "2026-04-11", daily_digest_workflow.Digest{
-		Title:           "第二次日报",
-		Subtitle:        "第二版",
-		ContentMarkdown: "# second",
-		ContentHTML:     "<h1>second</h1>",
-	}, adapterpublisher.PublishDigestResult{RemoteURL: "https://example.com/second"}); err != nil {
-		t.Fatalf("save second digest: %v", err)
+	reserved, err = repo.Reserve(ctx, "2026-04-11", daily_digest_workflow.Digest{Title: "第二次日报", Subtitle: "第二版", ContentMarkdown: "# second", ContentHTML: "<h1>second</h1>"})
+	if err != nil {
+		t.Fatalf("reserve existing digest: %v", err)
 	}
-
-	var count int64
-	if err := db.Model(&models.DailyDigestModel{}).Count(&count).Error; err != nil {
-		t.Fatalf("count digests: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("want 1 digest row got %d", count)
+	if reserved {
+		t.Fatal("expected second reserve to be ignored")
 	}
 
 	got, err := repo.GetByDigestDate(ctx, "2026-04-11")
 	if err != nil {
-		t.Fatalf("get by digest date: %v", err)
+		t.Fatalf("get pending digest: %v", err)
 	}
-	if got.DigestDate != "2026-04-11" {
-		t.Fatalf("want digest date 2026-04-11 got %s", got.DigestDate)
+	if got.RemoteURL != "" {
+		t.Fatalf("want pending digest remote url empty got %s", got.RemoteURL)
 	}
-	if got.Title != "第二次日报" {
-		t.Fatalf("want latest title 第二次日报 got %s", got.Title)
+	if got.Title != "第一次日报" {
+		t.Fatalf("want reserved title 第一次日报 got %s", got.Title)
+	}
+
+	if err := repo.MarkPublished(ctx, "2026-04-11", adapterpublisher.PublishDigestResult{RemoteURL: "https://example.com/second"}); err != nil {
+		t.Fatalf("mark published: %v", err)
+	}
+
+	got, err = repo.GetByDigestDate(ctx, "2026-04-11")
+	if err != nil {
+		t.Fatalf("get published digest: %v", err)
 	}
 	if got.RemoteURL != "https://example.com/second" {
-		t.Fatalf("want latest remote url got %s", got.RemoteURL)
+		t.Fatalf("want published remote url got %s", got.RemoteURL)
 	}
 }

@@ -37,14 +37,14 @@ func NewClient(baseURL, authToken string) *Client {
 	}
 }
 
-func (c *Client) ListEntries(ctx context.Context, since time.Time) ([]Entry, error) {
+func (c *Client) ListEntries(ctx context.Context, windowStart, windowEnd time.Time) ([]Entry, error) {
 	endpoint, err := url.Parse(c.baseURL + "/v1/entries")
 	if err != nil {
 		return nil, fmt.Errorf("parse endpoint: %w", err)
 	}
 
 	query := endpoint.Query()
-	query.Set("published_after", strconv.FormatInt(since.UTC().Unix(), 10))
+	query.Set("published_after", strconv.FormatInt(windowStart.UTC().Unix(), 10))
 	endpoint.RawQuery = query.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
@@ -85,6 +85,15 @@ func (c *Client) ListEntries(ctx context.Context, since time.Time) ([]Entry, err
 
 	entries := make([]Entry, 0, len(payload.Entries))
 	for _, raw := range payload.Entries {
+		if !raw.PublishedAt.IsZero() {
+			if raw.PublishedAt.Before(windowStart) {
+				continue
+			}
+			if !windowEnd.IsZero() && !raw.PublishedAt.Before(windowEnd) {
+				continue
+			}
+		}
+
 		feedID := raw.Feed.ID
 		if feedID == 0 {
 			feedID = raw.FeedID

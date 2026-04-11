@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,9 +11,11 @@ import (
 	"rss-platform/internal/workflow/daily_digest_workflow"
 )
 
+var ErrDigestPendingState = errors.New("digest state is pending confirmation")
+
 // ProcessingRunner 定义待入选文章处理所需的最小能力。
 type ProcessingRunner interface {
-	ProcessPending(ctx context.Context, since time.Time) ([]domaindigest.CandidateArticle, error)
+	ProcessPending(ctx context.Context, windowStart, windowEnd time.Time) ([]domaindigest.CandidateArticle, error)
 }
 
 // DigestRunner 定义日报生成所需的最小能力。
@@ -20,9 +23,11 @@ type DigestRunner interface {
 	Generate(ctx context.Context, candidates []domaindigest.CandidateArticle) (daily_digest_workflow.Digest, error)
 }
 
-// DigestWriter 定义日报结果持久化所需的最小能力。
-type DigestWriter interface {
-	Save(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest, publishResult adapterpublisher.PublishDigestResult) error
+// DigestStore 定义日报占位、查询与发布回写所需的最小能力。
+type DigestStore interface {
+	GetRemoteURL(ctx context.Context, digestDate string) (string, bool, error)
+	Reserve(ctx context.Context, digestDate string, digest daily_digest_workflow.Digest) (bool, error)
+	MarkPublished(ctx context.Context, digestDate string, publishResult adapterpublisher.PublishDigestResult) error
 }
 
 // RunResult 表示一次日报运行的关键输出。
@@ -36,7 +41,7 @@ type DailyDigestRuntimeService struct {
 	ingestion  ArticleIngestionRunner
 	processing ProcessingRunner
 	digest     DigestRunner
-	digests    DigestWriter
+	digests    DigestStore
 	publisher  adapterpublisher.Publisher
 }
 
@@ -45,7 +50,7 @@ func NewDailyDigestRuntimeService(
 	ingestion ArticleIngestionRunner,
 	processing ProcessingRunner,
 	digest DigestRunner,
-	digests DigestWriter,
+	digests DigestStore,
 	publisher adapterpublisher.Publisher,
 ) *DailyDigestRuntimeService {
 	return &DailyDigestRuntimeService{
@@ -59,18 +64,27 @@ func NewDailyDigestRuntimeService(
 
 // Run 执行一次日报运行链路，并返回关键结果。
 func (s *DailyDigestRuntimeService) Run(ctx context.Context, digestDate string, now time.Time) (RunResult, error) {
-	_ = now
+	remoteURL, exists, err := s.digests.GetRemoteURL(ctx, digestDate)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if exists {
+		if remoteURL != "" {
+			return RunResult{DigestDate: digestDate, RemoteURL: remoteURL}, nil
+		}
+		return RunResult{}, ErrDigestPendingState
+	}
 
-	since, err := parseDigestDateStart(digestDate)
+	windowStart, windowEnd, err := digestWindow(digestDate, now)
 	if err != nil {
 		return RunResult{}, err
 	}
 
-	if err := s.ingestion.FetchAndPersist(ctx, since); err != nil {
+	if err := s.ingestion.FetchAndPersist(ctx, windowStart, windowEnd); err != nil {
 		return RunResult{}, err
 	}
 
-	candidates, err := s.processing.ProcessPending(ctx, since)
+	candidates, err := s.processing.ProcessPending(ctx, windowStart, windowEnd)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -78,6 +92,21 @@ func (s *DailyDigestRuntimeService) Run(ctx context.Context, digestDate string, 
 	digest, err := s.digest.Generate(ctx, candidates)
 	if err != nil {
 		return RunResult{}, err
+	}
+
+	reserved, err := s.digests.Reserve(ctx, digestDate, digest)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if !reserved {
+		remoteURL, exists, err = s.digests.GetRemoteURL(ctx, digestDate)
+		if err != nil {
+			return RunResult{}, err
+		}
+		if exists && remoteURL != "" {
+			return RunResult{DigestDate: digestDate, RemoteURL: remoteURL}, nil
+		}
+		return RunResult{}, ErrDigestPendingState
 	}
 
 	publishResult, err := s.publisher.PublishDigest(ctx, adapterpublisher.PublishDigestRequest{
@@ -90,7 +119,7 @@ func (s *DailyDigestRuntimeService) Run(ctx context.Context, digestDate string, 
 		return RunResult{}, err
 	}
 
-	if err := s.digests.Save(ctx, digestDate, digest, publishResult); err != nil {
+	if err := s.digests.MarkPublished(ctx, digestDate, publishResult); err != nil {
 		return RunResult{}, err
 	}
 
@@ -100,10 +129,20 @@ func (s *DailyDigestRuntimeService) Run(ctx context.Context, digestDate string, 
 	}, nil
 }
 
-func parseDigestDateStart(digestDate string) (time.Time, error) {
-	since, err := time.ParseInLocation("2006-01-02", digestDate, shanghaiLocation())
+func digestWindow(digestDate string, now time.Time) (time.Time, time.Time, error) {
+	windowStart, err := time.ParseInLocation("2006-01-02", digestDate, shanghaiLocation())
 	if err != nil {
-		return time.Time{}, fmt.Errorf("parse digest date %s: %w", digestDate, err)
+		return time.Time{}, time.Time{}, fmt.Errorf("parse digest date %s: %w", digestDate, err)
 	}
-	return since, nil
+
+	windowEnd := now.In(shanghaiLocation())
+	dayEnd := windowStart.Add(24 * time.Hour)
+	if windowEnd.After(dayEnd) {
+		windowEnd = dayEnd
+	}
+	if windowEnd.Before(windowStart) {
+		windowEnd = windowStart
+	}
+
+	return windowStart, windowEnd, nil
 }
