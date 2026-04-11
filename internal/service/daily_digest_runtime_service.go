@@ -9,11 +9,6 @@ import (
 	"rss-platform/internal/workflow/daily_digest_workflow"
 )
 
-// IngestionRunner 定义文章抓取持久化所需的最小能力。
-type IngestionRunner interface {
-	FetchAndPersist(ctx context.Context, since time.Time) error
-}
-
 // ProcessingRunner 定义待入选文章处理所需的最小能力。
 type ProcessingRunner interface {
 	ProcessPending(ctx context.Context, since time.Time) ([]domaindigest.CandidateArticle, error)
@@ -37,7 +32,7 @@ type RunResult struct {
 
 // DailyDigestRuntimeService 负责编排抓取、处理、日报生成、发布与持久化。
 type DailyDigestRuntimeService struct {
-	ingestion  IngestionRunner
+	ingestion  ArticleIngestionRunner
 	processing ProcessingRunner
 	digest     DigestRunner
 	digests    DigestWriter
@@ -46,7 +41,7 @@ type DailyDigestRuntimeService struct {
 
 // NewDailyDigestRuntimeService 创建运行期日报编排服务。
 func NewDailyDigestRuntimeService(
-	ingestion IngestionRunner,
+	ingestion ArticleIngestionRunner,
 	processing ProcessingRunner,
 	digest DigestRunner,
 	digests DigestWriter,

@@ -34,20 +34,21 @@ func NewDigestRepository(db *gorm.DB) *DigestRepository {
 	return &DigestRepository{db: db}
 }
 
-// Save 按 digestDate 幂等写入日报结果。
+// Save 按稳定日语义幂等写入日报结果。
 func (r *DigestRepository) Save(ctx context.Context, runAt time.Time, digest daily_digest_workflow.Digest, publishResult adapterpublisher.PublishDigestResult) error {
-	digestDate := time.Date(runAt.Year(), runAt.Month(), runAt.Day(), 0, 0, 0, 0, runAt.Location())
-	model := models.DailyDigestModel{
-		ID:              ensureID(""),
-		DigestDate:      digestDate,
-		Title:           digest.Title,
-		Subtitle:        digest.Subtitle,
-		ContentMarkdown: digest.ContentMarkdown,
-		ContentHTML:     digest.ContentHTML,
-		RemoteURL:       publishResult.RemoteURL,
+	digestDate := runAt.Format("2006-01-02")
+	values := map[string]any{
+		"id":               ensureID(""),
+		"digest_date":      digestDate,
+		"title":            digest.Title,
+		"subtitle":         digest.Subtitle,
+		"content_markdown": digest.ContentMarkdown,
+		"content_html":     digest.ContentHTML,
+		"remote_url":       publishResult.RemoteURL,
 	}
 
 	return r.db.WithContext(ctx).
+		Table(models.DailyDigestModel{}.TableName()).
 		Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "digest_date"}},
 			DoUpdates: clause.AssignmentColumns([]string{
@@ -58,14 +59,14 @@ func (r *DigestRepository) Save(ctx context.Context, runAt time.Time, digest dai
 				"remote_url",
 			}),
 		}).
-		Create(&model).Error
+		Create(values).Error
 }
 
 // GetByDigestDate 按日期读取已保存的日报结果。
 func (r *DigestRepository) GetByDigestDate(ctx context.Context, digestDate string) (DailyDigestRecord, error) {
 	var model models.DailyDigestModel
 	if err := r.db.WithContext(ctx).
-		Where("date(digest_date) = ?", digestDate).
+		Where("digest_date = ?", digestDate).
 		First(&model).Error; err != nil {
 		return DailyDigestRecord{}, err
 	}
