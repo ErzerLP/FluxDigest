@@ -110,6 +110,39 @@ func TestWorkflowGenerateDigestRejectsUnknownArticleTrace(t *testing.T) {
 	}
 }
 
+func TestWorkflowGenerateDigestRecoversTraceByDossierID(t *testing.T) {
+	wf := workflow.New(plannerFuncStub(func(_ context.Context, _ []domaindigest.CandidateArticle) (domaindigest.Plan, error) {
+		return domaindigest.Plan{
+			Title: "今日 AI 日报",
+			Sections: []domaindigest.Section{{
+				Name: "重点速览",
+				Items: []domaindigest.SectionItem{{
+					DossierID:   "dos-1",
+					ArticleID:   "art-x",
+					Title:       "模型新闻",
+					CoreSummary: "核心总结",
+				}},
+			}},
+		}, nil
+	}), renderpkg.NewDigestRenderer())
+
+	digest, err := wf.Run(context.Background(), []domaindigest.CandidateArticle{{
+		ID:        "art-1",
+		DossierID: "dos-1",
+		Title:     "模型新闻",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := digest.Plan.Sections[0].Items[0]
+	if item.DossierID != "dos-1" {
+		t.Fatalf("want dossier dos-1 got %q", item.DossierID)
+	}
+	if item.ArticleID != "art-1" {
+		t.Fatalf("want recovered article_id art-1 got %q", item.ArticleID)
+	}
+}
+
 func TestWorkflowGenerateDigestRejectsPlannedItemsWhenCandidatesEmpty(t *testing.T) {
 	wf := workflow.New(plannerFuncStub(func(_ context.Context, _ []domaindigest.CandidateArticle) (domaindigest.Plan, error) {
 		return domaindigest.Plan{

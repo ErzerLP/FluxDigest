@@ -44,3 +44,19 @@ func TestDossierBuilderBuildParsesJSON(t *testing.T) {
 		t.Fatalf("want suggested got %q", out.PublishSuggestion)
 	}
 }
+
+func TestDossierBuilderBuildAcceptsTargetAudienceArray(t *testing.T) {
+	chat := &dossierChatStub{response: "```json\n{\"title_translated\":\"模型新闻\",\"target_audience\":[\"工程师\",\"产品经理\"]}\n```"}
+	builder := llm.NewDossierBuilderFromTemplateText(chat, "生成 dossier")
+
+	out, err := builder.Build(context.Background(), llm.DossierBuildInput{
+		Article:    article.SourceArticle{ID: "art-1", Title: "Model News"},
+		Processing: postgres.ProcessedArticleRecord{ID: "proc-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.TargetAudience != "工程师, 产品经理" {
+		t.Fatalf("want normalized target audience got %q", out.TargetAudience)
+	}
+}

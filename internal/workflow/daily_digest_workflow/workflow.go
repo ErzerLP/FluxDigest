@@ -84,22 +84,28 @@ func preserveCandidateTrace(items []domaindigest.CandidateArticle, plan domaindi
 	}
 
 	byArticleID := make(map[string]domaindigest.CandidateArticle, len(items))
+	byDossierID := make(map[string]domaindigest.CandidateArticle, len(items))
 	for _, item := range items {
 		if item.ID == "" {
-			continue
+			if item.DossierID == "" {
+				continue
+			}
+		} else {
+			byArticleID[item.ID] = item
 		}
-		byArticleID[item.ID] = item
+		if item.DossierID != "" {
+			byDossierID[item.DossierID] = item
+		}
 	}
 
 	for i := range plan.Sections {
 		for j := range plan.Sections[i].Items {
-			candidate, ok := byArticleID[plan.Sections[i].Items[j].ArticleID]
+			candidate, ok := resolvePlanItemCandidate(plan.Sections[i].Items[j], byArticleID, byDossierID)
 			if !ok {
 				return domaindigest.Plan{}, errUnknownPlanArticle
 			}
-			if plan.Sections[i].Items[j].DossierID == "" {
-				plan.Sections[i].Items[j].DossierID = candidate.DossierID
-			}
+			plan.Sections[i].Items[j].ArticleID = candidate.ID
+			plan.Sections[i].Items[j].DossierID = candidate.DossierID
 			if plan.Sections[i].Items[j].ImportanceBucket == "" {
 				plan.Sections[i].Items[j].ImportanceBucket = "normal"
 			}
@@ -110,4 +116,23 @@ func preserveCandidateTrace(items []domaindigest.CandidateArticle, plan domaindi
 	}
 
 	return plan, nil
+}
+
+func resolvePlanItemCandidate(
+	item domaindigest.SectionItem,
+	byArticleID map[string]domaindigest.CandidateArticle,
+	byDossierID map[string]domaindigest.CandidateArticle,
+) (domaindigest.CandidateArticle, bool) {
+	if item.ArticleID != "" {
+		if candidate, ok := byArticleID[item.ArticleID]; ok {
+			return candidate, true
+		}
+	}
+	if item.DossierID != "" {
+		if candidate, ok := byDossierID[item.DossierID]; ok {
+			return candidate, true
+		}
+	}
+
+	return domaindigest.CandidateArticle{}, false
 }

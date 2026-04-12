@@ -59,26 +59,26 @@ func (b *DossierBuilder) Build(ctx context.Context, input DossierBuildInput) (do
 	}
 
 	var out struct {
-		TitleTranslated          string   `json:"title_translated"`
-		SummaryPolished          string   `json:"summary_polished"`
-		CoreSummary              string   `json:"core_summary"`
-		KeyPoints                []string `json:"key_points"`
-		TopicCategory            string   `json:"topic_category"`
-		ImportanceScore          float64  `json:"importance_score"`
-		RecommendationReason     string   `json:"recommendation_reason"`
-		ReadingValue             string   `json:"reading_value"`
-		PriorityLevel            string   `json:"priority_level"`
-		ContentPolishedMarkdown  string   `json:"content_polished_markdown"`
-		AnalysisLongformMarkdown string   `json:"analysis_longform_markdown"`
-		BackgroundContext        string   `json:"background_context"`
-		ImpactAnalysis           string   `json:"impact_analysis"`
-		DebatePoints             []string `json:"debate_points"`
-		TargetAudience           string   `json:"target_audience"`
-		PublishSuggestion        string   `json:"publish_suggestion"`
-		SuggestionReason         string   `json:"suggestion_reason"`
-		SuggestedChannels        []string `json:"suggested_channels"`
-		SuggestedTags            []string `json:"suggested_tags"`
-		SuggestedCategories      []string `json:"suggested_categories"`
+		TitleTranslated          string           `json:"title_translated"`
+		SummaryPolished          string           `json:"summary_polished"`
+		CoreSummary              string           `json:"core_summary"`
+		KeyPoints                []string         `json:"key_points"`
+		TopicCategory            string           `json:"topic_category"`
+		ImportanceScore          float64          `json:"importance_score"`
+		RecommendationReason     string           `json:"recommendation_reason"`
+		ReadingValue             string           `json:"reading_value"`
+		PriorityLevel            string           `json:"priority_level"`
+		ContentPolishedMarkdown  string           `json:"content_polished_markdown"`
+		AnalysisLongformMarkdown string           `json:"analysis_longform_markdown"`
+		BackgroundContext        string           `json:"background_context"`
+		ImpactAnalysis           string           `json:"impact_analysis"`
+		DebatePoints             []string         `json:"debate_points"`
+		TargetAudience           normalizedString `json:"target_audience"`
+		PublishSuggestion        string           `json:"publish_suggestion"`
+		SuggestionReason         string           `json:"suggestion_reason"`
+		SuggestedChannels        []string         `json:"suggested_channels"`
+		SuggestedTags            []string         `json:"suggested_tags"`
+		SuggestedCategories      []string         `json:"suggested_categories"`
 	}
 	if err := json.Unmarshal([]byte(normalizeJSONObject(raw)), &out); err != nil {
 		return dossier.ArticleDossier{}, err
@@ -99,13 +99,39 @@ func (b *DossierBuilder) Build(ctx context.Context, input DossierBuildInput) (do
 		BackgroundContext:        out.BackgroundContext,
 		ImpactAnalysis:           out.ImpactAnalysis,
 		DebatePoints:             out.DebatePoints,
-		TargetAudience:           out.TargetAudience,
+		TargetAudience:           string(out.TargetAudience),
 		PublishSuggestion:        out.PublishSuggestion,
 		SuggestionReason:         out.SuggestionReason,
 		SuggestedChannels:        out.SuggestedChannels,
 		SuggestedTags:            out.SuggestedTags,
 		SuggestedCategories:      out.SuggestedCategories,
 	}, nil
+}
+
+type normalizedString string
+
+func (s *normalizedString) UnmarshalJSON(data []byte) error {
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		*s = normalizedString(strings.TrimSpace(single))
+		return nil
+	}
+
+	var list []string
+	if err := json.Unmarshal(data, &list); err == nil {
+		filtered := make([]string, 0, len(list))
+		for _, item := range list {
+			trimmed := strings.TrimSpace(item)
+			if trimmed == "" {
+				continue
+			}
+			filtered = append(filtered, trimmed)
+		}
+		*s = normalizedString(strings.Join(filtered, ", "))
+		return nil
+	}
+
+	return errors.New("expected string or string array")
 }
 
 func (b *DossierBuilder) buildPrompt(input DossierBuildInput) (string, error) {

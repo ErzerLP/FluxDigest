@@ -75,6 +75,8 @@ func buildPrompt(templateText string, items []domaindigest.CandidateArticle) (st
 	prompt.WriteString("\n")
 	prompt.WriteString(`仅输出 JSON：{"title":"","subtitle":"","opening_note":"","sections":[{"name":"","items":[{"dossier_id":"","article_id":"","title":"","core_summary":"","importance_bucket":"","is_featured":false}]}]}`)
 	prompt.WriteString("\n")
+	prompt.WriteString("约束：article_id 与 dossier_id 必须原样复用输入候选值，不得编造、改写、拼接或猜测；若无法对应输入候选，删除该 item。")
+	prompt.WriteString("\n")
 	prompt.WriteString("输入候选文章 JSON：")
 	prompt.Write(payload)
 

@@ -34,4 +34,9 @@ func TestAgentPlanBuildsStructuredJSONPrompt(t *testing.T) {
 			t.Fatalf("prompt should contain %s, got %s", fragment, prompt)
 		}
 	}
+	for _, fragment := range []string{"article_id 与 dossier_id 必须原样复用输入候选值", "不得编造、改写、拼接或猜测"} {
+		if !strings.Contains(prompt, fragment) {
+			t.Fatalf("prompt should enforce trace constraints: missing %s", fragment)
+		}
+	}
 }
