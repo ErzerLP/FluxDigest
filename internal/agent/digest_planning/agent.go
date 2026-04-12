@@ -26,12 +26,18 @@ type Planner interface {
 
 // Agent 负责把候选文章交给底层 runner 生成结构化 Plan。
 type Agent struct {
-	runner Runner
+	runner     Runner
+	promptText string
 }
 
 // New 创建可替换底层实现的最小 planner agent。
 func New(runner Runner) *Agent {
-	return &Agent{runner: runner}
+	return NewWithPrompt(runner, "")
+}
+
+// NewWithPrompt 创建可注入 prompt 文本的 planner agent。
+func NewWithPrompt(runner Runner, promptText string) *Agent {
+	return &Agent{runner: runner, promptText: promptText}
 }
 
 // Plan 根据候选文章生成结构化日报规划。
@@ -40,7 +46,7 @@ func (a *Agent) Plan(ctx context.Context, items []domaindigest.CandidateArticle)
 		return domaindigest.Plan{}, errRunnerRequired
 	}
 
-	prompt, err := buildPrompt(items)
+	prompt, err := buildPrompt(a.promptText, items)
 	if err != nil {
 		return domaindigest.Plan{}, err
 	}
@@ -48,10 +54,13 @@ func (a *Agent) Plan(ctx context.Context, items []domaindigest.CandidateArticle)
 	return a.runner.Run(ctx, prompt)
 }
 
-func buildPrompt(items []domaindigest.CandidateArticle) (string, error) {
-	templateText, err := promptassets.Read(digestPromptFile)
-	if err != nil {
-		return "", err
+func buildPrompt(templateText string, items []domaindigest.CandidateArticle) (string, error) {
+	if strings.TrimSpace(templateText) == "" {
+		var err error
+		templateText, err = promptassets.Read(digestPromptFile)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	payload, err := json.Marshal(struct {
@@ -64,7 +73,7 @@ func buildPrompt(items []domaindigest.CandidateArticle) (string, error) {
 	var prompt strings.Builder
 	prompt.WriteString(strings.TrimSpace(templateText))
 	prompt.WriteString("\n")
-	prompt.WriteString(`仅输出 JSON：{"title":"","subtitle":"","opening_note":"","sections":[{"name":"","items":[{"article_id":"","title":"","core_summary":""}]}]}`)
+	prompt.WriteString(`仅输出 JSON：{"title":"","subtitle":"","opening_note":"","sections":[{"name":"","items":[{"dossier_id":"","article_id":"","title":"","core_summary":"","importance_bucket":"","is_featured":false}]}]}`)
 	prompt.WriteString("\n")
 	prompt.WriteString("输入候选文章 JSON：")
 	prompt.Write(payload)

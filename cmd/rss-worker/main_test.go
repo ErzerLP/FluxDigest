@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"rss-platform/internal/domain/article"
+	domaindossier "rss-platform/internal/domain/dossier"
 	"rss-platform/internal/domain/processing"
 	"rss-platform/internal/repository/postgres"
+	"rss-platform/internal/service"
 
 	"gorm.io/gorm"
 
@@ -59,6 +61,14 @@ func (s *processingStoreStub) Save(_ context.Context, _ postgres.ProcessedArticl
 	return nil
 }
 
+type dossierMaterializerStub struct {
+	dossier domaindossier.ArticleDossier
+}
+
+func (s dossierMaterializerStub) Materialize(_ context.Context, _ service.MaterializeDossierInput) (domaindossier.ArticleDossier, error) {
+	return s.dossier, nil
+}
+
 func TestLoadDefaultPromptTemplatesIgnoresWorkingDirectory(t *testing.T) {
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -74,7 +84,7 @@ func TestLoadDefaultPromptTemplatesIgnoresWorkingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	translationTemplate, analysisTemplate, err := loadDefaultPromptTemplates()
+	translationTemplate, analysisTemplate, _, _, err := loadDefaultPromptTemplates()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,16 +108,18 @@ func TestRuntimeProcessingRunnerReusesExistingProcessingResult(t *testing.T) {
 		},
 	}
 
-	runner := &runtimeProcessingRunner{
-		client: entryListerStub{entries: []miniflux.Entry{{ID: 101}}},
-		articles: articleFinderStub{article: article.SourceArticle{
+	runner := service.NewRuntimeProcessingRunner(
+		entryListerStub{entries: []miniflux.Entry{{ID: 101}}},
+		articleFinderStub{article: article.SourceArticle{
 			ID:              "art-1",
 			MinifluxEntryID: 101,
 			Title:           "Original",
 		}},
-		processing: processor,
-		results:    store,
-	}
+		processor,
+		store,
+		dossierMaterializerStub{dossier: domaindossier.ArticleDossier{ID: "dos-1", ArticleID: "art-1", TitleTranslated: "已翻译标题", CoreSummary: "已有核心总结", TopicCategory: "AI", ImportanceScore: 0.9}},
+		service.RuntimePromptVersions{Translation: 1, Analysis: 1, Dossier: 1, LLM: 1},
+	)
 
 	candidates, err := runner.ProcessPending(context.Background(), time.Now(), time.Now())
 	if err != nil {
@@ -118,6 +130,9 @@ func TestRuntimeProcessingRunnerReusesExistingProcessingResult(t *testing.T) {
 	}
 	if got := candidates[0].Title; got != "已翻译标题" {
 		t.Fatalf("want reused translated title got %s", got)
+	}
+	if got := candidates[0].DossierID; got != "dos-1" {
+		t.Fatalf("want reused dossier id got %s", got)
 	}
 	if processor.called != 0 {
 		t.Fatalf("want processor not called got %d", processor.called)
@@ -143,16 +158,18 @@ func TestRuntimeProcessingRunnerProcessesAndSavesWhenNoExistingResult(t *testing
 	}
 	store := &processingStoreStub{err: gorm.ErrRecordNotFound}
 
-	runner := &runtimeProcessingRunner{
-		client: entryListerStub{entries: []miniflux.Entry{{ID: 101}}},
-		articles: articleFinderStub{article: article.SourceArticle{
+	runner := service.NewRuntimeProcessingRunner(
+		entryListerStub{entries: []miniflux.Entry{{ID: 101}}},
+		articleFinderStub{article: article.SourceArticle{
 			ID:              "art-1",
 			MinifluxEntryID: 101,
 			Title:           "Original",
 		}},
-		processing: processor,
-		results:    store,
-	}
+		processor,
+		store,
+		dossierMaterializerStub{dossier: domaindossier.ArticleDossier{ID: "dos-1", ArticleID: "art-1", TitleTranslated: "新标题", CoreSummary: "新核心总结", TopicCategory: "AI", ImportanceScore: 0.8}},
+		service.RuntimePromptVersions{Translation: 1, Analysis: 1, Dossier: 1, LLM: 1},
+	)
 
 	candidates, err := runner.ProcessPending(context.Background(), time.Now(), time.Now())
 	if err != nil {
@@ -167,7 +184,7 @@ func TestRuntimeProcessingRunnerProcessesAndSavesWhenNoExistingResult(t *testing
 	if store.saveHit != 1 {
 		t.Fatalf("want save called once got %d", store.saveHit)
 	}
-	if candidates[0] != (domaindigest.CandidateArticle{ID: "art-1", Title: "新标题", CoreSummary: "新核心总结"}) {
+	if candidates[0] != (domaindigest.CandidateArticle{ID: "art-1", DossierID: "dos-1", Title: "新标题", CoreSummary: "新核心总结", TopicCategory: "AI", ImportanceScore: 0.8}) {
 		t.Fatalf("unexpected candidate %+v", candidates[0])
 	}
 }

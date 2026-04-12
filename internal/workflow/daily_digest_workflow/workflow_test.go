@@ -12,6 +12,12 @@ import (
 
 type plannerStub struct{}
 
+type plannerFuncStub func(ctx context.Context, items []domaindigest.CandidateArticle) (domaindigest.Plan, error)
+
+func (f plannerFuncStub) Plan(ctx context.Context, items []domaindigest.CandidateArticle) (domaindigest.Plan, error) {
+	return f(ctx, items)
+}
+
 func (plannerStub) Plan(_ context.Context, items []domaindigest.CandidateArticle) (domaindigest.Plan, error) {
 	return domaindigest.Plan{
 		Title:       "今日 AI 日报",
@@ -20,9 +26,12 @@ func (plannerStub) Plan(_ context.Context, items []domaindigest.CandidateArticle
 		Sections: []domaindigest.Section{{
 			Name: "重点速览",
 			Items: []domaindigest.SectionItem{{
-				ArticleID:   items[0].ID,
-				Title:       items[0].Title,
-				CoreSummary: items[0].CoreSummary,
+				DossierID:        items[0].DossierID,
+				ArticleID:        items[0].ID,
+				Title:            items[0].Title,
+				CoreSummary:      items[0].CoreSummary,
+				ImportanceBucket: "featured",
+				IsFeatured:       true,
 			}},
 		}},
 	}, nil
@@ -32,8 +41,8 @@ func TestWorkflowGenerateDigestOnlyRendersPlannedItems(t *testing.T) {
 	wf := workflow.New(plannerStub{}, renderpkg.NewDigestRenderer())
 
 	digest, err := wf.Run(context.Background(), []domaindigest.CandidateArticle{
-		{ID: "art-1", Title: "Model News", CoreSummary: "Selected"},
-		{ID: "art-2", Title: "Ignored News", CoreSummary: "Should not appear"},
+		{ID: "art-1", DossierID: "dos-1", Title: "Model News", CoreSummary: "Selected"},
+		{ID: "art-2", DossierID: "dos-2", Title: "Ignored News", CoreSummary: "Should not appear"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -49,5 +58,75 @@ func TestWorkflowGenerateDigestOnlyRendersPlannedItems(t *testing.T) {
 	}
 	if got := digest.Plan.Sections[0].Items[0].ArticleID; got != "art-1" {
 		t.Fatalf("want art-1 got %s", got)
+	}
+}
+
+func TestWorkflowGenerateDigestPreservesDossierTrace(t *testing.T) {
+	wf := workflow.New(plannerStub{}, renderpkg.NewDigestRenderer())
+
+	digest, err := wf.Run(context.Background(), []domaindigest.CandidateArticle{{
+		ID:                   "art-1",
+		DossierID:            "dos-1",
+		Title:                "模型新闻",
+		CoreSummary:          "核心总结",
+		RecommendationReason: "值得重点跟进",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := digest.Plan.Sections[0].Items[0].DossierID; got != "dos-1" {
+		t.Fatalf("want dossier trace dos-1 got %q", got)
+	}
+	if got := digest.Plan.Sections[0].Items[0].ImportanceBucket; got != "featured" {
+		t.Fatalf("want featured bucket got %q", got)
+	}
+	if !digest.Plan.Sections[0].Items[0].IsFeatured {
+		t.Fatal("expected featured item")
+	}
+}
+
+func TestWorkflowGenerateDigestRejectsUnknownArticleTrace(t *testing.T) {
+	wf := workflow.New(plannerFuncStub(func(_ context.Context, _ []domaindigest.CandidateArticle) (domaindigest.Plan, error) {
+		return domaindigest.Plan{
+			Title: "今日 AI 日报",
+			Sections: []domaindigest.Section{{
+				Name: "重点速览",
+				Items: []domaindigest.SectionItem{{
+					ArticleID:   "art-x",
+					Title:       "未知文章",
+					CoreSummary: "未知摘要",
+				}},
+			}},
+		}, nil
+	}), renderpkg.NewDigestRenderer())
+
+	_, err := wf.Run(context.Background(), []domaindigest.CandidateArticle{{
+		ID:        "art-1",
+		DossierID: "dos-1",
+		Title:     "模型新闻",
+	}})
+	if err == nil {
+		t.Fatal("expected unknown article trace error")
+	}
+}
+
+func TestWorkflowGenerateDigestRejectsPlannedItemsWhenCandidatesEmpty(t *testing.T) {
+	wf := workflow.New(plannerFuncStub(func(_ context.Context, _ []domaindigest.CandidateArticle) (domaindigest.Plan, error) {
+		return domaindigest.Plan{
+			Title: "今日 AI 日报",
+			Sections: []domaindigest.Section{{
+				Name: "重点速览",
+				Items: []domaindigest.SectionItem{{
+					ArticleID:   "art-1",
+					Title:       "模型新闻",
+					CoreSummary: "核心总结",
+				}},
+			}},
+		}, nil
+	}), renderpkg.NewDigestRenderer())
+
+	_, err := wf.Run(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error when planner outputs items without candidates")
 	}
 }

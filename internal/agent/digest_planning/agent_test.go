@@ -11,12 +11,13 @@ import (
 
 func TestAgentPlanBuildsStructuredJSONPrompt(t *testing.T) {
 	runner := &promptRunnerStub{
-		response: `{"title":"今日 AI 日报","sections":[{"name":"重点速览","items":[{"article_id":"art-1","title":"模型新闻","core_summary":"核心总结"}]}]}`,
+		response: `{"title":"今日 AI 日报","sections":[{"name":"重点速览","items":[{"dossier_id":"dos-1","article_id":"art-1","title":"模型新闻","core_summary":"核心总结","importance_bucket":"featured","is_featured":true}]}]}`,
 	}
-	agent := digest_planning.New(digest_planning.NewOpenAIRunner(runner))
+	agent := digest_planning.NewWithPrompt(digest_planning.NewOpenAIRunner(runner), "自定义日报提示词")
 
 	_, err := agent.Plan(context.Background(), []domaindigest.CandidateArticle{{
 		ID:          "art-1",
+		DossierID:   "dos-1",
 		Title:       "模型新闻",
 		CoreSummary: "核心总结",
 	}})
@@ -28,7 +29,7 @@ func TestAgentPlanBuildsStructuredJSONPrompt(t *testing.T) {
 	}
 
 	prompt := runner.prompts[0]
-	for _, fragment := range []string{`"title"`, `"opening_note"`, `"sections"`, `"article_id"`, `"core_summary"`, `"articles"`} {
+	for _, fragment := range []string{`自定义日报提示词`, `"title"`, `"opening_note"`, `"sections"`, `"dossier_id"`, `"article_id"`, `"core_summary"`, `"importance_bucket"`, `"is_featured"`, `"articles"`} {
 		if !strings.Contains(prompt, fragment) {
 			t.Fatalf("prompt should contain %s, got %s", fragment, prompt)
 		}

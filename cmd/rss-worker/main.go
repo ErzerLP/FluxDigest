@@ -22,6 +22,7 @@ import (
 	appworker "rss-platform/internal/app/worker"
 	"rss-platform/internal/config"
 	domaindigest "rss-platform/internal/domain/digest"
+	"rss-platform/internal/domain/dossier"
 	"rss-platform/internal/render"
 	"rss-platform/internal/repository/postgres"
 	"rss-platform/internal/service"
@@ -33,6 +34,7 @@ const (
 	translationPromptFile = "translation.tmpl"
 	analysisPromptFile    = "analysis.tmpl"
 	dossierPromptFile     = "dossier.tmpl"
+	digestPromptFile      = "digest.tmpl"
 )
 
 func main() {
@@ -125,7 +127,7 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	dossierRepo := postgres.NewDossierRepository(db)
 	publishStateRepo := postgres.NewPublishStateRepository(db)
 	minifluxClient := miniflux.NewClient(cfg.Miniflux.BaseURL, cfg.Miniflux.AuthToken)
-	translationTemplate, analysisTemplate, dossierTemplate, err := loadDefaultPromptTemplates()
+	translationTemplate, analysisTemplate, dossierTemplate, digestTemplate, err := loadDefaultPromptTemplates()
 	if err != nil {
 		_ = sqlDB.Close()
 		return nil, nil, err
@@ -139,6 +141,9 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	if strings.TrimSpace(runtimeSnapshot.Prompts.DossierPrompt) != "" {
 		dossierTemplate = runtimeSnapshot.Prompts.DossierPrompt
 	}
+	if strings.TrimSpace(runtimeSnapshot.Prompts.DigestPrompt) != "" {
+		digestTemplate = runtimeSnapshot.Prompts.DigestPrompt
+	}
 
 	publisher, err := buildPublisher(cfg)
 	if err != nil {
@@ -148,7 +153,7 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 
 	processingSvc := service.NewProcessingService(llmadapter.NewArticleProcessorFromTemplateText(invoker, translationTemplate, analysisTemplate))
 	dossierSvc := service.NewDossierService(
-		llmadapter.NewDossierBuilderFromTemplateText(invoker, dossierTemplate),
+		dossierBuilderAdapter{builder: llmadapter.NewDossierBuilderFromTemplateText(invoker, dossierTemplate)},
 		dossierRepo,
 		publishStateRepo,
 	)
@@ -167,9 +172,11 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	)
 	digestRunner := digestWorkflowRunner{
 		workflow: daily_digest_workflow.New(
-			digest_planning.New(digest_planning.NewOpenAIRunner(invoker)),
+			digest_planning.NewWithPrompt(digest_planning.NewOpenAIRunner(invoker), digestTemplate),
 			render.NewDigestRenderer(),
 		),
+		digestPromptVersion: runtimeSnapshot.Prompts.DigestVersion,
+		llmProfileVersion:   runtimeSnapshot.LLM.Version,
 	}
 
 	runtimeSvc := service.NewDailyDigestRuntimeService(
@@ -185,6 +192,17 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 
 type chatModelInvoker struct {
 	chat einomodel.BaseChatModel
+}
+
+type dossierBuilderAdapter struct {
+	builder *llmadapter.DossierBuilder
+}
+
+func (a dossierBuilderAdapter) Build(ctx context.Context, input service.BuildDossierInput) (dossier.ArticleDossier, error) {
+	return a.builder.Build(ctx, llmadapter.DossierBuildInput{
+		Article:    input.Article,
+		Processing: input.Processing,
+	})
 }
 
 func (i chatModelInvoker) Generate(ctx context.Context, prompt string) (string, error) {
@@ -204,11 +222,19 @@ func (i chatModelInvoker) Generate(ctx context.Context, prompt string) (string, 
 }
 
 type digestWorkflowRunner struct {
-	workflow *daily_digest_workflow.Workflow
+	workflow            *daily_digest_workflow.Workflow
+	digestPromptVersion int
+	llmProfileVersion   int
 }
 
 func (r digestWorkflowRunner) Generate(ctx context.Context, candidates []domaindigest.CandidateArticle) (daily_digest_workflow.Digest, error) {
-	return r.workflow.Run(ctx, candidates)
+	digest, err := r.workflow.Run(ctx, candidates)
+	if err != nil {
+		return daily_digest_workflow.Digest{}, err
+	}
+	digest.DigestPromptVersion = r.digestPromptVersion
+	digest.LLMProfileVersion = r.llmProfileVersion
+	return digest, nil
 }
 
 func buildPublisher(cfg *config.Config) (adapterpublisher.Publisher, error) {
@@ -243,21 +269,25 @@ func shanghaiLocation() *time.Location {
 	return time.FixedZone("CST", 8*3600)
 }
 
-func loadDefaultPromptTemplates() (string, string, string, error) {
+func loadDefaultPromptTemplates() (string, string, string, string, error) {
 	translationTemplate, err := promptassets.Read(translationPromptFile)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 
 	analysisTemplate, err := promptassets.Read(analysisPromptFile)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 
 	dossierTemplate, err := promptassets.Read(dossierPromptFile)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
+	}
+	digestTemplate, err := promptassets.Read(digestPromptFile)
+	if err != nil {
+		return "", "", "", "", err
 	}
 
-	return translationTemplate, analysisTemplate, dossierTemplate, nil
+	return translationTemplate, analysisTemplate, dossierTemplate, digestTemplate, nil
 }

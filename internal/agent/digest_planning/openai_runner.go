@@ -73,6 +73,13 @@ func normalizePlan(plan Plan) Plan {
 	if strings.TrimSpace(plan.Title) == "" {
 		plan.Title = defaultPlanTitle
 	}
+	for i := range plan.Sections {
+		for j := range plan.Sections[i].Items {
+			if strings.TrimSpace(plan.Sections[i].Items[j].ImportanceBucket) == "" {
+				plan.Sections[i].Items[j].ImportanceBucket = "normal"
+			}
+		}
+	}
 
 	return plan
 }

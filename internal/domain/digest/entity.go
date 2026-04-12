@@ -16,9 +16,12 @@ type CandidateArticle struct {
 
 // SectionItem 表示日报中被选中的稳定文章引用。
 type SectionItem struct {
-	ArticleID   string `json:"article_id"`
-	Title       string `json:"title"`
-	CoreSummary string `json:"core_summary"`
+	DossierID        string `json:"dossier_id"`
+	ArticleID        string `json:"article_id"`
+	Title            string `json:"title"`
+	CoreSummary      string `json:"core_summary"`
+	ImportanceBucket string `json:"importance_bucket"`
+	IsFeatured       bool   `json:"is_featured"`
 }
 
 // Section 表示日报中的一个结构化分节。
