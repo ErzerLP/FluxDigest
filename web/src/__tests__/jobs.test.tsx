@@ -86,3 +86,23 @@ test('jobs page surfaces detail request failure when future endpoint is unavaila
   await userEvent.click(await screen.findByRole('button', { name: '查看详情' }));
   expect(await screen.findByText('detail endpoint unavailable')).toBeInTheDocument();
 });
+
+test('jobs page shows list error state without empty state fallback', async () => {
+  fetchMock.mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url.includes('/api/v1/admin/jobs')) {
+      return new Response(JSON.stringify({ error: 'jobs list failed' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response('not found', { status: 404 });
+  });
+
+  renderPage(<JobsPage />);
+
+  expect(await screen.findByText('任务读取失败')).toBeInTheDocument();
+  expect(screen.queryByText('暂无任务运行记录。')).not.toBeInTheDocument();
+});

@@ -25,6 +25,7 @@ export function useAdminConfigs() {
   return useQuery({
     queryKey: adminQueryKeys.configs,
     queryFn: getAdminConfigs,
+    retry: false,
   });
 }
 

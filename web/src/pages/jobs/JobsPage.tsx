@@ -39,7 +39,7 @@ export function JobsPage() {
           />
         ) : null}
 
-        {jobsQuery.isLoading ? (
+        {jobsQuery.isError ? null : jobsQuery.isLoading ? (
           <div className="empty-state">
             <Spin />
           </div>

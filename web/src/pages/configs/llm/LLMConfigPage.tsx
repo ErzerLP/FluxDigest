@@ -22,6 +22,7 @@ export function LLMConfigPage() {
   const [testGuidance, setTestGuidance] = useState<string>();
 
   const currentConfig = configQuery.data?.llm;
+  const configReady = configQuery.isSuccess;
 
   const { register, handleSubmit, reset, getValues } = useForm<LLMConfigFormValues>({
     defaultValues: {
@@ -52,6 +53,10 @@ export function LLMConfigPage() {
   }, [saveMutation.isSuccess]);
 
   const onSubmit = async (values: LLMConfigFormValues) => {
+    if (!configReady) {
+      return;
+    }
+
     const payload: UpdateLLMConfigInput = {
       base_url: values.base_url,
       model: values.model,
@@ -65,6 +70,10 @@ export function LLMConfigPage() {
   };
 
   const handleTest = () => {
+    if (!configReady) {
+      return;
+    }
+
     if (secretInput.mode !== 'replace' || !secretInput.value?.trim()) {
       setTestGuidance('测试连接需要切换为替换密钥并输入待测 key。');
       return;
@@ -90,13 +99,14 @@ export function LLMConfigPage() {
           subtitle="管理 base URL、模型与 API key 的最小可用配置入口。"
           actions={
             <div className="button-cluster">
-              <Button onClick={handleTest} loading={testMutation.isPending}>
+              <Button onClick={handleTest} loading={testMutation.isPending} disabled={!configReady}>
                 测试连接
               </Button>
               <Button
                 type="primary"
                 onClick={() => void handleSubmit(onSubmit)()}
                 loading={saveMutation.isPending}
+                disabled={!configReady}
               >
                 保存配置
               </Button>
@@ -146,39 +156,44 @@ export function LLMConfigPage() {
           />
         ) : null}
 
-        <form className="config-form-grid config-form-grid-single" onSubmit={(event) => void handleSubmit(onSubmit)(event)}>
-          <section className="data-card form-card">
-            <div className="section-heading-row compact-row">
-              <div>
-                <p className="section-eyebrow">Endpoint</p>
-                <h2 className="section-title">连接参数</h2>
+        {configReady ? (
+          <form
+            className="config-form-grid config-form-grid-single"
+            onSubmit={(event) => void handleSubmit(onSubmit)(event)}
+          >
+            <section className="data-card form-card">
+              <div className="section-heading-row compact-row">
+                <div>
+                  <p className="section-eyebrow">Endpoint</p>
+                  <h2 className="section-title">连接参数</h2>
+                </div>
+                <StatusBadge status={currentConfig?.api_key?.is_set ? 'configured' : 'missing'} />
               </div>
-              <StatusBadge status={currentConfig?.api_key?.is_set ? 'configured' : 'missing'} />
-            </div>
 
-            <div className="form-stack">
-              <label className="form-label" htmlFor="llm-base-url">
-                Base URL
-              </label>
-              <input id="llm-base-url" className="console-input" {...register('base_url')} />
-            </div>
+              <div className="form-stack">
+                <label className="form-label" htmlFor="llm-base-url">
+                  Base URL
+                </label>
+                <input id="llm-base-url" className="console-input" {...register('base_url')} />
+              </div>
 
-            <div className="form-stack">
-              <label className="form-label" htmlFor="llm-model">
-                Model
-              </label>
-              <input id="llm-model" className="console-input" {...register('model')} />
-            </div>
+              <div className="form-stack">
+                <label className="form-label" htmlFor="llm-model">
+                  Model
+                </label>
+                <input id="llm-model" className="console-input" {...register('model')} />
+              </div>
 
-            <SecretField
-              id="llm-api-key"
-              label="API Key"
-              currentSecret={currentConfig?.api_key}
-              value={secretInput}
-              onChange={setSecretInput}
-            />
-          </section>
-        </form>
+              <SecretField
+                id="llm-api-key"
+                label="API Key"
+                currentSecret={currentConfig?.api_key}
+                value={secretInput}
+                onChange={setSecretInput}
+              />
+            </section>
+          </form>
+        ) : null}
       </div>
     </section>
   );
