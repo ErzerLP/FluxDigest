@@ -2,9 +2,11 @@ import type {
   AdminConfigSnapshot,
   AdminStatus,
   ConnectivityTestResult,
+  JobRunDetail,
   JobRunListResponse,
   LLMTestDraft,
   ProfileVersion,
+  RunJobResponse,
   UpdateLLMConfigInput,
 } from '../../types/admin';
 
@@ -109,4 +111,14 @@ export function testLLMConfig(input: LLMTestDraft) {
 export function getJobRuns(limit = 20) {
   const query = new URLSearchParams({ limit: String(limit) });
   return requestAdmin<JobRunListResponse>(`/jobs?${query.toString()}`);
+}
+
+export function getJobRunDetail(jobId: string) {
+  return requestAdmin<JobRunDetail>(`/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function runDailyDigest() {
+  return requestAdmin<RunJobResponse>('/jobs/daily-digest/run', {
+    method: 'POST',
+  });
 }

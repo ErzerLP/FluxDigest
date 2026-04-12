@@ -11,10 +11,15 @@ export interface LLMConfigView {
   base_url?: string;
   model?: string;
   api_key?: SecretView;
+  is_enabled?: boolean;
+  timeout_ms?: number;
 }
 
 export interface AdminConfigSnapshot {
   llm?: LLMConfigView;
+  miniflux?: RecordValue;
+  prompts?: RecordValue;
+  publish?: RecordValue;
 }
 
 export interface IntegrationState {
@@ -38,6 +43,7 @@ export interface AdminStatus {
     latest_digest_date?: string;
     latest_digest_status?: string;
     latest_job_status?: string;
+    latest_job_id?: string;
   };
 }
 
@@ -49,6 +55,8 @@ export interface SecretInput {
 export interface UpdateLLMConfigInput {
   base_url?: string;
   model?: string;
+  is_enabled?: boolean;
+  timeout_ms?: number;
   api_key?: SecretInput;
 }
 
@@ -56,6 +64,7 @@ export interface LLMTestDraft {
   base_url?: string;
   model?: string;
   api_key?: string;
+  timeout_ms?: number;
 }
 
 export interface ConnectivityTestResult {
@@ -70,6 +79,7 @@ export interface ProfileVersion {
   name?: string;
   version?: number;
   is_active?: boolean;
+  ok?: boolean;
 }
 
 export interface JobRunRecord {
@@ -85,6 +95,14 @@ export interface JobRunRecord {
   finished_at?: string;
 }
 
+export interface JobRunDetail extends JobRunRecord {}
+
 export interface JobRunListResponse {
   items?: JobRunRecord[];
+}
+
+export interface RunJobResponse {
+  ok?: boolean;
+  job_id?: string;
+  status?: string;
 }
