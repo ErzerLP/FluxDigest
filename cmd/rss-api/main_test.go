@@ -68,7 +68,7 @@ func TestBuildAPIRouterRequiresDatabaseDSN(t *testing.T) {
 	cfg.Job.APIKey = "secret"
 	cfg.Job.Queue = "default"
 
-	_, _, err := buildAPIRouter(context.Background(), cfg, &queueStub{}, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+	_, _, err := buildAPIRouter(context.Background(), cfg, &queueStub{}, &queueStub{}, func(context.Context, string) (*gorm.DB, dbCloser, error) {
 		return newAPITestDB(t), closeStub{}, nil
 	}, telemetry.NewMetrics())
 	if err == nil {
@@ -88,7 +88,7 @@ func TestBuildAPIRouterConnectsPostgresAndSharesMetrics(t *testing.T) {
 	gotDSN := ""
 	db := newAPITestDB(t)
 
-	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, func(_ context.Context, dsn string) (*gorm.DB, dbCloser, error) {
+	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, queue, func(_ context.Context, dsn string) (*gorm.DB, dbCloser, error) {
 		called++
 		gotDSN = dsn
 		return db, closeStub{}, nil
@@ -139,7 +139,7 @@ func TestBuildAPIRouterDailyDigestForceUsesQueueOptions(t *testing.T) {
 
 	queue := &queueStub{}
 	db := newAPITestDB(t)
-	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, queue, func(context.Context, string) (*gorm.DB, dbCloser, error) {
 		return db, closeStub{}, nil
 	}, telemetry.NewMetrics())
 	if err != nil {
@@ -168,7 +168,7 @@ func TestBuildAPIRouterArticleReprocessEnqueuesTask(t *testing.T) {
 
 	queue := &queueStub{}
 	db := newAPITestDB(t)
-	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, queue, func(context.Context, string) (*gorm.DB, dbCloser, error) {
 		return db, closeStub{}, nil
 	}, telemetry.NewMetrics())
 	if err != nil {
@@ -209,6 +209,23 @@ func TestMapDailyDigestEnqueueErrorKeepsConflictWhenForce(t *testing.T) {
 	}
 }
 
+func TestMapArticleReprocessEnqueueErrorMapsTaskIDConflictWhenNotForce(t *testing.T) {
+	got := mapArticleReprocessEnqueueError(asynq.ErrTaskIDConflict, false)
+	if !errors.Is(got, service.ErrArticleReprocessAlreadyQueued) {
+		t.Fatalf("want ErrArticleReprocessAlreadyQueued got %v", got)
+	}
+}
+
+func TestMapArticleReprocessEnqueueErrorKeepsConflictWhenForce(t *testing.T) {
+	got := mapArticleReprocessEnqueueError(asynq.ErrTaskIDConflict, true)
+	if !errors.Is(got, asynq.ErrTaskIDConflict) {
+		t.Fatalf("want asynq.ErrTaskIDConflict got %v", got)
+	}
+	if errors.Is(got, service.ErrArticleReprocessAlreadyQueued) {
+		t.Fatalf("force enqueue should not map to ErrArticleReprocessAlreadyQueued, got %v", got)
+	}
+}
+
 func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Database.DSN = "postgres://rss:rss@postgres:5432/rss?sslmode=disable"
@@ -216,7 +233,7 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	cfg.Job.Queue = "default"
 
 	db := newAPITestDB(t)
-	router, closer, err := buildAPIRouter(context.Background(), cfg, &queueStub{}, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+	router, closer, err := buildAPIRouter(context.Background(), cfg, &queueStub{}, &queueStub{}, func(context.Context, string) (*gorm.DB, dbCloser, error) {
 		return db, closeStub{}, nil
 	}, telemetry.NewMetrics())
 	if err != nil {

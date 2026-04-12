@@ -34,6 +34,10 @@ func (s articleFinderStub) FindByMinifluxEntryID(_ context.Context, _ int64) (ar
 	return s.article, nil
 }
 
+func (s articleFinderStub) FindByID(_ context.Context, _ string) (article.SourceArticle, error) {
+	return s.article, nil
+}
+
 type processingServiceStub struct {
 	called int
 	result processing.ProcessedArticle

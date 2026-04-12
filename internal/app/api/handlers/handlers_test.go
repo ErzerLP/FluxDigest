@@ -62,6 +62,7 @@ type jobTriggerStub struct {
 	articleReprocessIDs []string
 	articleReprocessOps []bool
 	results             []service.JobTriggerResult
+	articleResults      []service.JobTriggerResult
 }
 
 func (s *jobTriggerStub) TriggerDailyDigest(_ context.Context, now time.Time) (service.JobTriggerResult, error) {
@@ -93,7 +94,13 @@ func (s *jobTriggerStub) TriggerDailyDigestWithOptions(_ context.Context, now ti
 func (s *jobTriggerStub) TriggerArticleReprocess(_ context.Context, articleID string, force bool) (service.JobTriggerResult, error) {
 	s.articleReprocessIDs = append(s.articleReprocessIDs, articleID)
 	s.articleReprocessOps = append(s.articleReprocessOps, force)
-	return service.JobTriggerResult{ArticleID: articleID, Status: "accepted"}, nil
+	if len(s.articleResults) == 0 {
+		return service.JobTriggerResult{ArticleID: articleID, Status: "accepted"}, nil
+	}
+
+	result := s.articleResults[0]
+	s.articleResults = s.articleResults[1:]
+	return result, nil
 }
 
 func TestLatestDigestRouteReturnsJSON(t *testing.T) {
@@ -279,6 +286,27 @@ func TestJobRouteTriggersArticleReprocess(t *testing.T) {
 	}
 	if len(trigger.articleReprocessOps) != 1 || !trigger.articleReprocessOps[0] {
 		t.Fatalf("want force=true got %#v", trigger.articleReprocessOps)
+	}
+}
+
+func TestJobRouteReturnsSkippedForDuplicateArticleReprocess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	trigger := &jobTriggerStub{
+		articleResults: []service.JobTriggerResult{{ArticleID: "art-1", Status: "skipped"}},
+	}
+	router := gin.New()
+	handlers.RegisterJobRoutes(router.Group("/api/v1"), trigger)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/article-reprocess", bytes.NewBufferString(`{"article_id":"art-1","force":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"skipped"`)) {
+		t.Fatalf("unexpected body %s", rec.Body.String())
 	}
 }
 

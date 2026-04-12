@@ -53,7 +53,7 @@ func main() {
 
 	queue := dailyDigestQueue{client: client, queue: cfg.Job.Queue}
 	metrics := telemetry.NewMetrics()
-	router, db, err := buildAPIRouter(context.Background(), cfg, queue, connectPostgres, metrics)
+	router, db, err := buildAPIRouter(context.Background(), cfg, queue, queue, connectPostgres, metrics)
 	if err != nil {
 		log.Fatalf("build api router: %v", err)
 	}
@@ -69,7 +69,7 @@ func main() {
 	}
 }
 
-func buildAPIRouter(ctx context.Context, cfg *config.Config, queue service.DailyDigestQueue, connect connectPostgresFunc, metrics *telemetry.Metrics) (*gin.Engine, dbCloser, error) {
+func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.DailyDigestQueue, articleQueue service.ArticleReprocessQueue, connect connectPostgresFunc, metrics *telemetry.Metrics) (*gin.Engine, dbCloser, error) {
 	if cfg == nil {
 		return nil, nil, errors.New("config is required")
 	}
@@ -110,7 +110,7 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, queue service.Daily
 		api.WithDossierReader(dossierQueryService),
 		api.WithDigestReader(digestQueryService),
 		api.WithProfileReader(profileQueryService),
-		api.WithJobTrigger(service.NewJobService(queue, metrics)),
+		api.WithJobTrigger(service.NewJobService(dailyQueue, articleQueue, metrics)),
 		api.WithAdminDeps(handlers.AdminDeps{
 			Status:     adminStatusService,
 			Configs:    adminConfigService,
@@ -238,10 +238,7 @@ func (q dailyDigestQueue) EnqueueArticleReprocess(ctx context.Context, articleID
 		asynq.Queue(q.queue),
 		asynq.TaskID(taskID),
 	)
-	if errors.Is(err, asynq.ErrTaskIDConflict) {
-		return service.ErrDailyDigestAlreadyQueued
-	}
-	return err
+	return mapArticleReprocessEnqueueError(err, force)
 }
 
 func dailyDigestTaskID(digestDate string) string {
@@ -263,6 +260,13 @@ func forceArticleReprocessTaskID(articleID string) string {
 func mapDailyDigestEnqueueError(err error, force bool) error {
 	if !force && errors.Is(err, asynq.ErrTaskIDConflict) {
 		return service.ErrDailyDigestAlreadyQueued
+	}
+	return err
+}
+
+func mapArticleReprocessEnqueueError(err error, force bool) error {
+	if !force && errors.Is(err, asynq.ErrTaskIDConflict) {
+		return service.ErrArticleReprocessAlreadyQueued
 	}
 	return err
 }

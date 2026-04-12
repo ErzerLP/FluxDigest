@@ -120,7 +120,12 @@ func RegisterJobRoutes(group *gin.RouterGroup, svc JobTrigger) {
 			result.Status = "accepted"
 		}
 
-		c.JSON(http.StatusAccepted, gin.H{
+		statusCode := http.StatusAccepted
+		if result.Status == "skipped" {
+			statusCode = http.StatusOK
+		}
+
+		c.JSON(statusCode, gin.H{
 			"article_id": result.ArticleID,
 			"status":     result.Status,
 			"force":      req.Force,

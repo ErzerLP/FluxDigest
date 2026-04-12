@@ -55,7 +55,7 @@ func main() {
 		log.Fatal("APP_MINIFLUX_AUTH_TOKEN is required")
 	}
 
-	runtimeSvc, dbCloser, err := buildRuntimeService(context.Background(), cfg)
+	runtimeSvc, processingRunner, dbCloser, err := buildRuntimeService(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("build runtime service: %v", err)
 	}
@@ -83,7 +83,15 @@ func main() {
 			log.Printf("daily digest task consumed: date=%s force=%t url=%s", result.DigestDate, payload.Force, result.RemoteURL)
 			return nil
 		}),
-		asynqtask.NewArticleReprocessHandler(func(_ context.Context, payload asynqtask.ReprocessArticlePayload) error {
+		asynqtask.NewArticleReprocessHandler(func(ctx context.Context, payload asynqtask.ReprocessArticlePayload) error {
+			if processingRunner == nil {
+				return errors.New("runtime processing runner is required")
+			}
+
+			if err := processingRunner.ReprocessArticle(ctx, payload.ArticleID, payload.Force); err != nil {
+				return err
+			}
+
 			log.Printf("article reprocess task consumed: article_id=%s force=%t", payload.ArticleID, payload.Force)
 			return nil
 		}),
@@ -95,26 +103,26 @@ func main() {
 	}
 }
 
-func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.DailyDigestRuntimeService, func() error, error) {
+func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.DailyDigestRuntimeService, *service.RuntimeProcessingRunner, func() error, error) {
 	db, err := postgres.Open(cfg.Database.DSN)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	runtimeConfigs := service.NewRuntimeConfigService(postgres.NewProfileRepository(db), cfg)
 	runtimeSnapshot, err := runtimeConfigs.Snapshot(ctx)
 	if err != nil {
 		_ = sqlDB.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if runtimeSnapshot.LLM.Model == "" {
 		_ = sqlDB.Close()
-		return nil, nil, errors.New("APP_LLM_MODEL is required")
+		return nil, nil, nil, errors.New("APP_LLM_MODEL is required")
 	}
 
 	chatModel, err := llmadapter.NewChatModel(ctx, llmadapter.FactoryConfig{
@@ -124,7 +132,7 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	})
 	if err != nil {
 		_ = sqlDB.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	invoker := chatModelInvoker{chat: chatModel}
@@ -137,7 +145,7 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	translationTemplate, analysisTemplate, dossierTemplate, digestTemplate, err := loadDefaultPromptTemplates()
 	if err != nil {
 		_ = sqlDB.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if strings.TrimSpace(runtimeSnapshot.Prompts.TranslationPrompt) != "" {
 		translationTemplate = runtimeSnapshot.Prompts.TranslationPrompt
@@ -155,7 +163,7 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	publisher, err := buildPublisher(cfg)
 	if err != nil {
 		_ = sqlDB.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	processingSvc := service.NewProcessingService(llmadapter.NewArticleProcessorFromTemplateText(invoker, translationTemplate, analysisTemplate))
@@ -194,7 +202,7 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 		publisher,
 	)
 
-	return runtimeSvc, sqlDB.Close, nil
+	return runtimeSvc, processingRunner, sqlDB.Close, nil
 }
 
 type chatModelInvoker struct {

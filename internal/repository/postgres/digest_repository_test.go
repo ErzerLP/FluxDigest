@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	adapterpublisher "rss-platform/internal/adapter/publisher"
 	domaindigest "rss-platform/internal/domain/digest"
 	"rss-platform/internal/repository/postgres"
 	"rss-platform/internal/repository/postgres/models"
@@ -153,5 +154,58 @@ func TestDigestRepositoryBeginPublishReplacesDigestItemsAfterFailedRetry(t *test
 	}
 	if items[0].DossierID != "dos-2" {
 		t.Fatalf("expected replaced dossier id dos-2, got %+v", items[0])
+	}
+}
+
+func TestDigestRepositoryForceRerunRetryPreservesRemoteTraceUntilNewPublishSucceeds(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.AutoMigrate(&models.DailyDigestModel{}, &models.DailyDigestItemModel{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	repo := postgres.NewDigestRepository(db)
+	ctx := context.Background()
+	digestDate := "2026-04-12"
+
+	ok, err := repo.BeginPublish(ctx, digestDate, daily_digest_workflow.Digest{
+		Title:           "日报 v1",
+		ContentMarkdown: "# 内容 1",
+		ContentHTML:     "<h1>内容1</h1>",
+	})
+	if err != nil || !ok {
+		t.Fatalf("begin publish v1 failed ok=%v err=%v", ok, err)
+	}
+	if err := repo.MarkPublished(ctx, digestDate, adapterpublisher.PublishDigestResult{
+		RemoteID:  "remote-old",
+		RemoteURL: "https://example.com/old",
+	}); err != nil {
+		t.Fatalf("mark published old: %v", err)
+	}
+
+	if err := repo.MarkFailed(ctx, digestDate, "force rerun requested"); err != nil {
+		t.Fatalf("mark failed for force rerun: %v", err)
+	}
+	ok, err = repo.BeginPublish(ctx, digestDate, daily_digest_workflow.Digest{
+		Title:           "日报 v2",
+		ContentMarkdown: "# 内容 2",
+		ContentHTML:     "<h1>内容2</h1>",
+	})
+	if err != nil || !ok {
+		t.Fatalf("begin publish v2 failed ok=%v err=%v", ok, err)
+	}
+
+	if err := repo.MarkFailed(ctx, digestDate, "publish failed"); err != nil {
+		t.Fatalf("mark failed after force rerun publish error: %v", err)
+	}
+
+	record, err := repo.GetByDigestDate(ctx, digestDate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.RemoteID != "remote-old" {
+		t.Fatalf("want preserved remote id remote-old got %s", record.RemoteID)
+	}
+	if record.RemoteURL != "https://example.com/old" {
+		t.Fatalf("want preserved remote url got %s", record.RemoteURL)
 	}
 }

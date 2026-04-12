@@ -131,12 +131,66 @@ func (r *RuntimeProcessingRunner) ProcessPending(ctx context.Context, windowStar
 	return candidates, nil
 }
 
+// ReprocessArticle 重新处理指定文章，并重建对应 dossier。
+func (r *RuntimeProcessingRunner) ReprocessArticle(ctx context.Context, articleID string, force bool) error {
+	_ = force
+
+	source, err := r.articles.FindByID(ctx, articleID)
+	if err != nil {
+		return err
+	}
+
+	processed, err := r.processing.ProcessArticle(ctx, source)
+	if err != nil {
+		return err
+	}
+
+	record := postgres.ProcessedArticleRecord{
+		ID:                       newProcessingID(),
+		ArticleID:                source.ID,
+		TitleTranslated:          processed.Translation.TitleTranslated,
+		SummaryTranslated:        processed.Translation.SummaryTranslated,
+		ContentTranslated:        processed.Translation.ContentTranslated,
+		CoreSummary:              processed.Analysis.CoreSummary,
+		KeyPoints:                processed.Analysis.KeyPoints,
+		TopicCategory:            processed.Analysis.TopicCategory,
+		ImportanceScore:          processed.Analysis.ImportanceScore,
+		TranslationPromptVersion: r.versions.Translation,
+		AnalysisPromptVersion:    r.versions.Analysis,
+		LLMProfileVersion:        r.versions.LLM,
+	}
+	if err := r.results.Save(ctx, record); err != nil {
+		return err
+	}
+
+	_, err = r.dossiers.Materialize(ctx, MaterializeDossierInput{
+		Article:                  source,
+		Processing:               record,
+		ArticleID:                source.ID,
+		ProcessingID:             record.ID,
+		DigestDate:               time.Now().In(shanghaiLocation()).Format(dossierDateLayout),
+		TitleTranslated:          record.TitleTranslated,
+		SummaryTranslated:        record.SummaryTranslated,
+		CoreSummary:              record.CoreSummary,
+		KeyPoints:                record.KeyPoints,
+		TopicCategory:            record.TopicCategory,
+		ImportanceScore:          record.ImportanceScore,
+		ContentTranslated:        record.ContentTranslated,
+		TranslationPromptVersion: r.versions.Translation,
+		AnalysisPromptVersion:    r.versions.Analysis,
+		DossierPromptVersion:     r.versions.Dossier,
+		LLMProfileVersion:        r.versions.LLM,
+	})
+	return err
+}
+
 type runtimeEntryLister interface {
 	ListEntries(ctx context.Context, windowStart, windowEnd time.Time) ([]miniflux.Entry, error)
 }
 
 type runtimeArticleFinder interface {
 	FindByMinifluxEntryID(ctx context.Context, minifluxEntryID int64) (article.SourceArticle, error)
+	FindByID(ctx context.Context, articleID string) (article.SourceArticle, error)
 }
 
 type runtimeArticleProcessor interface {

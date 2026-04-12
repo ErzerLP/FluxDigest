@@ -10,6 +10,7 @@ var errDailyDigestQueueRequired = errors.New("daily digest queue is required")
 var errDailyDigestForceQueueRequired = errors.New("daily digest force queue is required")
 var errArticleReprocessQueueRequired = errors.New("article reprocess queue is required")
 var ErrDailyDigestAlreadyQueued = errors.New("daily digest already queued")
+var ErrArticleReprocessAlreadyQueued = errors.New("article reprocess already queued")
 
 // JobTriggerResult 表示手动或计划触发日报后的真实受理状态。
 type JobTriggerResult struct {
@@ -52,11 +53,8 @@ type JobService struct {
 }
 
 // NewJobService 创建 JobService。
-func NewJobService(queue DailyDigestQueue, metrics ...JobMetrics) *JobService {
-	svc := &JobService{queue: queue}
-	if articleQueue, ok := queue.(ArticleReprocessQueue); ok {
-		svc.articleQueue = articleQueue
-	}
+func NewJobService(queue DailyDigestQueue, articleQueue ArticleReprocessQueue, metrics ...JobMetrics) *JobService {
+	svc := &JobService{queue: queue, articleQueue: articleQueue}
 	if len(metrics) > 0 {
 		svc.metrics = metrics[0]
 	}
@@ -109,10 +107,21 @@ func (s *JobService) TriggerArticleReprocess(ctx context.Context, articleID stri
 	}
 
 	if err := s.articleQueue.EnqueueArticleReprocess(ctx, articleID, force); err != nil {
+		if errors.Is(err, ErrArticleReprocessAlreadyQueued) {
+			return JobTriggerResult{ArticleID: articleID, Status: "skipped"}, nil
+		}
 		return JobTriggerResult{}, err
 	}
 
 	return JobTriggerResult{ArticleID: articleID, Status: "accepted"}, nil
+}
+
+func IsArticleReprocessAlreadyQueued(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return errors.Is(err, ErrArticleReprocessAlreadyQueued)
 }
 
 func IsDailyDigestAlreadyQueued(err error) bool {

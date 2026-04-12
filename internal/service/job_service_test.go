@@ -13,7 +13,7 @@ type enqueueStub struct {
 	errs                []error
 	reprocessArticleIDs []string
 	reprocessForceFlags []bool
-	reprocessErr        error
+	reprocessErrs       []error
 }
 
 func (s *enqueueStub) EnqueueDailyDigest(_ context.Context, digestDate string) error {
@@ -50,12 +50,17 @@ func (s *enqueueStub) EnqueueDailyDigestWithOptions(_ context.Context, digestDat
 func (s *enqueueStub) EnqueueArticleReprocess(_ context.Context, articleID string, force bool) error {
 	s.reprocessArticleIDs = append(s.reprocessArticleIDs, articleID)
 	s.reprocessForceFlags = append(s.reprocessForceFlags, force)
-	return s.reprocessErr
+	if len(s.reprocessErrs) == 0 {
+		return nil
+	}
+	err := s.reprocessErrs[0]
+	s.reprocessErrs = s.reprocessErrs[1:]
+	return err
 }
 
 func TestJobServiceSkipsDuplicateDigestDate(t *testing.T) {
 	queue := &enqueueStub{errs: []error{ErrDailyDigestAlreadyQueued}}
-	svc := NewJobService(queue)
+	svc := NewJobService(queue, nil)
 	now := time.Date(2026, 4, 10, 7, 0, 0, 0, time.FixedZone("CST", 8*3600))
 
 	result, err := svc.TriggerDailyDigest(context.Background(), now)
@@ -76,7 +81,7 @@ func TestJobServiceSkipsDuplicateDigestDate(t *testing.T) {
 
 func TestJobServiceNormalizesDigestDateToShanghai(t *testing.T) {
 	queue := &enqueueStub{}
-	svc := NewJobService(queue)
+	svc := NewJobService(queue, nil)
 	now := time.Date(2026, 4, 9, 16, 30, 0, 0, time.UTC)
 
 	result, err := svc.TriggerDailyDigest(context.Background(), now)
@@ -97,7 +102,7 @@ func TestJobServiceNormalizesDigestDateToShanghai(t *testing.T) {
 
 func TestJobServiceRetriesSameDateAfterEnqueueFailure(t *testing.T) {
 	queue := &enqueueStub{errs: []error{errors.New("redis down"), nil}}
-	svc := NewJobService(queue)
+	svc := NewJobService(queue, nil)
 	now := time.Date(2026, 4, 10, 7, 0, 0, 0, time.FixedZone("CST", 8*3600))
 
 	if _, err := svc.TriggerDailyDigest(context.Background(), now); err == nil || err.Error() != "redis down" {
@@ -119,7 +124,7 @@ func TestJobServiceRetriesSameDateAfterEnqueueFailure(t *testing.T) {
 
 func TestJobServiceAllowsSameDigestDateWhenQueueAcceptsAgain(t *testing.T) {
 	queue := &enqueueStub{}
-	svc := NewJobService(queue)
+	svc := NewJobService(queue, nil)
 	now := time.Date(2026, 4, 10, 7, 0, 0, 0, time.FixedZone("CST", 8*3600))
 
 	first, err := svc.TriggerDailyDigest(context.Background(), now)
@@ -141,7 +146,7 @@ func TestJobServiceAllowsSameDigestDateWhenQueueAcceptsAgain(t *testing.T) {
 
 func TestJobServiceTriggerArticleReprocessAccepted(t *testing.T) {
 	queue := &enqueueStub{}
-	svc := NewJobService(queue)
+	svc := NewJobService(nil, queue)
 
 	result, err := svc.TriggerArticleReprocess(context.Background(), "art-1", true)
 	if err != nil {
@@ -163,7 +168,7 @@ func TestJobServiceTriggerArticleReprocessAccepted(t *testing.T) {
 }
 
 func TestJobServiceTriggerArticleReprocessRequiresQueue(t *testing.T) {
-	svc := NewJobService(nil)
+	svc := NewJobService(nil, nil)
 
 	_, err := svc.TriggerArticleReprocess(context.Background(), "art-1", false)
 	if !errors.Is(err, errArticleReprocessQueueRequired) {
@@ -173,7 +178,7 @@ func TestJobServiceTriggerArticleReprocessRequiresQueue(t *testing.T) {
 
 func TestJobServiceTriggerDailyDigestWithForce(t *testing.T) {
 	queue := &enqueueStub{}
-	svc := NewJobService(queue)
+	svc := NewJobService(queue, nil)
 	now := time.Date(2026, 4, 9, 16, 30, 0, 0, time.UTC)
 
 	result, err := svc.TriggerDailyDigestWithOptions(context.Background(), now, DailyDigestTriggerOptions{Force: true})
@@ -189,5 +194,19 @@ func TestJobServiceTriggerDailyDigestWithForce(t *testing.T) {
 	}
 	if result.Status != "accepted" {
 		t.Fatalf("want accepted status got %s", result.Status)
+	}
+}
+
+func TestJobServiceSkipsDuplicateArticleReprocessWhenNotForce(t *testing.T) {
+	queue := &enqueueStub{reprocessErrs: []error{ErrArticleReprocessAlreadyQueued}}
+	svc := NewJobService(nil, queue)
+
+	result, err := svc.TriggerArticleReprocess(context.Background(), "art-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Status != "skipped" {
+		t.Fatalf("want skipped status got %s", result.Status)
 	}
 }

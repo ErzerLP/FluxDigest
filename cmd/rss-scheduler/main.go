@@ -52,7 +52,7 @@ func main() {
 
 	queue := dailyDigestQueue{client: client, queue: cfg.Job.Queue}
 	runtimeConfigs := service.NewRuntimeConfigService(postgres.NewProfileRepository(db), cfg)
-	server := appscheduler.NewServer(schedulerTrigger{job: service.NewJobService(queue)}, runtimeConfigs)
+	server := appscheduler.NewServer(schedulerTrigger{job: service.NewJobService(queue, nil)}, runtimeConfigs)
 	log.Println("rss-scheduler started")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
