@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { AdminApiError, getAdminStatus } from './admin';
+import { AdminApiError, getAdminStatus, testLLMConfig } from './admin';
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -23,5 +23,56 @@ describe('admin api client', () => {
     await expect(getAdminStatus()).rejects.toEqual(
       new AdminApiError('admin status reader is not configured', 503),
     );
+  });
+
+  test('testLLMConfig uses provided timeout for client deadline', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ status: 'ok', message: 'ok' }), {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }),
+    );
+
+    try {
+      await testLLMConfig({
+        base_url: 'https://llm.local/v1',
+        model: 'gpt-4.1-mini',
+        api_key: 'token',
+        timeout_ms: 45000,
+      });
+
+      expect(setTimeoutSpy).toHaveBeenCalled();
+      expect(setTimeoutSpy.mock.calls[0]?.[1]).toBe(45000);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  test('testLLMConfig fallbacks to at least 30000ms when timeout is missing', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ status: 'ok', message: 'ok' }), {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }),
+    );
+
+    try {
+      await testLLMConfig({
+        base_url: 'https://llm.local/v1',
+        model: 'gpt-4.1-mini',
+        api_key: 'token',
+      });
+
+      expect(setTimeoutSpy).toHaveBeenCalled();
+      expect(setTimeoutSpy.mock.calls[0]?.[1]).toBeGreaterThanOrEqual(30000);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 });

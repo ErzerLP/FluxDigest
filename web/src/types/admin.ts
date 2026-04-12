@@ -10,6 +10,7 @@ export interface SecretView {
 export interface LLMConfigView {
   base_url?: string;
   model?: string;
+  timeout_ms?: number;
   api_key?: SecretView;
 }
 
@@ -53,6 +54,7 @@ export interface SecretInput {
 export interface UpdateLLMConfigInput {
   base_url?: string;
   model?: string;
+  timeout_ms?: number;
   api_key?: SecretInput;
 }
 
@@ -60,6 +62,7 @@ export interface LLMTestDraft {
   base_url?: string;
   model?: string;
   api_key?: string;
+  timeout_ms?: number;
 }
 
 export interface ConnectivityTestResult {

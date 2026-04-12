@@ -12,7 +12,7 @@ import type {
 
 const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
 const adminBaseURL = `${apiBaseURL}/admin`;
-const defaultAdminRequestTimeoutMS = 15000;
+const defaultAdminRequestTimeoutMS = 30000;
 const adminRequestTimeoutMessage = '请求超时，请检查代理、网络或服务地址后重试。';
 
 type adminRuntimeGlobals = typeof globalThis & {
@@ -69,7 +69,19 @@ function getAdminRequestTimeoutMS() {
   return defaultAdminRequestTimeoutMS;
 }
 
-async function requestAdmin<T>(path: string, init?: RequestInit): Promise<T> {
+function resolveAdminRequestTimeoutMS(timeoutMS?: number) {
+  const runtimeTimeout = (globalThis as adminRuntimeGlobals).__ADMIN_REQUEST_TIMEOUT_MS__;
+  if (typeof runtimeTimeout === 'number' && runtimeTimeout > 0) {
+    return runtimeTimeout;
+  }
+  if (typeof timeoutMS === 'number' && timeoutMS > 0) {
+    return timeoutMS;
+  }
+
+  return defaultAdminRequestTimeoutMS;
+}
+
+async function requestAdmin<T>(path: string, init?: RequestInit, timeoutMS?: number): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('Accept', 'application/json');
 
@@ -78,13 +90,13 @@ async function requestAdmin<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const controller = new AbortController();
-  const timeoutMS = getAdminRequestTimeoutMS();
+  const resolvedTimeoutMS = resolveAdminRequestTimeoutMS(timeoutMS);
   let timeoutID = 0;
   const timeoutPromise = new Promise<Response>((_, reject) => {
     timeoutID = window.setTimeout(() => {
       controller.abort();
       reject(new AdminApiError(adminRequestTimeoutMessage, 408));
-    }, timeoutMS);
+    }, resolvedTimeoutMS);
   });
 
   let response: Response;
@@ -146,10 +158,15 @@ export function updateLLMConfig(input: UpdateLLMConfigInput) {
 }
 
 export function testLLMConfig(input: LLMTestDraft) {
+  const timeoutMS =
+    typeof input.timeout_ms === 'number' && input.timeout_ms > 0
+      ? input.timeout_ms
+      : getAdminRequestTimeoutMS();
+
   return requestAdmin<ConnectivityTestResult>('/test/llm', {
     method: 'POST',
     body: JSON.stringify(input),
-  });
+  }, timeoutMS);
 }
 
 export function getJobRuns(limit = 20) {

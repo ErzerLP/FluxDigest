@@ -12,9 +12,11 @@ import (
 type llmCheckerStub struct {
 	latency time.Duration
 	err     error
+	drafts  []service.LLMTestDraft
 }
 
-func (s llmCheckerStub) Check(_ context.Context, _ service.LLMTestDraft) (time.Duration, error) {
+func (s *llmCheckerStub) Check(_ context.Context, draft service.LLMTestDraft) (time.Duration, error) {
+	s.drafts = append(s.drafts, draft)
 	return s.latency, s.err
 }
 
@@ -43,7 +45,7 @@ func (s *jobRunWriterStub) Create(_ context.Context, record service.JobRunRecord
 var errStub = errors.New("persist failed")
 
 func TestAdminTestServiceRecordsLLMResult(t *testing.T) {
-	checker := llmCheckerStub{latency: 850 * time.Millisecond}
+	checker := &llmCheckerStub{latency: 850 * time.Millisecond}
 	repo := &jobRunWriterStub{}
 	svc := service.NewAdminTestService(checker, minifluxCheckerStub{}, publishCheckerStub{}, repo)
 
@@ -57,15 +59,37 @@ func TestAdminTestServiceRecordsLLMResult(t *testing.T) {
 	if len(repo.created) != 1 || repo.created[0].JobType != "llm_test" {
 		t.Fatalf("unexpected records %#v", repo.created)
 	}
+	if len(checker.drafts) != 1 || checker.drafts[0].TimeoutMS != 30000 {
+		t.Fatalf("expected default timeout_ms=30000 got %#v", checker.drafts)
+	}
 }
 
 func TestAdminTestServiceReturnsErrorWhenPersistFails(t *testing.T) {
-	checker := llmCheckerStub{latency: 10 * time.Millisecond}
+	checker := &llmCheckerStub{latency: 10 * time.Millisecond}
 	repo := &jobRunWriterStub{err: errStub}
 	svc := service.NewAdminTestService(checker, minifluxCheckerStub{}, publishCheckerStub{}, repo)
 
 	_, err := svc.TestLLM(context.Background(), service.LLMTestDraft{BaseURL: "https://llm.local/v1", Model: "gpt-4.1-mini", APIKey: "token"})
 	if err == nil {
 		t.Fatal("expected error when persist fails")
+	}
+}
+
+func TestAdminTestServicePassesThroughTimeoutMS(t *testing.T) {
+	checker := &llmCheckerStub{latency: 5 * time.Millisecond}
+	repo := &jobRunWriterStub{}
+	svc := service.NewAdminTestService(checker, minifluxCheckerStub{}, publishCheckerStub{}, repo)
+
+	_, err := svc.TestLLM(context.Background(), service.LLMTestDraft{
+		BaseURL:   "https://llm.local/v1",
+		Model:     "gpt-4.1-mini",
+		APIKey:    "token",
+		TimeoutMS: 45000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checker.drafts) != 1 || checker.drafts[0].TimeoutMS != 45000 {
+		t.Fatalf("expected timeout_ms pass-through got %#v", checker.drafts)
 	}
 }

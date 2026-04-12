@@ -60,23 +60,76 @@ test('llm config page saves keep-secret payload', async () => {
 
   await userEvent.clear(await screen.findByLabelText('Base URL'));
   await userEvent.type(screen.getByLabelText('Base URL'), 'https://proxy.local/v1');
+  await userEvent.clear(screen.getByLabelText('Timeout (ms)'));
+  await userEvent.type(screen.getByLabelText('Timeout (ms)'), '45000');
   await userEvent.click(screen.getByRole('button', { name: '保存配置' }));
 
   expect(putSpy).toHaveBeenCalledWith(
     expect.objectContaining({
       base_url: expect.stringContaining('https://proxy.local/v1'),
       model: 'gpt-4.1-mini',
+      timeout_ms: 45000,
       api_key: { mode: 'keep' },
     }),
   );
   expect(putSpy).toHaveBeenCalledWith(
     expect.not.objectContaining({
       is_enabled: expect.anything(),
-      timeout_ms: expect.anything(),
     }),
   );
-  expect(screen.queryByLabelText('Timeout (ms)')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Timeout (ms)')).toBeInTheDocument();
   expect(screen.queryByLabelText('启用 LLM')).not.toBeInTheDocument();
+});
+
+test('llm config page sends timeout_ms in connection test payload', async () => {
+  const postSpy = vi.fn();
+
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET');
+
+    if (url.endsWith('/api/v1/admin/configs') && method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          llm: {
+            base_url: 'https://llm.local/v1',
+            model: 'gpt-4.1-mini',
+            timeout_ms: 30000,
+            api_key: { is_set: true, masked_value: 'secr****' },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (url.endsWith('/api/v1/admin/test/llm') && method === 'POST') {
+      const bodyText = typeof init?.body === 'string' ? init.body : '';
+      postSpy(JSON.parse(bodyText));
+      return new Response(JSON.stringify({ status: 'ok', message: 'ok' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response('not found', { status: 404 });
+  });
+
+  renderPage(<LLMConfigPage />);
+
+  await userEvent.click(await screen.findByText('替换密钥'));
+  await userEvent.type(screen.getByLabelText('新 API Key'), 'test-token');
+  await userEvent.clear(screen.getByLabelText('Timeout (ms)'));
+  await userEvent.type(screen.getByLabelText('Timeout (ms)'), '45000');
+  await userEvent.click(screen.getByRole('button', { name: '测试连接' }));
+
+  expect(postSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      base_url: 'https://llm.local/v1',
+      model: 'gpt-4.1-mini',
+      timeout_ms: 45000,
+      api_key: 'test-token',
+    }),
+  );
 });
 
 test('llm config page blocks connection test in keep-secret mode', async () => {

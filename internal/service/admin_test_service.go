@@ -8,11 +8,14 @@ import (
 
 var errAdminTestLLMRequired = errors.New("llm connectivity checker is required")
 
+const defaultAdminLLMTestTimeoutMS = 30000
+
 // LLMTestDraft 表示 LLM 连接测试的最小输入。
 type LLMTestDraft struct {
-	BaseURL string `json:"base_url"`
-	Model   string `json:"model"`
-	APIKey  string `json:"api_key"`
+	BaseURL   string `json:"base_url"`
+	Model     string `json:"model"`
+	APIKey    string `json:"api_key"`
+	TimeoutMS int    `json:"timeout_ms,omitempty"`
 }
 
 // ConnectivityTestResult 表示连通性测试结果。
@@ -59,6 +62,9 @@ func NewAdminTestService(llm LLMConnectivityChecker, miniflux ConnectivityChecke
 func (s *AdminTestService) TestLLM(ctx context.Context, draft LLMTestDraft) (ConnectivityTestResult, error) {
 	if s == nil || s.llm == nil {
 		return ConnectivityTestResult{}, errAdminTestLLMRequired
+	}
+	if draft.TimeoutMS <= 0 {
+		draft.TimeoutMS = defaultAdminLLMTestTimeoutMS
 	}
 
 	latency, checkErr := s.llm.Check(ctx, draft)

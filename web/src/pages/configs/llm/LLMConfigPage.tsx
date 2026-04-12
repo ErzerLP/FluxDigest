@@ -9,9 +9,12 @@ import { useSaveLLMConfig, useTestLLMConfig } from '../../../services/mutations/
 import { useAdminConfigs } from '../../../services/queries/admin';
 import type { LLMTestDraft, SecretInput, UpdateLLMConfigInput } from '../../../types/admin';
 
+const defaultLLMTimeoutMS = 30000;
+
 interface LLMConfigFormValues {
   base_url: string;
   model: string;
+  timeout_ms: number;
 }
 
 export function LLMConfigPage() {
@@ -32,6 +35,7 @@ export function LLMConfigPage() {
     defaultValues: {
       base_url: '',
       model: '',
+      timeout_ms: defaultLLMTimeoutMS,
     },
   });
 
@@ -43,6 +47,7 @@ export function LLMConfigPage() {
     reset({
       base_url: currentConfig.base_url ?? '',
       model: currentConfig.model ?? '',
+      timeout_ms: currentConfig.timeout_ms ?? defaultLLMTimeoutMS,
     });
     setSecretInput({ mode: currentConfig.api_key?.is_set ? 'keep' : 'replace', value: '' });
     setTestGuidance(undefined);
@@ -70,6 +75,7 @@ export function LLMConfigPage() {
     const payload: UpdateLLMConfigInput = {
       base_url: values.base_url,
       model: values.model,
+      timeout_ms: values.timeout_ms > 0 ? values.timeout_ms : defaultLLMTimeoutMS,
       api_key:
         secretInput.mode === 'replace'
           ? { mode: 'replace', value: secretInput.value ?? '' }
@@ -96,6 +102,7 @@ export function LLMConfigPage() {
       base_url: values.base_url,
       model: values.model,
       api_key: secretInput.value,
+      timeout_ms: values.timeout_ms > 0 ? values.timeout_ms : defaultLLMTimeoutMS,
     };
 
     testMutation.mutate(payload);
@@ -194,6 +201,19 @@ export function LLMConfigPage() {
                   Model
                 </label>
                 <input id="llm-model" className="console-input" {...register('model')} />
+              </div>
+
+              <div className="form-stack">
+                <label className="form-label" htmlFor="llm-timeout-ms">
+                  Timeout (ms)
+                </label>
+                <input
+                  id="llm-timeout-ms"
+                  type="number"
+                  min={1}
+                  className="console-input"
+                  {...register('timeout_ms', { valueAsNumber: true })}
+                />
               </div>
 
               <SecretField

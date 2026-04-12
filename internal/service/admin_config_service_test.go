@@ -16,7 +16,7 @@ func TestAdminConfigServiceSnapshotMasksSecrets(t *testing.T) {
 			ProfileType: profile.TypeLLM,
 			Version:     2,
 			IsActive:    true,
-			PayloadJSON: []byte(`{"base_url":"https://llm.local/v1","model":"gpt-4.1-mini","api_key":"secret-llm","is_enabled":true}`),
+			PayloadJSON: []byte(`{"base_url":"https://llm.local/v1","model":"gpt-4.1-mini","api_key":"secret-llm","is_enabled":true,"timeout_ms":45000}`),
 		},
 	}}
 	svc := service.NewAdminConfigService(repo)
@@ -27,6 +27,9 @@ func TestAdminConfigServiceSnapshotMasksSecrets(t *testing.T) {
 	}
 	if snapshot.LLM.APIKey.MaskedValue != "secr****" {
 		t.Fatalf("want secr**** got %q", snapshot.LLM.APIKey.MaskedValue)
+	}
+	if snapshot.LLM.TimeoutMS != 45000 {
+		t.Fatalf("want timeout_ms=45000 got %d", snapshot.LLM.TimeoutMS)
 	}
 }
 
@@ -128,5 +131,35 @@ func TestAdminConfigServiceUpdateLLMReplaceRequiresValue(t *testing.T) {
 	}
 	if len(repo.created) != 0 {
 		t.Fatalf("expected no create on error got %d", len(repo.created))
+	}
+}
+
+func TestAdminConfigServiceUpdateLLMCanSetTimeoutMS(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeLLM: {
+			ProfileType: profile.TypeLLM,
+			Version:     2,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"https://old.local/v1","model":"gpt-4.1-mini","api_key":"secret-llm","timeout_ms":30000}`),
+		},
+	}}
+	svc := service.NewAdminConfigService(repo)
+
+	timeoutMS := 60000
+	if _, err := svc.UpdateLLM(context.Background(), service.UpdateLLMConfigInput{
+		BaseURL:   "https://proxy.local/v1",
+		Model:     "gpt-4.1",
+		TimeoutMS: timeoutMS,
+		APIKey:    service.SecretInput{Mode: service.SecretModeKeep},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(repo.created[0].PayloadJSON, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["timeout_ms"] != float64(60000) {
+		t.Fatalf("expected timeout_ms=60000 got %+v", payload)
 	}
 }

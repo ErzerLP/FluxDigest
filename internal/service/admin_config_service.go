@@ -49,15 +49,17 @@ type AdminConfigSnapshot struct {
 }
 
 type LLMConfigView struct {
-	BaseURL string     `json:"base_url"`
-	Model   string     `json:"model"`
-	APIKey  SecretView `json:"api_key"`
+	BaseURL   string     `json:"base_url"`
+	Model     string     `json:"model"`
+	TimeoutMS int        `json:"timeout_ms"`
+	APIKey    SecretView `json:"api_key"`
 }
 
 type UpdateLLMConfigInput struct {
-	BaseURL string      `json:"base_url"`
-	Model   string      `json:"model"`
-	APIKey  SecretInput `json:"api_key"`
+	BaseURL   string      `json:"base_url"`
+	Model     string      `json:"model"`
+	TimeoutMS int         `json:"timeout_ms"`
+	APIKey    SecretInput `json:"api_key"`
 }
 
 // GetSnapshot 返回管理员配置快照。
@@ -69,9 +71,10 @@ func (s *AdminConfigService) GetSnapshot(ctx context.Context) (AdminConfigSnapsh
 
 	return AdminConfigSnapshot{
 		LLM: LLMConfigView{
-			BaseURL: stringValue(payload, "base_url"),
-			Model:   stringValue(payload, "model"),
-			APIKey:  maskSecret(stringValue(payload, "api_key")),
+			BaseURL:   stringValue(payload, "base_url"),
+			Model:     stringValue(payload, "model"),
+			TimeoutMS: resolveLLMTimeoutMS(payload, 0),
+			APIKey:    maskSecret(stringValue(payload, "api_key")),
 		},
 	}, nil
 }
@@ -90,6 +93,7 @@ func (s *AdminConfigService) UpdateLLM(ctx context.Context, input UpdateLLMConfi
 	payload := clonePayload(currentPayload)
 	payload["base_url"] = input.BaseURL
 	payload["model"] = input.Model
+	payload["timeout_ms"] = resolveLLMTimeoutMS(currentPayload, input.TimeoutMS)
 
 	applySecret(payload, currentPayload, "api_key", input.APIKey)
 
@@ -182,6 +186,45 @@ func stringValue(payload map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func resolveLLMTimeoutMS(payload map[string]any, value int) int {
+	if value > 0 {
+		return value
+	}
+
+	current := intValue(payload, "timeout_ms")
+	if current > 0 {
+		return current
+	}
+
+	return 30000
+}
+
+func intValue(payload map[string]any, key string) int {
+	if payload == nil {
+		return 0
+	}
+
+	value, ok := payload[key]
+	if !ok {
+		return 0
+	}
+
+	switch cast := value.(type) {
+	case int:
+		return cast
+	case int32:
+		return int(cast)
+	case int64:
+		return int(cast)
+	case float32:
+		return int(cast)
+	case float64:
+		return int(cast)
+	default:
+		return 0
+	}
 }
 
 func nextVersion(current int) int {

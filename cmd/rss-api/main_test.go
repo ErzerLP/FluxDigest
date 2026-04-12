@@ -503,3 +503,57 @@ func TestAdminLLMConnectivityCheckerUsesInternalTimeout(t *testing.T) {
 		t.Fatalf("want positive latency got %s", latency)
 	}
 }
+
+func TestAdminLLMConnectivityCheckerPrefersDraftTimeoutMS(t *testing.T) {
+	t.Parallel()
+
+	var gotTimeout time.Duration
+	checker := adminLLMConnectivityChecker{
+		timeout: 5 * time.Second,
+		newChatModel: func(ctx context.Context, _ llmadapter.FactoryConfig) (model.BaseChatModel, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("expected deadline on check context")
+			}
+			gotTimeout = time.Until(deadline)
+			return nil, errors.New("skip generate")
+		},
+	}
+
+	_, _ = checker.Check(context.Background(), service.LLMTestDraft{
+		BaseURL:   "https://llm.local/v1",
+		Model:     "gpt-4.1-mini",
+		APIKey:    "token",
+		TimeoutMS: 42000,
+	})
+
+	if gotTimeout < 41*time.Second || gotTimeout > 43*time.Second {
+		t.Fatalf("want timeout around 42s got %s", gotTimeout)
+	}
+}
+
+func TestAdminLLMConnectivityCheckerUsesDefaultTimeoutWhenDraftMissing(t *testing.T) {
+	t.Parallel()
+
+	var gotTimeout time.Duration
+	checker := adminLLMConnectivityChecker{
+		newChatModel: func(ctx context.Context, _ llmadapter.FactoryConfig) (model.BaseChatModel, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("expected deadline on check context")
+			}
+			gotTimeout = time.Until(deadline)
+			return nil, errors.New("skip generate")
+		},
+	}
+
+	_, _ = checker.Check(context.Background(), service.LLMTestDraft{
+		BaseURL: "https://llm.local/v1",
+		Model:   "gpt-4.1-mini",
+		APIKey:  "token",
+	})
+
+	if gotTimeout < 29*time.Second || gotTimeout > 31*time.Second {
+		t.Fatalf("want timeout around 30s got %s", gotTimeout)
+	}
+}
