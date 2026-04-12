@@ -29,6 +29,7 @@ func TestRuntimeConfigServiceUsesProfilePayloadBeforeEnvDefaults(t *testing.T) {
 	defaults.LLM.Model = "gpt-env"
 	defaults.LLM.APIKey = "env-token"
 	defaults.LLM.TimeoutMS = 30000
+	defaults.LLM.FallbackModels = []string{"mimo-v2-pro"}
 
 	svc := service.NewRuntimeConfigService(repo, defaults)
 	snapshot, err := svc.Snapshot(context.Background())
@@ -47,6 +48,9 @@ func TestRuntimeConfigServiceUsesProfilePayloadBeforeEnvDefaults(t *testing.T) {
 	}
 	if snapshot.LLM.TimeoutMS != 45000 {
 		t.Fatalf("want db llm timeout 45000 got %d", snapshot.LLM.TimeoutMS)
+	}
+	if len(snapshot.LLM.FallbackModels) != 1 || snapshot.LLM.FallbackModels[0] != "mimo-v2-pro" {
+		t.Fatalf("want default fallback model kept got %#v", snapshot.LLM.FallbackModels)
 	}
 	if snapshot.Scheduler.Enabled {
 		t.Fatal("want scheduler enabled=false from profile payload")
@@ -74,6 +78,7 @@ func TestRuntimeConfigServiceKeepsFallbackForDefaultSeedEmptyValues(t *testing.T
 	defaults.LLM.Model = "gpt-env"
 	defaults.LLM.APIKey = "env-token"
 	defaults.LLM.TimeoutMS = 30000
+	defaults.LLM.FallbackModels = []string{"mimo-v2-pro"}
 
 	svc := service.NewRuntimeConfigService(repo, defaults)
 	snapshot, err := svc.Snapshot(context.Background())
@@ -92,6 +97,9 @@ func TestRuntimeConfigServiceKeepsFallbackForDefaultSeedEmptyValues(t *testing.T
 	}
 	if snapshot.LLM.TimeoutMS != 30000 {
 		t.Fatalf("want fallback timeout 30000 got %d", snapshot.LLM.TimeoutMS)
+	}
+	if len(snapshot.LLM.FallbackModels) != 1 || snapshot.LLM.FallbackModels[0] != "mimo-v2-pro" {
+		t.Fatalf("want fallback model mimo-v2-pro got %#v", snapshot.LLM.FallbackModels)
 	}
 }
 
@@ -159,7 +167,7 @@ func TestRuntimeConfigServiceSnapshotLoadsPromptProfileVersions(t *testing.T) {
 			ProfileType: profile.TypeLLM,
 			Version:     4,
 			IsActive:    true,
-			PayloadJSON: []byte(`{"base_url":"https://db.llm.local/v1","model":"gpt-db","api_key":"db-token"}`),
+			PayloadJSON: []byte(`{"base_url":"https://db.llm.local/v1","model":"gpt-db","api_key":"db-token","fallback_models":["mimo-v2-pro","kimi-k2.5"]}`),
 		},
 		profile.TypeScheduler: {
 			ProfileType: profile.TypeScheduler,
@@ -182,6 +190,9 @@ func TestRuntimeConfigServiceSnapshotLoadsPromptProfileVersions(t *testing.T) {
 	}
 	if snapshot.LLM.Version != 4 {
 		t.Fatalf("want llm version 4 got %d", snapshot.LLM.Version)
+	}
+	if len(snapshot.LLM.FallbackModels) != 2 || snapshot.LLM.FallbackModels[0] != "mimo-v2-pro" || snapshot.LLM.FallbackModels[1] != "kimi-k2.5" {
+		t.Fatalf("unexpected fallback models %#v", snapshot.LLM.FallbackModels)
 	}
 	if snapshot.Prompts.TranslationVersion != 6 || snapshot.Prompts.DossierVersion != 6 || snapshot.Prompts.DigestVersion != 6 {
 		t.Fatalf("unexpected prompt versions %+v", snapshot.Prompts)

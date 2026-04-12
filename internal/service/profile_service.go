@@ -38,10 +38,11 @@ func (s *ProfileService) SeedDefaults(ctx context.Context) error {
 			profileType: profile.TypeLLM,
 			name:        "default-llm",
 			payload: map[string]any{
-				"base_url":   "",
-				"model":      "gpt-4.1-mini",
-				"timeout_ms": 30000,
-				"is_enabled": true,
+				"base_url":        "",
+				"model":           "MiniMax-M2.7",
+				"fallback_models": []string{"mimo-v2-pro"},
+				"timeout_ms":      30000,
+				"is_enabled":      true,
 			},
 		},
 		{

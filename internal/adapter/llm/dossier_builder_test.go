@@ -60,3 +60,79 @@ func TestDossierBuilderBuildAcceptsTargetAudienceArray(t *testing.T) {
 		t.Fatalf("want normalized target audience got %q", out.TargetAudience)
 	}
 }
+
+func TestDossierBuilderBuildAcceptsReadingValueArray(t *testing.T) {
+	chat := &dossierChatStub{response: "```json\n{\"reading_value\":[\"快速\",\"高质量\"]}\n```"}
+	builder := llm.NewDossierBuilderFromTemplateText(chat, "生成 dossier")
+
+	out, err := builder.Build(context.Background(), llm.DossierBuildInput{
+		Article:    article.SourceArticle{ID: "art-1", Title: "Model News"},
+		Processing: postgres.ProcessedArticleRecord{ID: "proc-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ReadingValue != "快速, 高质量" {
+		t.Fatalf("want normalized reading value array got %q", out.ReadingValue)
+	}
+}
+
+func TestDossierBuilderBuildAcceptsReadingValueObject(t *testing.T) {
+	chat := &dossierChatStub{response: "```json\n{\"reading_value\":{\"duration\":\"3分钟\",\"level\":\"high\"}}\n```"}
+	builder := llm.NewDossierBuilderFromTemplateText(chat, "生成 dossier")
+
+	out, err := builder.Build(context.Background(), llm.DossierBuildInput{
+		Article:    article.SourceArticle{ID: "art-1", Title: "Model News"},
+		Processing: postgres.ProcessedArticleRecord{ID: "proc-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ReadingValue != "duration: 3分钟, level: high" {
+		t.Fatalf("want normalized reading value object got %q", out.ReadingValue)
+	}
+}
+
+func TestDossierBuilderBuildAcceptsPublishSuggestionBool(t *testing.T) {
+	chat := &dossierChatStub{response: "```json\n{\"publish_suggestion\":true}\n```"}
+	builder := llm.NewDossierBuilderFromTemplateText(chat, "生成 dossier")
+
+	out, err := builder.Build(context.Background(), llm.DossierBuildInput{
+		Article:    article.SourceArticle{ID: "art-1", Title: "Model News"},
+		Processing: postgres.ProcessedArticleRecord{ID: "proc-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.PublishSuggestion != "suggested" {
+		t.Fatalf("want normalized publish suggestion got %q", out.PublishSuggestion)
+	}
+}
+
+func TestDossierBuilderBuildAcceptsFlexibleListFields(t *testing.T) {
+	chat := &dossierChatStub{response: "```json\n{\"key_points\":\"- 要点一\\n- 要点二\",\"debate_points\":\"- 观点一\\n- 观点二\",\"suggested_channels\":{\"holo\":\"primary, backup\",\"blog\":\"secondary\"},\"suggested_tags\":[\"AI\",[\"LLM\",\"RSS\"]],\"suggested_categories\":\"技术, 资讯\"}\n```"}
+	builder := llm.NewDossierBuilderFromTemplateText(chat, "生成 dossier")
+
+	out, err := builder.Build(context.Background(), llm.DossierBuildInput{
+		Article:    article.SourceArticle{ID: "art-1", Title: "Model News"},
+		Processing: postgres.ProcessedArticleRecord{ID: "proc-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.DebatePoints) != 2 || out.DebatePoints[0] != "观点一" || out.DebatePoints[1] != "观点二" {
+		t.Fatalf("want normalized debate points got %#v", out.DebatePoints)
+	}
+	if len(out.KeyPoints) != 2 || out.KeyPoints[0] != "要点一" || out.KeyPoints[1] != "要点二" {
+		t.Fatalf("want normalized key points got %#v", out.KeyPoints)
+	}
+	if len(out.SuggestedChannels) != 2 || out.SuggestedChannels[0] != "blog: secondary" || out.SuggestedChannels[1] != "holo: primary, backup" {
+		t.Fatalf("want normalized suggested channels got %#v", out.SuggestedChannels)
+	}
+	if len(out.SuggestedTags) != 3 || out.SuggestedTags[0] != "AI" || out.SuggestedTags[1] != "LLM" || out.SuggestedTags[2] != "RSS" {
+		t.Fatalf("want normalized suggested tags got %#v", out.SuggestedTags)
+	}
+	if len(out.SuggestedCategories) != 2 || out.SuggestedCategories[0] != "技术" || out.SuggestedCategories[1] != "资讯" {
+		t.Fatalf("want normalized suggested categories got %#v", out.SuggestedCategories)
+	}
+}

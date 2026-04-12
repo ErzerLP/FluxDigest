@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,12 +28,13 @@ type RuntimePromptVersions struct {
 
 // RuntimeProcessingRunner 负责文章处理与 dossier 物化。
 type RuntimeProcessingRunner struct {
-	client     runtimeEntryLister
-	articles   runtimeArticleFinder
-	processing runtimeArticleProcessor
-	results    runtimeProcessingStore
-	dossiers   runtimeDossierMaterializer
-	versions   RuntimePromptVersions
+	client                runtimeEntryLister
+	articles              runtimeArticleFinder
+	processing            runtimeArticleProcessor
+	results               runtimeProcessingStore
+	dossiers              runtimeDossierMaterializer
+	versions              RuntimePromptVersions
+	concurrencyCalculator func(int) int
 }
 
 // NewRuntimeProcessingRunner 创建 RuntimeProcessingRunner。
@@ -44,12 +47,13 @@ func NewRuntimeProcessingRunner(
 	versions RuntimePromptVersions,
 ) *RuntimeProcessingRunner {
 	return &RuntimeProcessingRunner{
-		client:     client,
-		articles:   articles,
-		processing: processing,
-		results:    results,
-		dossiers:   dossiers,
-		versions:   versions,
+		client:                client,
+		articles:              articles,
+		processing:            processing,
+		results:               results,
+		dossiers:              dossiers,
+		versions:              versions,
+		concurrencyCalculator: defaultRuntimeConcurrency,
 	}
 }
 
@@ -60,72 +64,101 @@ func (r *RuntimeProcessingRunner) ProcessPending(ctx context.Context, windowStar
 		return nil, err
 	}
 
-	candidates := make([]domaindigest.CandidateArticle, 0, len(entries))
 	seen := make(map[int64]struct{}, len(entries))
+	jobs := make([]runtimeProcessingJob, 0, len(entries))
 	for _, entry := range entries {
 		if _, ok := seen[entry.ID]; ok {
 			continue
 		}
 		seen[entry.ID] = struct{}{}
+		jobs = append(jobs, runtimeProcessingJob{order: len(jobs), entryID: entry.ID})
+	}
 
-		source, err := r.articles.FindByMinifluxEntryID(ctx, entry.ID)
-		if err != nil {
-			return nil, err
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+
+	workerCount := r.concurrencyCalculator(len(jobs))
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	if workerCount > len(jobs) {
+		workerCount = len(jobs)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	jobCh := make(chan runtimeProcessingJob)
+	resultCh := make(chan runtimeProcessingResult, len(jobs))
+	var wg sync.WaitGroup
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobCh {
+				if err := ctx.Err(); err != nil {
+					return
+				}
+
+				candidate, jobErr := r.runProcessingJob(ctx, job, windowStart)
+				if jobErr != nil {
+					select {
+					case resultCh <- runtimeProcessingResult{err: jobErr}:
+					case <-ctx.Done():
+					}
+					cancel()
+					return
+				}
+
+				select {
+				case resultCh <- runtimeProcessingResult{order: job.order, candidate: candidate}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobCh)
+		for _, job := range jobs {
+			select {
+			case <-ctx.Done():
+				return
+			case jobCh <- job:
+			}
 		}
+	}()
 
-		record, err := r.results.GetLatestByArticleID(ctx, source.ID)
-		if err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, err
-			}
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
 
-			processed, processErr := r.processing.ProcessArticle(ctx, source)
-			if processErr != nil {
-				return nil, processErr
+	candidates := make([]domaindigest.CandidateArticle, len(jobs))
+	received := 0
+	var firstErr error
+	for res := range resultCh {
+		if res.err != nil {
+			if firstErr == nil {
+				firstErr = res.err
 			}
-
-			record = postgres.ProcessedArticleRecord{
-				ID:                       newProcessingID(),
-				ArticleID:                source.ID,
-				TitleTranslated:          processed.Translation.TitleTranslated,
-				SummaryTranslated:        processed.Translation.SummaryTranslated,
-				ContentTranslated:        processed.Translation.ContentTranslated,
-				CoreSummary:              processed.Analysis.CoreSummary,
-				KeyPoints:                processed.Analysis.KeyPoints,
-				TopicCategory:            processed.Analysis.TopicCategory,
-				ImportanceScore:          processed.Analysis.ImportanceScore,
-				TranslationPromptVersion: r.versions.Translation,
-				AnalysisPromptVersion:    r.versions.Analysis,
-				LLMProfileVersion:        r.versions.LLM,
-			}
-			if saveErr := r.results.Save(ctx, record); saveErr != nil {
-				return nil, saveErr
-			}
+			continue
 		}
+		candidates[res.order] = res.candidate
+		received++
+	}
 
-		dossierItem, err := r.dossiers.Materialize(ctx, MaterializeDossierInput{
-			Article:                  source,
-			Processing:               record,
-			ArticleID:                source.ID,
-			ProcessingID:             record.ID,
-			DigestDate:               windowStart.In(shanghaiLocation()).Format(dossierDateLayout),
-			TitleTranslated:          record.TitleTranslated,
-			SummaryTranslated:        record.SummaryTranslated,
-			CoreSummary:              record.CoreSummary,
-			KeyPoints:                record.KeyPoints,
-			TopicCategory:            record.TopicCategory,
-			ImportanceScore:          record.ImportanceScore,
-			ContentTranslated:        record.ContentTranslated,
-			TranslationPromptVersion: r.versions.Translation,
-			AnalysisPromptVersion:    r.versions.Analysis,
-			DossierPromptVersion:     r.versions.Dossier,
-			LLMProfileVersion:        r.versions.LLM,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		candidates = append(candidates, candidateFromDossier(source, record, dossierItem))
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if received != len(jobs) {
+		return nil, errors.New("runtimeProcessingRunner: incomplete processing results")
 	}
 
 	return candidates, nil
@@ -182,6 +215,119 @@ func (r *RuntimeProcessingRunner) ReprocessArticle(ctx context.Context, articleI
 		LLMProfileVersion:        r.versions.LLM,
 	})
 	return err
+}
+
+type runtimeProcessingJob struct {
+	order   int
+	entryID int64
+}
+
+type runtimeProcessingResult struct {
+	order     int
+	candidate domaindigest.CandidateArticle
+	err       error
+}
+
+func (r *RuntimeProcessingRunner) runProcessingJob(ctx context.Context, job runtimeProcessingJob, windowStart time.Time) (domaindigest.CandidateArticle, error) {
+	if err := ctx.Err(); err != nil {
+		return domaindigest.CandidateArticle{}, err
+	}
+
+	source, err := r.articles.FindByMinifluxEntryID(ctx, job.entryID)
+	if err != nil {
+		return domaindigest.CandidateArticle{}, err
+	}
+
+	record, recordErr := r.results.GetLatestByArticleID(ctx, source.ID)
+	if recordErr != nil && !errors.Is(recordErr, gorm.ErrRecordNotFound) {
+		return domaindigest.CandidateArticle{}, recordErr
+	}
+
+	if errors.Is(recordErr, gorm.ErrRecordNotFound) {
+		processed, processErr := r.processing.ProcessArticle(ctx, source)
+		if processErr != nil {
+			return domaindigest.CandidateArticle{}, processErr
+		}
+
+		record = postgres.ProcessedArticleRecord{
+			ID:                       newProcessingID(),
+			ArticleID:                source.ID,
+			TitleTranslated:          processed.Translation.TitleTranslated,
+			SummaryTranslated:        processed.Translation.SummaryTranslated,
+			ContentTranslated:        processed.Translation.ContentTranslated,
+			CoreSummary:              processed.Analysis.CoreSummary,
+			KeyPoints:                processed.Analysis.KeyPoints,
+			TopicCategory:            processed.Analysis.TopicCategory,
+			ImportanceScore:          processed.Analysis.ImportanceScore,
+			TranslationPromptVersion: r.versions.Translation,
+			AnalysisPromptVersion:    r.versions.Analysis,
+			LLMProfileVersion:        r.versions.LLM,
+		}
+
+		if err := ctx.Err(); err != nil {
+			return domaindigest.CandidateArticle{}, err
+		}
+		if saveErr := r.results.Save(ctx, record); saveErr != nil {
+			return domaindigest.CandidateArticle{}, saveErr
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return domaindigest.CandidateArticle{}, err
+	}
+
+	dossierItem, matErr := r.dossiers.Materialize(ctx, MaterializeDossierInput{
+		Article:                  source,
+		Processing:               record,
+		ArticleID:                source.ID,
+		ProcessingID:             record.ID,
+		DigestDate:               windowStart.In(shanghaiLocation()).Format(dossierDateLayout),
+		TitleTranslated:          record.TitleTranslated,
+		SummaryTranslated:        record.SummaryTranslated,
+		CoreSummary:              record.CoreSummary,
+		KeyPoints:                record.KeyPoints,
+		TopicCategory:            record.TopicCategory,
+		ImportanceScore:          record.ImportanceScore,
+		ContentTranslated:        record.ContentTranslated,
+		TranslationPromptVersion: r.versions.Translation,
+		AnalysisPromptVersion:    r.versions.Analysis,
+		DossierPromptVersion:     r.versions.Dossier,
+		LLMProfileVersion:        r.versions.LLM,
+	})
+	if matErr != nil {
+		return domaindigest.CandidateArticle{}, matErr
+	}
+
+	if err := ctx.Err(); err != nil {
+		return domaindigest.CandidateArticle{}, err
+	}
+
+	return candidateFromDossier(source, record, dossierItem), nil
+}
+
+func (r *RuntimeProcessingRunner) SetConcurrencyCalculator(fn func(int) int) {
+	if r == nil {
+		return
+	}
+	if fn == nil {
+		r.concurrencyCalculator = defaultRuntimeConcurrency
+		return
+	}
+	r.concurrencyCalculator = fn
+}
+
+func defaultRuntimeConcurrency(jobCount int) int {
+	if jobCount <= 0 {
+		return 1
+	}
+	cpuCount := runtime.NumCPU()
+	if cpuCount <= 0 {
+		cpuCount = 1
+	}
+	if jobCount < cpuCount {
+		return jobCount
+	}
+	return cpuCount
 }
 
 type runtimeEntryLister interface {

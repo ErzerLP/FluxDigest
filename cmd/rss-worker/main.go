@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -126,13 +127,11 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 		return nil, nil, nil, errors.New("APP_LLM_MODEL is required")
 	}
 
-	chatModel, err := llmadapter.NewChatModel(ctx, runtimeLLMFactoryConfig(runtimeSnapshot.LLM))
+	invoker, err := buildChatModelInvoker(ctx, runtimeSnapshot.LLM, llmadapter.NewChatModel)
 	if err != nil {
 		_ = sqlDB.Close()
 		return nil, nil, nil, err
 	}
-
-	invoker := chatModelInvoker{chat: chatModel}
 	articleRepo := postgres.NewArticleRepository(db)
 	processingRepo := postgres.NewProcessingRepository(db)
 	digestRepo := postgres.NewDigestRepository(db)
@@ -214,7 +213,68 @@ func runtimeLLMFactoryConfig(cfg service.LLMRuntimeConfig) llmadapter.FactoryCon
 	return factoryCfg
 }
 
+func runtimeLLMFactoryConfigs(cfg service.LLMRuntimeConfig) []llmadapter.FactoryConfig {
+	models := normalizeLLMModelChain(cfg.Model, cfg.FallbackModels)
+	configs := make([]llmadapter.FactoryConfig, 0, len(models))
+	for _, modelName := range models {
+		cfg.Model = modelName
+		configs = append(configs, runtimeLLMFactoryConfig(cfg))
+	}
+	return configs
+}
+
+func normalizeLLMModelChain(primary string, fallbacks []string) []string {
+	items := append([]string{primary}, fallbacks...)
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+type chatModelFactory func(ctx context.Context, cfg llmadapter.FactoryConfig) (einomodel.BaseChatModel, error)
+
+func buildChatModelInvoker(ctx context.Context, cfg service.LLMRuntimeConfig, newChatModel chatModelFactory) (chatModelInvoker, error) {
+	if newChatModel == nil {
+		newChatModel = llmadapter.NewChatModel
+	}
+
+	factoryConfigs := runtimeLLMFactoryConfigs(cfg)
+	if len(factoryConfigs) == 0 {
+		return chatModelInvoker{}, errors.New("APP_LLM_MODEL is required")
+	}
+
+	models := make([]namedChatModel, 0, len(factoryConfigs))
+	for _, factoryCfg := range factoryConfigs {
+		chatModel, err := newChatModel(ctx, factoryCfg)
+		if err != nil {
+			return chatModelInvoker{}, err
+		}
+		models = append(models, namedChatModel{
+			name: factoryCfg.Model,
+			chat: chatModel,
+		})
+	}
+
+	return chatModelInvoker{models: models}, nil
+}
+
 type chatModelInvoker struct {
+	chat   einomodel.BaseChatModel
+	models []namedChatModel
+}
+
+type namedChatModel struct {
+	name string
 	chat einomodel.BaseChatModel
 }
 
@@ -230,12 +290,47 @@ func (a dossierBuilderAdapter) Build(ctx context.Context, input service.BuildDos
 }
 
 func (i chatModelInvoker) Generate(ctx context.Context, prompt string) (string, error) {
-	if i.chat == nil {
+	return i.generate(ctx, prompt, nil)
+}
+
+func (i chatModelInvoker) GenerateStructuredJSON(ctx context.Context, prompt string) (string, error) {
+	return i.generate(ctx, prompt, validateStructuredJSONObject)
+}
+
+func (i chatModelInvoker) generate(ctx context.Context, prompt string, validator func(string) error) (string, error) {
+	models := i.models
+	if len(models) == 0 && i.chat != nil {
+		models = []namedChatModel{{name: "default", chat: i.chat}}
+	}
+	if len(models) == 0 {
 		return "", errors.New("chat model is required")
 	}
 
+	var lastErr error
+	for idx, item := range models {
+		result, err := i.generateWithModel(ctx, item.chat, prompt, validator)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if idx == len(models)-1 || !shouldFallbackChatGenerateError(ctx, err) {
+			return "", err
+		}
+
+		log.Printf("chat model fallback activated: from=%s to=%s err=%v", item.name, models[idx+1].name, err)
+	}
+
+	return "", lastErr
+}
+
+func (i chatModelInvoker) generateWithModel(
+	ctx context.Context,
+	chat einomodel.BaseChatModel,
+	prompt string,
+	validator func(string) error,
+) (string, error) {
 	for attempt := 1; attempt <= maxChatGenerateTry; attempt++ {
-		message, err := i.chat.Generate(ctx, []*schema.Message{schema.UserMessage(prompt)})
+		message, err := chat.Generate(ctx, []*schema.Message{schema.UserMessage(prompt)})
 		if err != nil {
 			if attempt == maxChatGenerateTry || !shouldRetryChatGenerateError(ctx, err) {
 				return "", err
@@ -243,13 +338,49 @@ func (i chatModelInvoker) Generate(ctx context.Context, prompt string) (string, 
 			continue
 		}
 		if message == nil {
-			return "", errors.New("empty llm response")
+			err = errors.New("empty llm response")
+			if attempt == maxChatGenerateTry || !shouldFallbackChatGenerateError(ctx, err) {
+				return "", err
+			}
+			continue
 		}
 
-		return strings.TrimSpace(message.Content), nil
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			err = errors.New("empty llm response")
+			if attempt == maxChatGenerateTry || !shouldFallbackChatGenerateError(ctx, err) {
+				return "", err
+			}
+			continue
+		}
+		if validator != nil {
+			if err := validator(content); err != nil {
+				if attempt == maxChatGenerateTry || !shouldFallbackChatGenerateError(ctx, err) {
+					return "", err
+				}
+				continue
+			}
+		}
+
+		return content, nil
 	}
 
 	return "", errors.New("failed to create chat completion")
+}
+
+func shouldFallbackChatGenerateError(ctx context.Context, err error) bool {
+	if shouldRetryChatGenerateError(ctx, err) {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "empty llm response") ||
+		strings.Contains(text, "invalid structured json") ||
+		strings.Contains(text, "invalid character") ||
+		strings.Contains(text, "unexpected end of json input") ||
+		strings.Contains(text, "cannot unmarshal")
 }
 
 func shouldRetryChatGenerateError(ctx context.Context, err error) bool {
@@ -268,6 +399,12 @@ func shouldRetryChatGenerateError(ctx context.Context, err error) bool {
 
 	text := strings.ToLower(err.Error())
 	for _, marker := range []string{
+		"500 internal server error",
+		"status code: 500",
+		"502 bad gateway",
+		"status code: 502",
+		"503 service unavailable",
+		"status code: 503",
 		"504 gateway time-out",
 		"504 gateway timeout",
 		"status code: 504",
@@ -284,6 +421,30 @@ func shouldRetryChatGenerateError(ctx context.Context, err error) bool {
 		}
 	}
 	return false
+}
+
+func validateStructuredJSONObject(raw string) error {
+	normalized := normalizeStructuredJSONObject(raw)
+	if !json.Valid([]byte(normalized)) {
+		return errors.New("invalid structured json")
+	}
+	return nil
+}
+
+func normalizeStructuredJSONObject(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	trimmed = strings.TrimSpace(trimmed)
+
+	start := strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start >= 0 && end >= start {
+		return trimmed[start : end+1]
+	}
+
+	return trimmed
 }
 
 type digestWorkflowRunner struct {

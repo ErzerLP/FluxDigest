@@ -48,8 +48,12 @@ func TestProfileServiceSeedsDefaults(t *testing.T) {
 	if err := json.Unmarshal(repo.created[0].PayloadJSON, &llmPayload); err != nil {
 		t.Fatalf("unmarshal llm payload: %v", err)
 	}
-	if llmPayload["model"] != "gpt-4.1-mini" {
+	if llmPayload["model"] != "MiniMax-M2.7" {
 		t.Fatalf("missing default llm model in payload: %+v", llmPayload)
+	}
+	fallbackModels, ok := llmPayload["fallback_models"].([]any)
+	if !ok || len(fallbackModels) != 1 || fallbackModels[0] != "mimo-v2-pro" {
+		t.Fatalf("missing default fallback models in payload: %+v", llmPayload)
 	}
 	if llmPayload["timeout_ms"] != float64(30000) {
 		t.Fatalf("missing default llm timeout in payload: %+v", llmPayload)

@@ -279,6 +279,111 @@ func TestChatModelInvokerGenerateStopsRetryWhenContextCanceled(t *testing.T) {
 	}
 }
 
+func TestChatModelInvokerGenerateFallsBackToNextModelAfterTransientFailures(t *testing.T) {
+	primary := &chatModelStub{
+		results: []chatGenerateResult{
+			{err: errors.New("failed to create chat completion: 504 Gateway Time-out")},
+			{err: errors.New("failed to create chat completion: 504 Gateway Time-out")},
+			{err: errors.New("failed to create chat completion: 504 Gateway Time-out")},
+		},
+	}
+	secondary := &chatModelStub{
+		results: []chatGenerateResult{
+			{message: &schema.Message{Content: "  fallback ok  "}},
+		},
+	}
+	invoker := chatModelInvoker{
+		models: []namedChatModel{
+			{name: "MiniMax-M2.7", chat: primary},
+			{name: "mimo-v2-pro", chat: secondary},
+		},
+	}
+
+	got, err := invoker.Generate(context.Background(), "prompt")
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if got != "fallback ok" {
+		t.Fatalf("Generate() = %q, want %q", got, "fallback ok")
+	}
+	if primary.calls != 3 {
+		t.Fatalf("primary calls = %d, want 3", primary.calls)
+	}
+	if secondary.calls != 1 {
+		t.Fatalf("secondary calls = %d, want 1", secondary.calls)
+	}
+}
+
+func TestChatModelInvokerGenerateStructuredJSONFallsBackWhenPrimaryReturnsInvalidJSON(t *testing.T) {
+	primary := &chatModelStub{
+		results: []chatGenerateResult{
+			{message: &schema.Message{Content: "Before {\"broken\": true trailing"}},
+			{message: &schema.Message{Content: "Before {\"broken\": true trailing"}},
+			{message: &schema.Message{Content: "Before {\"broken\": true trailing"}},
+		},
+	}
+	secondary := &chatModelStub{
+		results: []chatGenerateResult{
+			{message: &schema.Message{Content: "{\"ok\":true}"}},
+		},
+	}
+	invoker := chatModelInvoker{
+		models: []namedChatModel{
+			{name: "MiniMax-M2.7", chat: primary},
+			{name: "mimo-v2-pro", chat: secondary},
+		},
+	}
+
+	got, err := invoker.GenerateStructuredJSON(context.Background(), "prompt")
+	if err != nil {
+		t.Fatalf("GenerateStructuredJSON() error = %v", err)
+	}
+	if got != "{\"ok\":true}" {
+		t.Fatalf("GenerateStructuredJSON() = %q", got)
+	}
+	if primary.calls != 3 {
+		t.Fatalf("primary calls = %d, want 3", primary.calls)
+	}
+	if secondary.calls != 1 {
+		t.Fatalf("secondary calls = %d, want 1", secondary.calls)
+	}
+}
+
+func TestChatModelInvokerGenerateFallsBackAfterInternalServerError(t *testing.T) {
+	primary := &chatModelStub{
+		results: []chatGenerateResult{
+			{err: errors.New("error, status code: 500, status: 500 Internal Server Error, message: unknown error")},
+			{err: errors.New("error, status code: 500, status: 500 Internal Server Error, message: unknown error")},
+			{err: errors.New("error, status code: 500, status: 500 Internal Server Error, message: unknown error")},
+		},
+	}
+	secondary := &chatModelStub{
+		results: []chatGenerateResult{
+			{message: &schema.Message{Content: "server recovered"}},
+		},
+	}
+	invoker := chatModelInvoker{
+		models: []namedChatModel{
+			{name: "MiniMax-M2.7", chat: primary},
+			{name: "mimo-v2-pro", chat: secondary},
+		},
+	}
+
+	got, err := invoker.Generate(context.Background(), "prompt")
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if got != "server recovered" {
+		t.Fatalf("Generate() = %q", got)
+	}
+	if primary.calls != 3 {
+		t.Fatalf("primary calls = %d, want 3", primary.calls)
+	}
+	if secondary.calls != 1 {
+		t.Fatalf("secondary calls = %d, want 1", secondary.calls)
+	}
+}
+
 func TestRuntimeLLMFactoryConfigUsesTimeoutMS(t *testing.T) {
 	cfg := runtimeLLMFactoryConfig(service.LLMRuntimeConfig{
 		BaseURL:   "https://llm.local/v1",
@@ -298,5 +403,27 @@ func TestRuntimeLLMFactoryConfigUsesTimeoutMS(t *testing.T) {
 	}
 	if cfg.Timeout != 45*time.Second {
 		t.Fatalf("want timeout 45s got %s", cfg.Timeout)
+	}
+}
+
+func TestRuntimeLLMFactoryConfigsIncludesFallbackModels(t *testing.T) {
+	configs := runtimeLLMFactoryConfigs(service.LLMRuntimeConfig{
+		BaseURL:        "https://llm.local/v1",
+		APIKey:         "token",
+		Model:          "MiniMax-M2.7",
+		FallbackModels: []string{"mimo-v2-pro", "MiniMax-M2.7", " kimi-k2.5 "},
+		TimeoutMS:      45000,
+	})
+
+	if len(configs) != 3 {
+		t.Fatalf("want 3 configs got %d", len(configs))
+	}
+	if configs[0].Model != "MiniMax-M2.7" || configs[1].Model != "mimo-v2-pro" || configs[2].Model != "kimi-k2.5" {
+		t.Fatalf("unexpected model chain %#v", configs)
+	}
+	for _, cfg := range configs {
+		if cfg.Timeout != 45*time.Second {
+			t.Fatalf("want timeout 45s got %s", cfg.Timeout)
+		}
 	}
 }

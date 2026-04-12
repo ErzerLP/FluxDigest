@@ -32,6 +32,10 @@ type ChatInvoker interface {
 	Generate(ctx context.Context, prompt string) (string, error)
 }
 
+type structuredJSONChatInvoker interface {
+	GenerateStructuredJSON(ctx context.Context, prompt string) (string, error)
+}
+
 // ArticleProcessor 负责翻译与分析单篇文章。
 type ArticleProcessor struct {
 	chat                ChatInvoker
@@ -87,7 +91,7 @@ func (p *ArticleProcessor) Translate(ctx context.Context, input article.SourceAr
 		return processing.Translation{}, err
 	}
 
-	raw, err := p.chat.Generate(ctx, prompt)
+	raw, err := generateStructuredJSON(ctx, p.chat, prompt)
 	if err != nil {
 		return processing.Translation{}, err
 	}
@@ -118,7 +122,7 @@ func (p *ArticleProcessor) Analyze(ctx context.Context, input article.SourceArti
 		return processing.Analysis{}, err
 	}
 
-	raw, err := p.chat.Generate(ctx, prompt)
+	raw, err := generateStructuredJSON(ctx, p.chat, prompt)
 	if err != nil {
 		return processing.Analysis{}, err
 	}
@@ -267,4 +271,11 @@ func normalizeJSONObject(raw string) string {
 	}
 
 	return trimmed
+}
+
+func generateStructuredJSON(ctx context.Context, chat ChatInvoker, prompt string) (string, error) {
+	if structured, ok := chat.(structuredJSONChatInvoker); ok {
+		return structured.GenerateStructuredJSON(ctx, prompt)
+	}
+	return chat.Generate(ctx, prompt)
 }

@@ -15,7 +15,9 @@ miniflux:
 llm:
   base_url: https://api.openai.com/v1
   api_key: change-me
-  model: gpt-4.1-mini
+  model: MiniMax-M2.7
+  fallback_models:
+    - mimo-v2-pro
   timeout_ms: 30000
 publish:
   holo_endpoint: https://blog.local/api/posts

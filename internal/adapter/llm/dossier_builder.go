@@ -5,7 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -24,6 +28,10 @@ type DossierBuildInput struct {
 type DossierBuilder struct {
 	chat     ChatInvoker
 	template promptTemplate
+}
+
+type structuredJSONDossierChatInvoker interface {
+	GenerateStructuredJSON(ctx context.Context, prompt string) (string, error)
 }
 
 // NewDossierBuilder 创建 dossier 生成器。
@@ -53,85 +61,266 @@ func (b *DossierBuilder) Build(ctx context.Context, input DossierBuildInput) (do
 		return dossier.ArticleDossier{}, err
 	}
 
-	raw, err := b.chat.Generate(ctx, prompt)
+	raw, err := generateDossierStructuredJSON(ctx, b.chat, prompt)
 	if err != nil {
 		return dossier.ArticleDossier{}, err
 	}
 
 	var out struct {
-		TitleTranslated          string           `json:"title_translated"`
-		SummaryPolished          string           `json:"summary_polished"`
-		CoreSummary              string           `json:"core_summary"`
-		KeyPoints                []string         `json:"key_points"`
-		TopicCategory            string           `json:"topic_category"`
-		ImportanceScore          float64          `json:"importance_score"`
-		RecommendationReason     string           `json:"recommendation_reason"`
-		ReadingValue             string           `json:"reading_value"`
-		PriorityLevel            string           `json:"priority_level"`
-		ContentPolishedMarkdown  string           `json:"content_polished_markdown"`
-		AnalysisLongformMarkdown string           `json:"analysis_longform_markdown"`
-		BackgroundContext        string           `json:"background_context"`
-		ImpactAnalysis           string           `json:"impact_analysis"`
-		DebatePoints             []string         `json:"debate_points"`
-		TargetAudience           normalizedString `json:"target_audience"`
-		PublishSuggestion        string           `json:"publish_suggestion"`
-		SuggestionReason         string           `json:"suggestion_reason"`
-		SuggestedChannels        []string         `json:"suggested_channels"`
-		SuggestedTags            []string         `json:"suggested_tags"`
-		SuggestedCategories      []string         `json:"suggested_categories"`
+		TitleTranslated          normalizedString            `json:"title_translated"`
+		SummaryPolished          normalizedString            `json:"summary_polished"`
+		CoreSummary              normalizedString            `json:"core_summary"`
+		KeyPoints                normalizedStringList        `json:"key_points"`
+		TopicCategory            normalizedString            `json:"topic_category"`
+		ImportanceScore          float64                     `json:"importance_score"`
+		RecommendationReason     normalizedString            `json:"recommendation_reason"`
+		ReadingValue             normalizedString            `json:"reading_value"`
+		PriorityLevel            normalizedString            `json:"priority_level"`
+		ContentPolishedMarkdown  normalizedString            `json:"content_polished_markdown"`
+		AnalysisLongformMarkdown normalizedString            `json:"analysis_longform_markdown"`
+		BackgroundContext        normalizedString            `json:"background_context"`
+		ImpactAnalysis           normalizedString            `json:"impact_analysis"`
+		DebatePoints             normalizedStringList        `json:"debate_points"`
+		TargetAudience           normalizedString            `json:"target_audience"`
+		PublishSuggestion        normalizedPublishSuggestion `json:"publish_suggestion"`
+		SuggestionReason         normalizedString            `json:"suggestion_reason"`
+		SuggestedChannels        normalizedStringList        `json:"suggested_channels"`
+		SuggestedTags            normalizedStringList        `json:"suggested_tags"`
+		SuggestedCategories      normalizedStringList        `json:"suggested_categories"`
 	}
 	if err := json.Unmarshal([]byte(normalizeJSONObject(raw)), &out); err != nil {
 		return dossier.ArticleDossier{}, err
 	}
 
 	return dossier.ArticleDossier{
-		TitleTranslated:          out.TitleTranslated,
-		SummaryPolished:          out.SummaryPolished,
-		CoreSummary:              out.CoreSummary,
-		KeyPoints:                out.KeyPoints,
-		TopicCategory:            out.TopicCategory,
+		TitleTranslated:          string(out.TitleTranslated),
+		SummaryPolished:          string(out.SummaryPolished),
+		CoreSummary:              string(out.CoreSummary),
+		KeyPoints:                []string(out.KeyPoints),
+		TopicCategory:            string(out.TopicCategory),
 		ImportanceScore:          normalizeImportanceScore(out.ImportanceScore),
-		RecommendationReason:     out.RecommendationReason,
-		ReadingValue:             out.ReadingValue,
-		PriorityLevel:            out.PriorityLevel,
-		ContentPolishedMarkdown:  out.ContentPolishedMarkdown,
-		AnalysisLongformMarkdown: out.AnalysisLongformMarkdown,
-		BackgroundContext:        out.BackgroundContext,
-		ImpactAnalysis:           out.ImpactAnalysis,
-		DebatePoints:             out.DebatePoints,
+		RecommendationReason:     string(out.RecommendationReason),
+		ReadingValue:             string(out.ReadingValue),
+		PriorityLevel:            string(out.PriorityLevel),
+		ContentPolishedMarkdown:  string(out.ContentPolishedMarkdown),
+		AnalysisLongformMarkdown: string(out.AnalysisLongformMarkdown),
+		BackgroundContext:        string(out.BackgroundContext),
+		ImpactAnalysis:           string(out.ImpactAnalysis),
+		DebatePoints:             []string(out.DebatePoints),
 		TargetAudience:           string(out.TargetAudience),
-		PublishSuggestion:        out.PublishSuggestion,
-		SuggestionReason:         out.SuggestionReason,
-		SuggestedChannels:        out.SuggestedChannels,
-		SuggestedTags:            out.SuggestedTags,
-		SuggestedCategories:      out.SuggestedCategories,
+		PublishSuggestion:        string(out.PublishSuggestion),
+		SuggestionReason:         string(out.SuggestionReason),
+		SuggestedChannels:        []string(out.SuggestedChannels),
+		SuggestedTags:            []string(out.SuggestedTags),
+		SuggestedCategories:      []string(out.SuggestedCategories),
 	}, nil
 }
 
 type normalizedString string
 
 func (s *normalizedString) UnmarshalJSON(data []byte) error {
-	var single string
-	if err := json.Unmarshal(data, &single); err == nil {
-		*s = normalizedString(strings.TrimSpace(single))
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+
+	*s = normalizedString(normalizeFlexibleStringValue(value))
+	return nil
+}
+
+type normalizedStringList []string
+
+func (s *normalizedStringList) UnmarshalJSON(data []byte) error {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+
+	*s = normalizedStringList(normalizeFlexibleStringListValue(value))
+	return nil
+}
+
+type normalizedPublishSuggestion string
+
+func (s *normalizedPublishSuggestion) UnmarshalJSON(data []byte) error {
+	var boolValue bool
+	if err := json.Unmarshal(data, &boolValue); err == nil {
+		if boolValue {
+			*s = normalizedPublishSuggestion("suggested")
+		} else {
+			*s = normalizedPublishSuggestion("draft")
+		}
 		return nil
 	}
 
-	var list []string
-	if err := json.Unmarshal(data, &list); err == nil {
-		filtered := make([]string, 0, len(list))
-		for _, item := range list {
-			trimmed := strings.TrimSpace(item)
-			if trimmed == "" {
+	var value normalizedString
+	if err := value.UnmarshalJSON(data); err != nil {
+		return err
+	}
+	*s = normalizedPublishSuggestion(value)
+	return nil
+}
+
+func normalizeFlexibleStringValue(value any) string {
+	switch cast := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(cast)
+	case bool:
+		return strconv.FormatBool(cast)
+	case float64:
+		if math.Trunc(cast) == cast {
+			return strconv.FormatInt(int64(cast), 10)
+		}
+		return strconv.FormatFloat(cast, 'f', -1, 64)
+	case []any:
+		parts := make([]string, 0, len(cast))
+		for _, item := range cast {
+			text := normalizeFlexibleStringValue(item)
+			if text == "" {
 				continue
 			}
-			filtered = append(filtered, trimmed)
+			parts = append(parts, text)
 		}
-		*s = normalizedString(strings.Join(filtered, ", "))
+		return strings.Join(parts, ", ")
+	case map[string]any:
+		if len(cast) == 0 {
+			return ""
+		}
+		keys := make([]string, 0, len(cast))
+		for key := range cast {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		parts := make([]string, 0, len(keys))
+		for _, key := range keys {
+			text := normalizeFlexibleStringValue(cast[key])
+			if text == "" {
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("%s: %s", key, text))
+		}
+		return strings.Join(parts, ", ")
+	default:
+		return strings.TrimSpace(fmt.Sprint(cast))
+	}
+}
+
+func normalizeFlexibleStringListValue(value any) []string {
+	switch cast := value.(type) {
+	case nil:
+		return nil
+	case []any:
+		items := make([]string, 0, len(cast))
+		for _, item := range cast {
+			items = append(items, normalizeFlexibleStringListValue(item)...)
+		}
+		return items
+	case map[string]any:
+		if len(cast) == 0 {
+			return nil
+		}
+
+		keys := make([]string, 0, len(cast))
+		for key := range cast {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		items := make([]string, 0, len(keys))
+		for _, key := range keys {
+			valueText := normalizeFlexibleStringValue(cast[key])
+			if valueText == "" {
+				continue
+			}
+			items = append(items, fmt.Sprintf("%s: %s", key, valueText))
+		}
+		if len(items) == 0 {
+			return nil
+		}
+		return items
+	default:
+		return splitFlexibleListText(normalizeFlexibleStringValue(cast))
+	}
+}
+
+func splitFlexibleListText(text string) []string {
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+	if text == "" {
 		return nil
 	}
 
-	return errors.New("expected string or string array")
+	rawParts := []string{text}
+	switch {
+	case strings.Contains(text, "\n"):
+		rawParts = strings.Split(text, "\n")
+	case shouldSplitFlexibleListByDelimiter(text):
+		replacer := strings.NewReplacer("，", ",", "；", ";", "、", ",", "|", ",")
+		normalized := replacer.Replace(text)
+		normalized = strings.ReplaceAll(normalized, ";", ",")
+		rawParts = strings.Split(normalized, ",")
+	}
+
+	items := make([]string, 0, len(rawParts))
+	for _, part := range rawParts {
+		item := trimFlexibleListItem(part)
+		if item == "" {
+			continue
+		}
+		items = append(items, item)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return items
+}
+
+func shouldSplitFlexibleListByDelimiter(text string) bool {
+	if !strings.ContainsAny(text, ",，;；、|") {
+		return false
+	}
+	return !strings.ContainsAny(text, "。！？!?")
+}
+
+func trimFlexibleListItem(text string) string {
+	item := strings.TrimSpace(text)
+	if item == "" {
+		return ""
+	}
+
+	for _, prefix := range []string{"- ", "* ", "• ", "· "} {
+		if strings.HasPrefix(item, prefix) {
+			item = strings.TrimSpace(strings.TrimPrefix(item, prefix))
+			break
+		}
+	}
+
+	if idx := strings.IndexAny(item, ".)、"); idx > 0 && isDigits(item[:idx]) {
+		item = strings.TrimSpace(item[idx+1:])
+	}
+
+	return strings.TrimSpace(item)
+}
+
+func isDigits(text string) bool {
+	if text == "" {
+		return false
+	}
+	for _, char := range text {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func generateDossierStructuredJSON(ctx context.Context, chat ChatInvoker, prompt string) (string, error) {
+	if structured, ok := chat.(structuredJSONDossierChatInvoker); ok {
+		return structured.GenerateStructuredJSON(ctx, prompt)
+	}
+	return chat.Generate(ctx, prompt)
 }
 
 func (b *DossierBuilder) buildPrompt(input DossierBuildInput) (string, error) {

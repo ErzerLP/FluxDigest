@@ -12,11 +12,12 @@ import (
 
 // LLMRuntimeConfig 表示 worker 使用的 LLM 运行时配置。
 type LLMRuntimeConfig struct {
-	BaseURL   string `json:"base_url"`
-	APIKey    string `json:"api_key"`
-	Model     string `json:"model"`
-	TimeoutMS int    `json:"timeout_ms"`
-	Version   int    `json:"version"`
+	BaseURL        string   `json:"base_url"`
+	APIKey         string   `json:"api_key"`
+	Model          string   `json:"model"`
+	FallbackModels []string `json:"fallback_models"`
+	TimeoutMS      int      `json:"timeout_ms"`
+	Version        int      `json:"version"`
 }
 
 // PromptRuntimeConfig 表示 worker 使用的 prompt 运行时配置。
@@ -65,10 +66,11 @@ func NewRuntimeConfigService(repo ProfileRepository, defaults *config.Config) *R
 func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, error) {
 	snapshot := RuntimeSnapshot{
 		LLM: LLMRuntimeConfig{
-			BaseURL:   s.defaultLLMBaseURL(),
-			APIKey:    s.defaultLLMAPIKey(),
-			Model:     s.defaultLLMModel(),
-			TimeoutMS: s.defaultLLMTimeoutMS(),
+			BaseURL:        s.defaultLLMBaseURL(),
+			APIKey:         s.defaultLLMAPIKey(),
+			Model:          s.defaultLLMModel(),
+			FallbackModels: s.defaultLLMFallbackModels(),
+			TimeoutMS:      s.defaultLLMTimeoutMS(),
 		},
 		Scheduler: defaultSchedulerRuntimeConfig(),
 	}
@@ -94,6 +96,9 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 	}
 	if value := intValue(llmProfile.payload, "timeout_ms"); value > 0 {
 		snapshot.LLM.TimeoutMS = value
+	}
+	if values := stringSliceValue(llmProfile.payload, "fallback_models"); len(values) > 0 {
+		snapshot.LLM.FallbackModels = values
 	}
 	snapshot.LLM.Version = llmProfile.version.Version
 
@@ -185,9 +190,19 @@ func (s *RuntimeConfigService) defaultLLMAPIKey() string {
 
 func (s *RuntimeConfigService) defaultLLMModel() string {
 	if s == nil || s.defaults == nil {
-		return ""
+		return "MiniMax-M2.7"
 	}
-	return s.defaults.LLM.Model
+	if strings.TrimSpace(s.defaults.LLM.Model) != "" {
+		return s.defaults.LLM.Model
+	}
+	return "MiniMax-M2.7"
+}
+
+func (s *RuntimeConfigService) defaultLLMFallbackModels() []string {
+	if s == nil || s.defaults == nil || len(s.defaults.LLM.FallbackModels) == 0 {
+		return []string{"mimo-v2-pro"}
+	}
+	return append([]string(nil), s.defaults.LLM.FallbackModels...)
 }
 
 func (s *RuntimeConfigService) defaultLLMTimeoutMS() int {
@@ -218,6 +233,48 @@ func boolValue(payload map[string]any, key string) (bool, bool) {
 	}
 	cast, ok := value.(bool)
 	return cast, ok
+}
+
+func stringSliceValue(payload map[string]any, key string) []string {
+	if payload == nil {
+		return nil
+	}
+
+	value, ok := payload[key]
+	if !ok {
+		return nil
+	}
+
+	switch cast := value.(type) {
+	case []string:
+		return filterNonEmptyStrings(cast)
+	case []any:
+		items := make([]string, 0, len(cast))
+		for _, item := range cast {
+			text, ok := item.(string)
+			if !ok {
+				continue
+			}
+			items = append(items, text)
+		}
+		return filterNonEmptyStrings(items)
+	case string:
+		return filterNonEmptyStrings(strings.Split(cast, ","))
+	default:
+		return nil
+	}
+}
+
+func filterNonEmptyStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, item := range in {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 func (s *RuntimeConfigService) shouldUseExplicitStringOverride(version profile.Version, key string, payload map[string]any) bool {

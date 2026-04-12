@@ -23,6 +23,10 @@ type PromptRunner interface {
 	Generate(ctx context.Context, prompt string) (string, error)
 }
 
+type structuredJSONPromptRunner interface {
+	GenerateStructuredJSON(ctx context.Context, prompt string) (string, error)
+}
+
 // OpenAIRunner 负责把原始 JSON 响应解析为 Plan。
 type OpenAIRunner struct {
 	runner PromptRunner
@@ -41,7 +45,7 @@ func (r *OpenAIRunner) Run(ctx context.Context, prompt string) (Plan, error) {
 
 	var lastStructuredErr error
 	for attempt := 0; attempt < planStructuredOutputAttempts; attempt++ {
-		raw, err := r.runner.Generate(ctx, prompt)
+		raw, err := generateStructuredPlanJSON(ctx, r.runner, prompt)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -119,4 +123,11 @@ func validatePlan(plan Plan) error {
 	}
 
 	return nil
+}
+
+func generateStructuredPlanJSON(ctx context.Context, runner PromptRunner, prompt string) (string, error) {
+	if structured, ok := runner.(structuredJSONPromptRunner); ok {
+		return structured.GenerateStructuredJSON(ctx, prompt)
+	}
+	return runner.Generate(ctx, prompt)
 }

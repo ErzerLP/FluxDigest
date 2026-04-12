@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -31,10 +32,11 @@ type Config struct {
 		AuthToken string `yaml:"auth_token"`
 	} `yaml:"miniflux"`
 	LLM struct {
-		BaseURL   string `yaml:"base_url"`
-		APIKey    string `yaml:"api_key"`
-		Model     string `yaml:"model"`
-		TimeoutMS int    `yaml:"timeout_ms"`
+		BaseURL        string   `yaml:"base_url"`
+		APIKey         string   `yaml:"api_key"`
+		Model          string   `yaml:"model"`
+		FallbackModels []string `yaml:"fallback_models"`
+		TimeoutMS      int      `yaml:"timeout_ms"`
 	} `yaml:"llm"`
 	Publish struct {
 		HoloEndpoint string `yaml:"holo_endpoint"`
@@ -50,6 +52,8 @@ func Load() (*Config, error) {
 	cfg.HTTP.Port = 8080
 	cfg.Job.Queue = "default"
 	cfg.Worker.Concurrency = 10
+	cfg.LLM.Model = "MiniMax-M2.7"
+	cfg.LLM.FallbackModels = []string{"mimo-v2-pro"}
 	cfg.LLM.TimeoutMS = 30000
 
 	if err := loadFromYAML(cfg); err != nil {
@@ -108,6 +112,9 @@ func loadFromYAML(cfg *Config) error {
 	}
 	if fromFile.LLM.Model != "" {
 		cfg.LLM.Model = fromFile.LLM.Model
+	}
+	if len(fromFile.LLM.FallbackModels) > 0 {
+		cfg.LLM.FallbackModels = copyStringSlice(fromFile.LLM.FallbackModels)
 	}
 	if fromFile.LLM.TimeoutMS > 0 {
 		cfg.LLM.TimeoutMS = fromFile.LLM.TimeoutMS
@@ -171,6 +178,9 @@ func applyEnvOverrides(cfg *Config) error {
 	if value := os.Getenv("APP_LLM_MODEL"); value != "" {
 		cfg.LLM.Model = value
 	}
+	if value := os.Getenv("APP_LLM_FALLBACK_MODELS"); value != "" {
+		cfg.LLM.FallbackModels = parseCSVStrings(value)
+	}
 	if value := os.Getenv("APP_LLM_TIMEOUT_MS"); value != "" {
 		timeoutMS, err := strconv.Atoi(value)
 		if err != nil {
@@ -192,4 +202,26 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func parseCSVStrings(value string) []string {
+	items := strings.Split(value, ",")
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func copyStringSlice(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
 }

@@ -34,6 +34,12 @@ func TestLoadDefaultsPortTo8080(t *testing.T) {
 	if cfg.Worker.Concurrency != 10 {
 		t.Fatalf("want worker concurrency 10 got %d", cfg.Worker.Concurrency)
 	}
+	if cfg.LLM.Model != "MiniMax-M2.7" {
+		t.Fatalf("want default llm model MiniMax-M2.7 got %q", cfg.LLM.Model)
+	}
+	if len(cfg.LLM.FallbackModels) != 1 || cfg.LLM.FallbackModels[0] != "mimo-v2-pro" {
+		t.Fatalf("want default fallback models [mimo-v2-pro] got %#v", cfg.LLM.FallbackModels)
+	}
 }
 
 func TestLoadReadsConfigYAMLAndEnvOverrides(t *testing.T) {
@@ -94,6 +100,8 @@ func TestLoadReadsMinifluxLLMAndPublishConfig(t *testing.T) {
 	t.Setenv("APP_MINIFLUX_AUTH_TOKEN", "miniflux-token")
 	t.Setenv("APP_LLM_BASE_URL", "https://llm.local/v1")
 	t.Setenv("APP_LLM_API_KEY", "llm-token")
+	t.Setenv("APP_LLM_MODEL", "MiniMax-M2.7")
+	t.Setenv("APP_LLM_FALLBACK_MODELS", "mimo-v2-pro, kimi-k2.5 ")
 	t.Setenv("APP_LLM_TIMEOUT_MS", "45000")
 	t.Setenv("APP_PUBLISH_HOLO_ENDPOINT", "https://blog.local/api/posts")
 
@@ -112,6 +120,12 @@ func TestLoadReadsMinifluxLLMAndPublishConfig(t *testing.T) {
 	}
 	if cfg.LLM.APIKey != "llm-token" {
 		t.Fatalf("unexpected llm api key %q", cfg.LLM.APIKey)
+	}
+	if cfg.LLM.Model != "MiniMax-M2.7" {
+		t.Fatalf("unexpected llm model %q", cfg.LLM.Model)
+	}
+	if len(cfg.LLM.FallbackModels) != 2 || cfg.LLM.FallbackModels[0] != "mimo-v2-pro" || cfg.LLM.FallbackModels[1] != "kimi-k2.5" {
+		t.Fatalf("unexpected llm fallback models %#v", cfg.LLM.FallbackModels)
 	}
 	if cfg.LLM.TimeoutMS != 45000 {
 		t.Fatalf("unexpected llm timeout %d", cfg.LLM.TimeoutMS)
