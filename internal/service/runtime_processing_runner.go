@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"rss-platform/internal/adapter/miniflux"
@@ -84,6 +85,7 @@ func (r *RuntimeProcessingRunner) ProcessPending(ctx context.Context, windowStar
 			}
 
 			record = postgres.ProcessedArticleRecord{
+				ID:                       newProcessingID(),
 				ArticleID:                source.ID,
 				TitleTranslated:          processed.Translation.TitleTranslated,
 				SummaryTranslated:        processed.Translation.SummaryTranslated,
@@ -173,4 +175,12 @@ func candidateFromDossier(source article.SourceArticle, processed postgres.Proce
 		ReadingValue:         item.ReadingValue,
 		PriorityLevel:        item.PriorityLevel,
 	}
+}
+
+func newProcessingID() string {
+	orderedID, err := uuid.NewV7()
+	if err == nil {
+		return orderedID.String()
+	}
+	return uuid.NewString()
 }

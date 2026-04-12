@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"rss-platform/internal/repository/postgres/models"
@@ -66,6 +67,14 @@ func (r *DossierRepository) SaveActive(ctx context.Context, input ArticleDossier
 	}
 
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if model.Version <= 0 {
+			nextVersion, err := nextDossierVersion(tx, model.ArticleID)
+			if err != nil {
+				return err
+			}
+			model.Version = nextVersion
+		}
+
 		if err := tx.Model(&models.ArticleDossierModel{}).
 			Where("article_id = ? AND is_active = ?", model.ArticleID, true).
 			Updates(map[string]any{"is_active": false, "updated_at": time.Now()}).Error; err != nil {
@@ -109,13 +118,17 @@ func dossierRecordToModel(input ArticleDossierRecord) (models.ArticleDossierMode
 	}
 
 	now := time.Now()
+	version := input.Version
+	if version < 0 {
+		version = 0
+	}
 
 	return models.ArticleDossierModel{
 		ID:                       ensureID(input.ID),
 		ArticleID:                input.ArticleID,
 		ProcessingID:             input.ProcessingID,
 		DigestDate:               digestDate,
-		Version:                  defaultPositiveInt(input.Version, 1),
+		Version:                  version,
 		IsActive:                 true,
 		TitleTranslated:          input.TitleTranslated,
 		SummaryPolished:          input.SummaryPolished,
@@ -144,6 +157,21 @@ func dossierRecordToModel(input ArticleDossierRecord) (models.ArticleDossierMode
 		CreatedAt:                defaultTime(input.CreatedAt, now),
 		UpdatedAt:                now,
 	}, nil
+}
+
+func nextDossierVersion(tx *gorm.DB, articleID string) (int, error) {
+	var current models.ArticleDossierModel
+	err := tx.Select("version").
+		Where("article_id = ?", articleID).
+		Order("version DESC").
+		First(&current).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 1, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return current.Version + 1, nil
 }
 
 func dossierModelToRecord(model models.ArticleDossierModel) (ArticleDossierRecord, error) {

@@ -65,3 +65,53 @@ func TestDossierRepositorySaveActiveVersionDeactivatesPrevious(t *testing.T) {
 		t.Fatalf("expected second dossier active: %+v", second)
 	}
 }
+
+func TestDossierRepositorySaveActiveAssignsNextVersionWhenUnset(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.AutoMigrate(&models.ArticleDossierModel{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+
+	repo := postgres.NewDossierRepository(db)
+	ctx := context.Background()
+
+	first, err := repo.SaveActive(ctx, postgres.ArticleDossierRecord{
+		ArticleID:                "art-1",
+		ProcessingID:             "proc-1",
+		DigestDate:               "2026-04-12",
+		TitleTranslated:          "标题",
+		SummaryPolished:          "润色摘要",
+		CoreSummary:              "核心",
+		KeyPoints:                []string{"k1"},
+		TopicCategory:            "AI",
+		ImportanceScore:          0.8,
+		ContentPolishedMarkdown:  "## 正文",
+		AnalysisLongformMarkdown: "## 分析",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.SaveActive(ctx, postgres.ArticleDossierRecord{
+		ArticleID:                "art-1",
+		ProcessingID:             "proc-2",
+		DigestDate:               "2026-04-12",
+		TitleTranslated:          "标题 v2",
+		SummaryPolished:          "润色摘要 v2",
+		CoreSummary:              "核心 v2",
+		KeyPoints:                []string{"k2"},
+		TopicCategory:            "AI",
+		ImportanceScore:          0.9,
+		ContentPolishedMarkdown:  "## 正文 v2",
+		AnalysisLongformMarkdown: "## 分析 v2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first.Version != 1 {
+		t.Fatalf("expected first version 1, got %d", first.Version)
+	}
+	if second.Version != 2 {
+		t.Fatalf("expected second version 2, got %d", second.Version)
+	}
+}

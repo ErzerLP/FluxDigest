@@ -124,7 +124,7 @@ func (s *DossierService) Materialize(ctx context.Context, input MaterializeDossi
 	materialized.ArticleID = input.ArticleID
 	materialized.ProcessingID = input.ProcessingID
 	materialized.DigestDate = digestDate
-	materialized.Version = 1
+	materialized.Version = 0
 	materialized.IsActive = true
 	materialized.TranslationPromptVersion = input.TranslationPromptVersion
 	materialized.AnalysisPromptVersion = input.AnalysisPromptVersion
