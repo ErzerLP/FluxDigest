@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
@@ -26,11 +27,14 @@ import (
 
 var errDatabaseDSNRequired = errors.New("APP_DATABASE_DSN is required")
 
+const defaultAdminLLMTestTimeout = 10 * time.Second
+
 type dbCloser interface {
 	Close() error
 }
 
 type connectPostgresFunc func(ctx context.Context, dsn string) (*gorm.DB, dbCloser, error)
+type chatModelFactory func(ctx context.Context, cfg llmadapter.FactoryConfig) (model.BaseChatModel, error)
 
 func main() {
 	cfg, err := config.Load()
@@ -101,7 +105,7 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 	profileQueryService := service.NewProfileQueryService(db)
 	adminConfigService := service.NewAdminConfigService(profileRepo)
 	adminStatusService := service.NewAdminStatusServiceWithDigest(adminConfigService, jobRunRepo, digestQueryService)
-	adminTestService := service.NewAdminTestService(adminLLMConnectivityChecker{}, nil, nil, jobRunRepo)
+	adminTestService := service.NewAdminTestService(newAdminLLMConnectivityChecker(defaultAdminLLMTestTimeout), nil, nil, jobRunRepo)
 	jobRunQueryService := service.NewJobRunQueryService(db)
 	router := api.NewRouter(
 		api.WithAPIKey(cfg.Job.APIKey),
@@ -271,11 +275,35 @@ func mapArticleReprocessEnqueueError(err error, force bool) error {
 	return err
 }
 
-type adminLLMConnectivityChecker struct{}
+type adminLLMConnectivityChecker struct {
+	timeout      time.Duration
+	newChatModel chatModelFactory
+}
 
-func (adminLLMConnectivityChecker) Check(ctx context.Context, draft service.LLMTestDraft) (time.Duration, error) {
+func newAdminLLMConnectivityChecker(timeout time.Duration) adminLLMConnectivityChecker {
+	return adminLLMConnectivityChecker{
+		timeout:      timeout,
+		newChatModel: llmadapter.NewChatModel,
+	}
+}
+
+func (c adminLLMConnectivityChecker) Check(ctx context.Context, draft service.LLMTestDraft) (time.Duration, error) {
 	startedAt := time.Now()
-	chatModel, err := llmadapter.NewChatModel(ctx, llmadapter.FactoryConfig{
+
+	timeout := c.timeout
+	if timeout <= 0 {
+		timeout = defaultAdminLLMTestTimeout
+	}
+
+	newChatModel := c.newChatModel
+	if newChatModel == nil {
+		newChatModel = llmadapter.NewChatModel
+	}
+
+	checkCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	chatModel, err := newChatModel(checkCtx, llmadapter.FactoryConfig{
 		BaseURL: draft.BaseURL,
 		APIKey:  draft.APIKey,
 		Model:   draft.Model,
@@ -284,7 +312,11 @@ func (adminLLMConnectivityChecker) Check(ctx context.Context, draft service.LLMT
 		return time.Since(startedAt), err
 	}
 
-	_, err = chatModel.Generate(ctx, []*schema.Message{schema.UserMessage("ping")})
+	_, err = chatModel.Generate(checkCtx, []*schema.Message{schema.UserMessage("ping")})
+	if errors.Is(err, context.DeadlineExceeded) {
+		return time.Since(startedAt), fmt.Errorf("llm connectivity test timed out after %s: %w", timeout, err)
+	}
+
 	return time.Since(startedAt), err
 }
 

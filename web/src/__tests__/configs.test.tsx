@@ -1,17 +1,22 @@
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { AppProviders } from '../app/providers/AppProviders';
 import { LLMConfigPage } from '../pages/configs/llm/LLMConfigPage';
 
 const fetchMock = vi.fn<typeof fetch>();
+type adminTestGlobals = typeof globalThis & { __ADMIN_REQUEST_TIMEOUT_MS__?: number };
 
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
+});
+
+afterEach(() => {
+  delete (globalThis as adminTestGlobals).__ADMIN_REQUEST_TIMEOUT_MS__;
 });
 
 function renderPage(ui: ReactElement) {
@@ -104,7 +109,9 @@ test('llm config page blocks connection test in keep-secret mode', async () => {
   await userEvent.click(await screen.findByRole('button', { name: '测试连接' }));
 
   expect(
-    await screen.findByText('测试连接需要切换为替换密钥并输入待测 key。'),
+    await screen.findByText(
+      '保留现有只会沿用已保存的 key；若要测试当前输入的新 key，请切换为“替换密钥”并输入待测 key。',
+    ),
   ).toBeInTheDocument();
 });
 
@@ -225,5 +232,90 @@ test('llm config page blocks save when replace mode has empty api key', async ()
   await userEvent.click(screen.getByRole('button', { name: '保存配置' }));
 
   expect(putSpy).not.toHaveBeenCalled();
-  expect(await screen.findByText('替换密钥时必须输入 API key。')).toBeInTheDocument();
+  expect(await screen.findByText('当前处于“替换密钥”模式，请先输入 API key 再保存。')).toBeInTheDocument();
+});
+
+test('llm config page times out hanging connection test requests', async () => {
+  (globalThis as adminTestGlobals).__ADMIN_REQUEST_TIMEOUT_MS__ = 20;
+
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET');
+
+    if (url.endsWith('/api/v1/admin/configs') && method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          llm: {
+            base_url: 'https://llm.local/v1',
+            model: 'gpt-4.1-mini',
+            api_key: { is_set: true, masked_value: 'secr****' },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (url.endsWith('/api/v1/admin/test/llm') && method === 'POST') {
+      return await new Promise<Response>(() => undefined);
+    }
+
+    return new Response('not found', { status: 404 });
+  });
+
+  renderPage(<LLMConfigPage />);
+
+  const user = userEvent.setup();
+
+  await user.click(await screen.findByText('替换密钥'));
+  await user.type(screen.getByLabelText('新 API Key'), 'test-token');
+
+  const testButton = screen.getByRole('button', { name: '测试连接' });
+  await user.click(testButton);
+  expect(testButton).toHaveClass('ant-btn-loading');
+
+  expect(await screen.findByText('连接测试失败')).toBeInTheDocument();
+  expect(await screen.findByText('请求超时，请检查代理、网络或服务地址后重试。')).toBeInTheDocument();
+  await waitFor(() => expect(testButton).not.toHaveClass('ant-btn-loading'));
+});
+
+test('llm config page times out hanging save requests', async () => {
+  (globalThis as adminTestGlobals).__ADMIN_REQUEST_TIMEOUT_MS__ = 20;
+
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET');
+
+    if (url.endsWith('/api/v1/admin/configs') && method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          llm: {
+            base_url: 'https://llm.local/v1',
+            model: 'gpt-4.1-mini',
+            api_key: { is_set: true, masked_value: 'secr****' },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (url.endsWith('/api/v1/admin/configs/llm') && method === 'PUT') {
+      return await new Promise<Response>(() => undefined);
+    }
+
+    return new Response('not found', { status: 404 });
+  });
+
+  renderPage(<LLMConfigPage />);
+
+  const saveButton = await screen.findByRole('button', { name: '保存配置' });
+  const user = userEvent.setup();
+
+  await user.click(saveButton);
+  expect(saveButton).toHaveClass('ant-btn-loading');
+
+  expect(await screen.findByText('配置保存失败')).toBeInTheDocument();
+  expect(await screen.findByText('请求超时，请检查代理、网络或服务地址后重试。')).toBeInTheDocument();
+  await waitFor(() => expect(saveButton).not.toHaveClass('ant-btn-loading'));
 });

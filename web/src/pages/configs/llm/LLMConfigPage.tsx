@@ -24,6 +24,9 @@ export function LLMConfigPage() {
 
   const currentConfig = configQuery.data?.llm;
   const configReady = configQuery.isSuccess;
+  const apiKeyHint = currentConfig?.api_key?.is_set
+    ? '保留现有会沿用已保存的 API key；如果要测试或保存当前输入的新 key，请切换为“替换密钥”。'
+    : '首次配置 API key 时，请切换为“替换密钥”后再输入并保存。';
 
   const { register, handleSubmit, reset, getValues } = useForm<LLMConfigFormValues>({
     defaultValues: {
@@ -60,7 +63,7 @@ export function LLMConfigPage() {
     }
 
     if (secretInput.mode === 'replace' && !secretInput.value?.trim()) {
-      setSaveGuidance('替换密钥时必须输入 API key。');
+      setSaveGuidance('当前处于“替换密钥”模式，请先输入 API key 再保存。');
       return;
     }
 
@@ -83,7 +86,7 @@ export function LLMConfigPage() {
     }
 
     if (secretInput.mode !== 'replace' || !secretInput.value?.trim()) {
-      setTestGuidance('测试连接需要切换为替换密钥并输入待测 key。');
+      setTestGuidance('保留现有只会沿用已保存的 key；若要测试当前输入的新 key，请切换为“替换密钥”并输入待测 key。');
       return;
     }
 
@@ -200,6 +203,7 @@ export function LLMConfigPage() {
                 value={secretInput}
                 onChange={setSecretInput}
               />
+              <Alert type="info" showIcon message={apiKeyHint} />
             </section>
           </form>
         ) : null}

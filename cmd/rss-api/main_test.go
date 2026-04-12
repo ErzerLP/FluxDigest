@@ -12,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"github.com/hibiken/asynq"
 
+	llmadapter "rss-platform/internal/adapter/llm"
 	"rss-platform/internal/config"
 	"rss-platform/internal/repository/postgres/models"
 	"rss-platform/internal/service"
@@ -22,6 +25,17 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+type hangingChatModelStub struct{}
+
+func (hangingChatModelStub) Generate(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (hangingChatModelStub) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return nil, errors.New("stream not implemented in test stub")
+}
 
 type queueStub struct {
 	dates             []string
@@ -452,5 +466,40 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	}
 	if profileBody["name"] != "default-llm" {
 		t.Fatalf("want default-llm got %#v", profileBody["name"])
+	}
+}
+
+func TestAdminLLMConnectivityCheckerUsesInternalTimeout(t *testing.T) {
+	t.Parallel()
+
+	checker := adminLLMConnectivityChecker{
+		timeout: 20 * time.Millisecond,
+		newChatModel: func(context.Context, llmadapter.FactoryConfig) (model.BaseChatModel, error) {
+			return hangingChatModelStub{}, nil
+		},
+	}
+
+	parentCtx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	startedAt := time.Now()
+	latency, err := checker.Check(parentCtx, service.LLMTestDraft{
+		BaseURL: "https://llm.local/v1",
+		Model:   "gpt-4.1-mini",
+		APIKey:  "token",
+	})
+	elapsed := time.Since(startedAt)
+
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("want timeout error got %v", err)
+	}
+	if elapsed >= 120*time.Millisecond {
+		t.Fatalf("want checker to stop early, elapsed=%s latency=%s", elapsed, latency)
+	}
+	if latency <= 0 {
+		t.Fatalf("want positive latency got %s", latency)
 	}
 }
