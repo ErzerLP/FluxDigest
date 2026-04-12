@@ -16,6 +16,8 @@ var (
 
 const defaultPlanTitle = "FluxDigest 每日汇总"
 
+const planStructuredOutputAttempts = 2
+
 // PromptRunner 定义最小文本生成边界。
 type PromptRunner interface {
 	Generate(ctx context.Context, prompt string) (string, error)
@@ -37,20 +39,27 @@ func (r *OpenAIRunner) Run(ctx context.Context, prompt string) (Plan, error) {
 		return Plan{}, errPromptRunnerRequired
 	}
 
-	raw, err := r.runner.Generate(ctx, prompt)
-	if err != nil {
-		return Plan{}, err
+	var lastStructuredErr error
+	for attempt := 0; attempt < planStructuredOutputAttempts; attempt++ {
+		raw, err := r.runner.Generate(ctx, prompt)
+		if err != nil {
+			return Plan{}, err
+		}
+
+		var plan Plan
+		if err := json.Unmarshal([]byte(normalizePlanJSON(raw)), &plan); err != nil {
+			lastStructuredErr = err
+			continue
+		}
+		plan = normalizePlan(plan)
+		if err := validatePlan(plan); err != nil {
+			lastStructuredErr = err
+			continue
+		}
+		return plan, nil
 	}
 
-	var plan Plan
-	if err := json.Unmarshal([]byte(normalizePlanJSON(raw)), &plan); err != nil {
-		return Plan{}, err
-	}
-	plan = normalizePlan(plan)
-	if err := validatePlan(plan); err != nil {
-		return Plan{}, err
-	}
-	return plan, nil
+	return Plan{}, lastStructuredErr
 }
 
 func normalizePlanJSON(raw string) string {
