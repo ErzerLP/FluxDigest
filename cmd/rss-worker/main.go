@@ -11,7 +11,6 @@ import (
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/hibiken/asynq"
-	"gorm.io/gorm"
 
 	promptassets "rss-platform/configs/prompts"
 	llmadapter "rss-platform/internal/adapter/llm"
@@ -22,9 +21,7 @@ import (
 	"rss-platform/internal/agent/digest_planning"
 	appworker "rss-platform/internal/app/worker"
 	"rss-platform/internal/config"
-	"rss-platform/internal/domain/article"
 	domaindigest "rss-platform/internal/domain/digest"
-	"rss-platform/internal/domain/processing"
 	"rss-platform/internal/render"
 	"rss-platform/internal/repository/postgres"
 	"rss-platform/internal/service"
@@ -35,6 +32,7 @@ import (
 const (
 	translationPromptFile = "translation.tmpl"
 	analysisPromptFile    = "analysis.tmpl"
+	dossierPromptFile     = "dossier.tmpl"
 )
 
 func main() {
@@ -124,11 +122,22 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	articleRepo := postgres.NewArticleRepository(db)
 	processingRepo := postgres.NewProcessingRepository(db)
 	digestRepo := postgres.NewDigestRepository(db)
+	dossierRepo := postgres.NewDossierRepository(db)
+	publishStateRepo := postgres.NewPublishStateRepository(db)
 	minifluxClient := miniflux.NewClient(cfg.Miniflux.BaseURL, cfg.Miniflux.AuthToken)
-	translationTemplate, analysisTemplate, err := loadDefaultPromptTemplates()
+	translationTemplate, analysisTemplate, dossierTemplate, err := loadDefaultPromptTemplates()
 	if err != nil {
 		_ = sqlDB.Close()
 		return nil, nil, err
+	}
+	if strings.TrimSpace(runtimeSnapshot.Prompts.TranslationPrompt) != "" {
+		translationTemplate = runtimeSnapshot.Prompts.TranslationPrompt
+	}
+	if strings.TrimSpace(runtimeSnapshot.Prompts.AnalysisPrompt) != "" {
+		analysisTemplate = runtimeSnapshot.Prompts.AnalysisPrompt
+	}
+	if strings.TrimSpace(runtimeSnapshot.Prompts.DossierPrompt) != "" {
+		dossierTemplate = runtimeSnapshot.Prompts.DossierPrompt
 	}
 
 	publisher, err := buildPublisher(cfg)
@@ -138,12 +147,24 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	}
 
 	processingSvc := service.NewProcessingService(llmadapter.NewArticleProcessorFromTemplateText(invoker, translationTemplate, analysisTemplate))
-	processingRunner := &runtimeProcessingRunner{
-		client:     minifluxClient,
-		articles:   articleRepo,
-		processing: processingSvc,
-		results:    processingRepo,
-	}
+	dossierSvc := service.NewDossierService(
+		llmadapter.NewDossierBuilderFromTemplateText(invoker, dossierTemplate),
+		dossierRepo,
+		publishStateRepo,
+	)
+	processingRunner := service.NewRuntimeProcessingRunner(
+		minifluxClient,
+		articleRepo,
+		processingSvc,
+		processingRepo,
+		dossierSvc,
+		service.RuntimePromptVersions{
+			Translation: runtimeSnapshot.Prompts.TranslationVersion,
+			Analysis:    runtimeSnapshot.Prompts.AnalysisVersion,
+			Dossier:     runtimeSnapshot.Prompts.DossierVersion,
+			LLM:         runtimeSnapshot.LLM.Version,
+		},
+	)
 	digestRunner := digestWorkflowRunner{
 		workflow: daily_digest_workflow.New(
 			digest_planning.New(digest_planning.NewOpenAIRunner(invoker)),
@@ -180,65 +201,6 @@ func (i chatModelInvoker) Generate(ctx context.Context, prompt string) (string, 
 	}
 
 	return strings.TrimSpace(message.Content), nil
-}
-
-type runtimeProcessingRunner struct {
-	client     entryLister
-	articles   articleFinder
-	processing articleProcessor
-	results    processingStore
-}
-
-func (r *runtimeProcessingRunner) ProcessPending(ctx context.Context, windowStart, windowEnd time.Time) ([]domaindigest.CandidateArticle, error) {
-	entries, err := r.client.ListEntries(ctx, windowStart, windowEnd)
-	if err != nil {
-		return nil, err
-	}
-
-	candidates := make([]domaindigest.CandidateArticle, 0, len(entries))
-	seen := make(map[int64]struct{}, len(entries))
-	for _, entry := range entries {
-		if _, ok := seen[entry.ID]; ok {
-			continue
-		}
-		seen[entry.ID] = struct{}{}
-
-		source, err := r.articles.FindByMinifluxEntryID(ctx, entry.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		existing, err := r.results.GetLatestByArticleID(ctx, source.ID)
-		if err == nil {
-			candidates = append(candidates, candidateFromStoredProcessing(source, existing))
-			continue
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
-
-		processed, err := r.processing.ProcessArticle(ctx, source)
-		if err != nil {
-			return nil, err
-		}
-
-		if err := r.results.Save(ctx, postgres.ProcessedArticleRecord{
-			ArticleID:         source.ID,
-			TitleTranslated:   processed.Translation.TitleTranslated,
-			SummaryTranslated: processed.Translation.SummaryTranslated,
-			ContentTranslated: processed.Translation.ContentTranslated,
-			CoreSummary:       processed.Analysis.CoreSummary,
-			KeyPoints:         processed.Analysis.KeyPoints,
-			TopicCategory:     processed.Analysis.TopicCategory,
-			ImportanceScore:   processed.Analysis.ImportanceScore,
-		}); err != nil {
-			return nil, err
-		}
-
-		candidates = append(candidates, candidateFromProcessedArticle(source, processed))
-	}
-
-	return candidates, nil
 }
 
 type digestWorkflowRunner struct {
@@ -281,59 +243,21 @@ func shanghaiLocation() *time.Location {
 	return time.FixedZone("CST", 8*3600)
 }
 
-func loadDefaultPromptTemplates() (string, string, error) {
+func loadDefaultPromptTemplates() (string, string, string, error) {
 	translationTemplate, err := promptassets.Read(translationPromptFile)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	analysisTemplate, err := promptassets.Read(analysisPromptFile)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
-	return translationTemplate, analysisTemplate, nil
-}
-
-type entryLister interface {
-	ListEntries(ctx context.Context, windowStart, windowEnd time.Time) ([]miniflux.Entry, error)
-}
-
-type articleFinder interface {
-	FindByMinifluxEntryID(ctx context.Context, minifluxEntryID int64) (article.SourceArticle, error)
-}
-
-type articleProcessor interface {
-	ProcessArticle(ctx context.Context, input article.SourceArticle) (processing.ProcessedArticle, error)
-}
-
-type processingStore interface {
-	GetLatestByArticleID(ctx context.Context, articleID string) (postgres.ProcessedArticleRecord, error)
-	Save(ctx context.Context, input postgres.ProcessedArticleRecord) error
-}
-
-func candidateFromStoredProcessing(source article.SourceArticle, record postgres.ProcessedArticleRecord) domaindigest.CandidateArticle {
-	title := record.TitleTranslated
-	if title == "" {
-		title = source.Title
+	dossierTemplate, err := promptassets.Read(dossierPromptFile)
+	if err != nil {
+		return "", "", "", err
 	}
 
-	return domaindigest.CandidateArticle{
-		ID:          source.ID,
-		Title:       title,
-		CoreSummary: record.CoreSummary,
-	}
-}
-
-func candidateFromProcessedArticle(source article.SourceArticle, processed processing.ProcessedArticle) domaindigest.CandidateArticle {
-	title := processed.Translation.TitleTranslated
-	if title == "" {
-		title = source.Title
-	}
-
-	return domaindigest.CandidateArticle{
-		ID:          source.ID,
-		Title:       title,
-		CoreSummary: processed.Analysis.CoreSummary,
-	}
+	return translationTemplate, analysisTemplate, dossierTemplate, nil
 }

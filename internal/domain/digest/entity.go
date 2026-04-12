@@ -2,9 +2,16 @@ package digest
 
 // CandidateArticle 表示进入日报规划阶段的候选文章。
 type CandidateArticle struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	CoreSummary string `json:"core_summary"`
+	ID                   string  `json:"id"`
+	DossierID            string  `json:"dossier_id"`
+	Title                string  `json:"title"`
+	CoreSummary          string  `json:"core_summary"`
+	SummaryPolished      string  `json:"summary_polished"`
+	TopicCategory        string  `json:"topic_category"`
+	ImportanceScore      float64 `json:"importance_score"`
+	RecommendationReason string  `json:"recommendation_reason"`
+	ReadingValue         string  `json:"reading_value"`
+	PriorityLevel        string  `json:"priority_level"`
 }
 
 // SectionItem 表示日报中被选中的稳定文章引用。
