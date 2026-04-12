@@ -35,6 +35,7 @@ const (
 	analysisPromptFile    = "analysis.tmpl"
 	dossierPromptFile     = "dossier.tmpl"
 	digestPromptFile      = "digest.tmpl"
+	maxChatGenerateTry    = 3
 )
 
 func main() {
@@ -225,15 +226,56 @@ func (i chatModelInvoker) Generate(ctx context.Context, prompt string) (string, 
 		return "", errors.New("chat model is required")
 	}
 
-	message, err := i.chat.Generate(ctx, []*schema.Message{schema.UserMessage(prompt)})
-	if err != nil {
-		return "", err
-	}
-	if message == nil {
-		return "", errors.New("empty llm response")
+	for attempt := 1; attempt <= maxChatGenerateTry; attempt++ {
+		message, err := i.chat.Generate(ctx, []*schema.Message{schema.UserMessage(prompt)})
+		if err != nil {
+			if attempt == maxChatGenerateTry || !shouldRetryChatGenerateError(ctx, err) {
+				return "", err
+			}
+			continue
+		}
+		if message == nil {
+			return "", errors.New("empty llm response")
+		}
+
+		return strings.TrimSpace(message.Content), nil
 	}
 
-	return strings.TrimSpace(message.Content), nil
+	return "", errors.New("failed to create chat completion")
+}
+
+func shouldRetryChatGenerateError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	text := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"504 gateway time-out",
+		"504 gateway timeout",
+		"status code: 504",
+		" 504",
+		"529",
+		"temporary",
+		"connection reset by peer",
+		"read: connection reset",
+		"i/o timeout",
+		"context deadline exceeded",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 type digestWorkflowRunner struct {

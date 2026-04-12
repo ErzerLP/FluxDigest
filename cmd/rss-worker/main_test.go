@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
+
+	einomodel "github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 
 	"rss-platform/internal/domain/article"
 	domaindossier "rss-platform/internal/domain/dossier"
@@ -71,6 +75,29 @@ type dossierMaterializerStub struct {
 
 func (s dossierMaterializerStub) Materialize(_ context.Context, _ service.MaterializeDossierInput) (domaindossier.ArticleDossier, error) {
 	return s.dossier, nil
+}
+
+type chatGenerateResult struct {
+	message *schema.Message
+	err     error
+}
+
+type chatModelStub struct {
+	results []chatGenerateResult
+	calls   int
+}
+
+func (s *chatModelStub) Generate(_ context.Context, _ []*schema.Message, _ ...einomodel.Option) (*schema.Message, error) {
+	s.calls++
+	idx := s.calls - 1
+	if idx >= len(s.results) {
+		return nil, errors.New("unexpected generate call")
+	}
+	return s.results[idx].message, s.results[idx].err
+}
+
+func (s *chatModelStub) Stream(_ context.Context, _ []*schema.Message, _ ...einomodel.Option) (*schema.StreamReader[*schema.Message], error) {
+	return nil, errors.New("not implemented")
 }
 
 func TestLoadDefaultPromptTemplatesIgnoresWorkingDirectory(t *testing.T) {
@@ -190,5 +217,64 @@ func TestRuntimeProcessingRunnerProcessesAndSavesWhenNoExistingResult(t *testing
 	}
 	if candidates[0] != (domaindigest.CandidateArticle{ID: "art-1", DossierID: "dos-1", Title: "新标题", CoreSummary: "新核心总结", TopicCategory: "AI", ImportanceScore: 0.8}) {
 		t.Fatalf("unexpected candidate %+v", candidates[0])
+	}
+}
+
+func TestChatModelInvokerGenerateRetriesTransientErrorThenSucceeds(t *testing.T) {
+	chat := &chatModelStub{
+		results: []chatGenerateResult{
+			{err: errors.New("failed to create chat completion: 504 Gateway Time-out")},
+			{message: &schema.Message{Content: "  ok  "}},
+		},
+	}
+	invoker := chatModelInvoker{chat: chat}
+
+	got, err := invoker.Generate(context.Background(), "prompt")
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if got != "ok" {
+		t.Fatalf("Generate() = %q, want %q", got, "ok")
+	}
+	if chat.calls != 2 {
+		t.Fatalf("Generate() calls = %d, want 2", chat.calls)
+	}
+}
+
+func TestChatModelInvokerGenerateNoRetryForNonTransientError(t *testing.T) {
+	chat := &chatModelStub{
+		results: []chatGenerateResult{
+			{err: errors.New("failed to create chat completion: 400 invalid request")},
+		},
+	}
+	invoker := chatModelInvoker{chat: chat}
+
+	_, err := invoker.Generate(context.Background(), "prompt")
+	if err == nil {
+		t.Fatal("Generate() error = nil, want non-nil")
+	}
+	if chat.calls != 1 {
+		t.Fatalf("Generate() calls = %d, want 1", chat.calls)
+	}
+}
+
+func TestChatModelInvokerGenerateStopsRetryWhenContextCanceled(t *testing.T) {
+	chat := &chatModelStub{
+		results: []chatGenerateResult{
+			{err: errors.New("failed to create chat completion: 504 Gateway Time-out")},
+			{message: &schema.Message{Content: "ok"}},
+		},
+	}
+	invoker := chatModelInvoker{chat: chat}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := invoker.Generate(ctx, "prompt")
+	if err == nil {
+		t.Fatal("Generate() error = nil, want non-nil")
+	}
+	if chat.calls != 1 {
+		t.Fatalf("Generate() calls = %d, want 1", chat.calls)
 	}
 }
