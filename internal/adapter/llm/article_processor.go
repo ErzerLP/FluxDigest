@@ -136,7 +136,7 @@ func (p *ArticleProcessor) Analyze(ctx context.Context, input article.SourceArti
 		CoreSummary:     out.CoreSummary,
 		KeyPoints:       out.KeyPoints,
 		TopicCategory:   out.TopicCategory,
-		ImportanceScore: out.ImportanceScore,
+		ImportanceScore: normalizeImportanceScore(out.ImportanceScore),
 	}
 	if err := validateAnalysis(analysis); err != nil {
 		return processing.Analysis{}, err
@@ -212,6 +212,14 @@ func validateAnalysis(analysis processing.Analysis) error {
 	}
 
 	return nil
+}
+
+func normalizeImportanceScore(score float64) float64 {
+	if score > 1 && score <= 10 {
+		return score / 10
+	}
+
+	return score
 }
 
 func resolvePath(path string) (string, error) {
