@@ -132,10 +132,58 @@ func registerStaticRoutes(router *gin.Engine, staticDir string) {
 
 	router.Static("/assets", filepath.Join(staticDir, "assets"))
 	router.NoRoute(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api/") || c.Request.URL.Path == "/healthz" || c.Request.URL.Path == "/metrics" {
+		if !shouldServeSPAIndex(c.Request) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
 		c.File(indexFile)
 	})
+}
+
+func shouldServeSPAIndex(request *http.Request) bool {
+	if request == nil {
+		return false
+	}
+
+	switch request.Method {
+	case http.MethodGet, http.MethodHead:
+	default:
+		return false
+	}
+
+	if isReservedRoute(request.URL.Path) {
+		return false
+	}
+
+	return acceptsHTML(request.Header.Get("Accept"))
+}
+
+func isReservedRoute(path string) bool {
+	normalized := strings.TrimRight(path, "/")
+	if normalized == "" {
+		normalized = "/"
+	}
+
+	return normalized == "/api" ||
+		strings.HasPrefix(normalized, "/api/") ||
+		normalized == "/healthz" ||
+		strings.HasPrefix(normalized, "/healthz/") ||
+		normalized == "/metrics" ||
+		strings.HasPrefix(normalized, "/metrics/")
+}
+
+func acceptsHTML(accept string) bool {
+	accept = strings.TrimSpace(accept)
+	if accept == "" {
+		return true
+	}
+
+	for _, value := range strings.Split(accept, ",") {
+		mediaType := strings.TrimSpace(strings.SplitN(value, ";", 2)[0])
+		if mediaType == "text/html" || mediaType == "*/*" {
+			return true
+		}
+	}
+
+	return false
 }

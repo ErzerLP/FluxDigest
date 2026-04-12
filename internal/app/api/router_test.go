@@ -104,3 +104,59 @@ func TestRouterServesStaticIndexForNonAPIRoute(t *testing.T) {
 		t.Fatalf("unexpected body %s", rec.Body.String())
 	}
 }
+
+func TestRouterDoesNotServeStaticIndexForAPIBaseRoute(t *testing.T) {
+	router := newStaticRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404 got %d", rec.Code)
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("FluxDigest UI")) {
+		t.Fatalf("unexpected html fallback %s", rec.Body.String())
+	}
+}
+
+func TestRouterDoesNotServeStaticIndexForHealthzTrailingSlash(t *testing.T) {
+	router := newStaticRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz/", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Fatalf("want non-html fallback status got %d", rec.Code)
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("FluxDigest UI")) {
+		t.Fatalf("unexpected html fallback %s", rec.Body.String())
+	}
+}
+
+func TestRouterDoesNotServeStaticIndexForUnknownNonGETRoute(t *testing.T) {
+	router := newStaticRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/configs/llm", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404 got %d", rec.Code)
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("FluxDigest UI")) {
+		t.Fatalf("unexpected html fallback %s", rec.Body.String())
+	}
+}
+
+func newStaticRouter(t *testing.T) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html><body>FluxDigest UI</body></html>"), 0o644); err != nil {
+		t.Fatalf("write index.html: %v", err)
+	}
+
+	return NewRouter(WithStaticDir(dir))
+}
