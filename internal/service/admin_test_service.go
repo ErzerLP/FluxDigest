@@ -9,6 +9,7 @@ import (
 var errAdminTestLLMRequired = errors.New("llm connectivity checker is required")
 
 const defaultAdminLLMTestTimeoutMS = 30000
+const maxAdminLLMTimeoutMS = 2_147_483_647
 
 // LLMTestDraft 表示 LLM 连接测试的最小输入。
 type LLMTestDraft struct {
@@ -63,9 +64,7 @@ func (s *AdminTestService) TestLLM(ctx context.Context, draft LLMTestDraft) (Con
 	if s == nil || s.llm == nil {
 		return ConnectivityTestResult{}, errAdminTestLLMRequired
 	}
-	if draft.TimeoutMS <= 0 {
-		draft.TimeoutMS = defaultAdminLLMTestTimeoutMS
-	}
+	draft.TimeoutMS = normalizeAdminLLMTimeoutMS(draft.TimeoutMS)
 
 	latency, checkErr := s.llm.Check(ctx, draft)
 	result := ConnectivityTestResult{Status: "ok", Message: "connection succeeded", LatencyMS: latency.Milliseconds()}
@@ -97,4 +96,14 @@ func (s *AdminTestService) TestLLM(ctx context.Context, draft LLMTestDraft) (Con
 	}
 
 	return result, nil
+}
+
+func normalizeAdminLLMTimeoutMS(timeoutMS int) int {
+	if timeoutMS <= 0 {
+		return defaultAdminLLMTestTimeoutMS
+	}
+	if timeoutMS > maxAdminLLMTimeoutMS {
+		return maxAdminLLMTimeoutMS
+	}
+	return timeoutMS
 }

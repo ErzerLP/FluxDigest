@@ -190,15 +190,15 @@ func stringValue(payload map[string]any, key string) string {
 
 func resolveLLMTimeoutMS(payload map[string]any, value int) int {
 	if value > 0 {
-		return value
+		return normalizeAdminLLMTimeoutMS(value)
 	}
 
 	current := intValue(payload, "timeout_ms")
 	if current > 0 {
-		return current
+		return normalizeAdminLLMTimeoutMS(current)
 	}
 
-	return 30000
+	return defaultAdminLLMTestTimeoutMS
 }
 
 func intValue(payload map[string]any, key string) int {

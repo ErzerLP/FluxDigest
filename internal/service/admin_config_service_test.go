@@ -163,3 +163,32 @@ func TestAdminConfigServiceUpdateLLMCanSetTimeoutMS(t *testing.T) {
 		t.Fatalf("expected timeout_ms=60000 got %+v", payload)
 	}
 }
+
+func TestAdminConfigServiceUpdateLLMCapsOversizedTimeoutMS(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeLLM: {
+			ProfileType: profile.TypeLLM,
+			Version:     2,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"https://old.local/v1","model":"gpt-4.1-mini","api_key":"secret-llm","timeout_ms":30000}`),
+		},
+	}}
+	svc := service.NewAdminConfigService(repo)
+
+	if _, err := svc.UpdateLLM(context.Background(), service.UpdateLLMConfigInput{
+		BaseURL:   "https://proxy.local/v1",
+		Model:     "gpt-4.1",
+		TimeoutMS: 3_000_000_000,
+		APIKey:    service.SecretInput{Mode: service.SecretModeKeep},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(repo.created[0].PayloadJSON, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["timeout_ms"] != float64(2_147_483_647) {
+		t.Fatalf("expected capped timeout_ms got %+v", payload)
+	}
+}

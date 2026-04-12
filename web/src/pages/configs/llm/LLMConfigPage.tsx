@@ -10,11 +10,20 @@ import { useAdminConfigs } from '../../../services/queries/admin';
 import type { LLMTestDraft, SecretInput, UpdateLLMConfigInput } from '../../../types/admin';
 
 const defaultLLMTimeoutMS = 30000;
+const maxLLMTimeoutMS = 2_147_483_647;
 
 interface LLMConfigFormValues {
-  base_url: string;
-  model: string;
-  timeout_ms: number;
+ base_url: string;
+ model: string;
+ timeout_ms: number;
+}
+
+function normalizeLLMTimeoutMS(timeoutMS?: number) {
+  if (typeof timeoutMS !== 'number' || !Number.isFinite(timeoutMS) || timeoutMS <= 0) {
+    return defaultLLMTimeoutMS;
+  }
+
+  return Math.min(Math.trunc(timeoutMS), maxLLMTimeoutMS);
 }
 
 export function LLMConfigPage() {
@@ -47,7 +56,7 @@ export function LLMConfigPage() {
     reset({
       base_url: currentConfig.base_url ?? '',
       model: currentConfig.model ?? '',
-      timeout_ms: currentConfig.timeout_ms ?? defaultLLMTimeoutMS,
+      timeout_ms: normalizeLLMTimeoutMS(currentConfig.timeout_ms),
     });
     setSecretInput({ mode: currentConfig.api_key?.is_set ? 'keep' : 'replace', value: '' });
     setTestGuidance(undefined);
@@ -75,7 +84,7 @@ export function LLMConfigPage() {
     const payload: UpdateLLMConfigInput = {
       base_url: values.base_url,
       model: values.model,
-      timeout_ms: values.timeout_ms > 0 ? values.timeout_ms : defaultLLMTimeoutMS,
+      timeout_ms: normalizeLLMTimeoutMS(values.timeout_ms),
       api_key:
         secretInput.mode === 'replace'
           ? { mode: 'replace', value: secretInput.value ?? '' }
@@ -102,7 +111,7 @@ export function LLMConfigPage() {
       base_url: values.base_url,
       model: values.model,
       api_key: secretInput.value,
-      timeout_ms: values.timeout_ms > 0 ? values.timeout_ms : defaultLLMTimeoutMS,
+      timeout_ms: normalizeLLMTimeoutMS(values.timeout_ms),
     };
 
     testMutation.mutate(payload);
@@ -211,6 +220,7 @@ export function LLMConfigPage() {
                   id="llm-timeout-ms"
                   type="number"
                   min={1}
+                  step={1}
                   className="console-input"
                   {...register('timeout_ms', { valueAsNumber: true })}
                 />

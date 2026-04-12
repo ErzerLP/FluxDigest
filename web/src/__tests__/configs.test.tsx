@@ -132,6 +132,52 @@ test('llm config page sends timeout_ms in connection test payload', async () => 
   );
 });
 
+test('llm config page normalizes decimal timeout_ms before save', async () => {
+  const putSpy = vi.fn();
+
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET');
+
+    if (url.endsWith('/api/v1/admin/configs') && method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          llm: {
+            base_url: 'https://llm.local/v1',
+            model: 'gpt-4.1-mini',
+            timeout_ms: 30000,
+            api_key: { is_set: true, masked_value: 'secr****' },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (url.endsWith('/api/v1/admin/configs/llm') && method === 'PUT') {
+      const bodyText = typeof init?.body === 'string' ? init.body : '';
+      putSpy(JSON.parse(bodyText));
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response('not found', { status: 404 });
+  });
+
+  renderPage(<LLMConfigPage />);
+
+  await userEvent.clear(await screen.findByLabelText('Timeout (ms)'));
+  await userEvent.type(screen.getByLabelText('Timeout (ms)'), '45000.9');
+  await userEvent.click(screen.getByRole('button', { name: '保存配置' }));
+
+  expect(putSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      timeout_ms: 45000,
+    }),
+  );
+});
+
 test('llm config page blocks connection test in keep-secret mode', async () => {
   fetchMock.mockImplementation(async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;

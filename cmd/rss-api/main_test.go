@@ -557,3 +557,13 @@ func TestAdminLLMConnectivityCheckerUsesDefaultTimeoutWhenDraftMissing(t *testin
 		t.Fatalf("want timeout around 30s got %s", gotTimeout)
 	}
 }
+
+func TestResolveAdminLLMCheckTimeoutCapsOversizedDraftTimeoutMS(t *testing.T) {
+	t.Parallel()
+
+	got := resolveAdminLLMCheckTimeout(0, 3_000_000_000)
+
+	if got != 2_147_483_647*time.Millisecond {
+		t.Fatalf("want capped timeout got %s", got)
+	}
+}

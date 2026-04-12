@@ -28,6 +28,7 @@ import (
 var errDatabaseDSNRequired = errors.New("APP_DATABASE_DSN is required")
 
 const defaultAdminLLMTestTimeout = 30 * time.Second
+const maxAdminLLMTestTimeoutMS = 2_147_483_647
 
 type dbCloser interface {
 	Close() error
@@ -319,12 +320,22 @@ func (c adminLLMConnectivityChecker) Check(ctx context.Context, draft service.LL
 
 func resolveAdminLLMCheckTimeout(defaultTimeout time.Duration, timeoutMS int) time.Duration {
 	if timeoutMS > 0 {
-		return time.Duration(timeoutMS) * time.Millisecond
+		return time.Duration(clampAdminLLMTestTimeoutMS(timeoutMS)) * time.Millisecond
 	}
 	if defaultTimeout > 0 {
 		return defaultTimeout
 	}
 	return defaultAdminLLMTestTimeout
+}
+
+func clampAdminLLMTestTimeoutMS(timeoutMS int) int {
+	if timeoutMS <= 0 {
+		return 0
+	}
+	if timeoutMS > maxAdminLLMTestTimeoutMS {
+		return maxAdminLLMTestTimeoutMS
+	}
+	return timeoutMS
 }
 
 type adminJobRunRepoAdapter struct {

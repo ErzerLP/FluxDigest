@@ -75,4 +75,30 @@ describe('admin api client', () => {
       setTimeoutSpy.mockRestore();
     }
   });
+
+  test('testLLMConfig caps oversized timeout values to a safe upper bound', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ status: 'ok', message: 'ok' }), {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }),
+    );
+
+    try {
+      await testLLMConfig({
+        base_url: 'https://llm.local/v1',
+        model: 'gpt-4.1-mini',
+        api_key: 'token',
+        timeout_ms: 3_000_000_000,
+      });
+
+      expect(setTimeoutSpy).toHaveBeenCalled();
+      expect(setTimeoutSpy.mock.calls[0]?.[1]).toBe(2_147_483_647);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
 });

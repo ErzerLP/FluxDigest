@@ -13,6 +13,7 @@ import type {
 const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
 const adminBaseURL = `${apiBaseURL}/admin`;
 const defaultAdminRequestTimeoutMS = 30000;
+const maxAdminRequestTimeoutMS = 2_147_483_647;
 const adminRequestTimeoutMessage = '请求超时，请检查代理、网络或服务地址后重试。';
 
 type adminRuntimeGlobals = typeof globalThis & {
@@ -62,20 +63,24 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
 function getAdminRequestTimeoutMS() {
   const runtimeTimeout = (globalThis as adminRuntimeGlobals).__ADMIN_REQUEST_TIMEOUT_MS__;
-  if (typeof runtimeTimeout === 'number' && runtimeTimeout > 0) {
-    return runtimeTimeout;
+  return normalizeAdminRequestTimeoutMS(runtimeTimeout);
+}
+
+function normalizeAdminRequestTimeoutMS(timeoutMS?: number) {
+  if (typeof timeoutMS !== 'number' || !Number.isFinite(timeoutMS) || timeoutMS <= 0) {
+    return defaultAdminRequestTimeoutMS;
   }
 
-  return defaultAdminRequestTimeoutMS;
+  return Math.min(Math.trunc(timeoutMS), maxAdminRequestTimeoutMS);
 }
 
 function resolveAdminRequestTimeoutMS(timeoutMS?: number) {
   const runtimeTimeout = (globalThis as adminRuntimeGlobals).__ADMIN_REQUEST_TIMEOUT_MS__;
   if (typeof runtimeTimeout === 'number' && runtimeTimeout > 0) {
-    return runtimeTimeout;
+    return normalizeAdminRequestTimeoutMS(runtimeTimeout);
   }
   if (typeof timeoutMS === 'number' && timeoutMS > 0) {
-    return timeoutMS;
+    return normalizeAdminRequestTimeoutMS(timeoutMS);
   }
 
   return defaultAdminRequestTimeoutMS;
@@ -158,10 +163,7 @@ export function updateLLMConfig(input: UpdateLLMConfigInput) {
 }
 
 export function testLLMConfig(input: LLMTestDraft) {
-  const timeoutMS =
-    typeof input.timeout_ms === 'number' && input.timeout_ms > 0
-      ? input.timeout_ms
-      : getAdminRequestTimeoutMS();
+  const timeoutMS = normalizeAdminRequestTimeoutMS(input.timeout_ms);
 
   return requestAdmin<ConnectivityTestResult>('/test/llm', {
     method: 'POST',

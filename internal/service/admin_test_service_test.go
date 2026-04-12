@@ -93,3 +93,22 @@ func TestAdminTestServicePassesThroughTimeoutMS(t *testing.T) {
 		t.Fatalf("expected timeout_ms pass-through got %#v", checker.drafts)
 	}
 }
+
+func TestAdminTestServiceCapsOversizedTimeoutMS(t *testing.T) {
+	checker := &llmCheckerStub{latency: 5 * time.Millisecond}
+	repo := &jobRunWriterStub{}
+	svc := service.NewAdminTestService(checker, minifluxCheckerStub{}, publishCheckerStub{}, repo)
+
+	_, err := svc.TestLLM(context.Background(), service.LLMTestDraft{
+		BaseURL:   "https://llm.local/v1",
+		Model:     "gpt-4.1-mini",
+		APIKey:    "token",
+		TimeoutMS: 3_000_000_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checker.drafts) != 1 || checker.drafts[0].TimeoutMS != 2_147_483_647 {
+		t.Fatalf("expected capped timeout_ms got %#v", checker.drafts)
+	}
+}
