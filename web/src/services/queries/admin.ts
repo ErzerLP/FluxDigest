@@ -40,5 +40,6 @@ export function useJobRunDetail(jobId?: string) {
     queryKey: adminQueryKeys.jobDetail(jobId),
     queryFn: () => getJobRunDetail(jobId ?? ''),
     enabled: Boolean(jobId),
+    retry: false,
   });
 }

@@ -13,12 +13,13 @@ function displayText(value?: string) {
 export function JobsPage() {
   const [selectedJobId, setSelectedJobId] = useState<string>();
   const jobsQuery = useJobRuns(50);
-  const detailQuery = useJobRunDetail(selectedJobId);
 
   const selectedJob = useMemo(
     () => jobsQuery.data?.items?.find((item) => item.id === selectedJobId),
     [jobsQuery.data?.items, selectedJobId],
   );
+  const detailRequestJobId = selectedJobId && !selectedJob?.detail ? selectedJobId : undefined;
+  const detailQuery = useJobRunDetail(detailRequestJobId);
 
   return (
     <section className="page-stack">
@@ -72,8 +73,15 @@ export function JobsPage() {
         open={Boolean(selectedJobId)}
         onClose={() => setSelectedJobId(undefined)}
         job={selectedJob}
-        detail={detailQuery.data}
-        loading={detailQuery.isLoading}
+        detail={selectedJob?.detail ? selectedJob : detailQuery.data}
+        loading={Boolean(detailRequestJobId) && detailQuery.isLoading}
+        error={
+          detailQuery.isError
+            ? detailQuery.error instanceof Error
+              ? detailQuery.error.message
+              : '任务详情读取失败'
+            : undefined
+        }
       />
     </section>
   );

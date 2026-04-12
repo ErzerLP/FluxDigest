@@ -12,8 +12,6 @@ import type { LLMTestDraft, SecretInput, UpdateLLMConfigInput } from '../../../t
 interface LLMConfigFormValues {
   base_url: string;
   model: string;
-  is_enabled: boolean;
-  timeout_ms: number;
 }
 
 export function LLMConfigPage() {
@@ -28,8 +26,6 @@ export function LLMConfigPage() {
     defaultValues: {
       base_url: '',
       model: '',
-      is_enabled: true,
-      timeout_ms: 30_000,
     },
   });
 
@@ -41,8 +37,6 @@ export function LLMConfigPage() {
     reset({
       base_url: currentConfig.base_url ?? '',
       model: currentConfig.model ?? '',
-      is_enabled: currentConfig.is_enabled ?? true,
-      timeout_ms: currentConfig.timeout_ms ?? 30_000,
     });
     setSecretInput({ mode: currentConfig.api_key?.is_set ? 'keep' : 'replace', value: '' });
   }, [currentConfig, reset]);
@@ -59,8 +53,6 @@ export function LLMConfigPage() {
     const payload: UpdateLLMConfigInput = {
       base_url: values.base_url,
       model: values.model,
-      is_enabled: values.is_enabled,
-      timeout_ms: Number(values.timeout_ms),
       api_key:
         secretInput.mode === 'replace'
           ? { mode: 'replace', value: secretInput.value ?? '' }
@@ -75,7 +67,6 @@ export function LLMConfigPage() {
     const payload: LLMTestDraft = {
       base_url: values.base_url,
       model: values.model,
-      timeout_ms: Number(values.timeout_ms),
       api_key: secretInput.mode === 'replace' ? secretInput.value : undefined,
     };
 
@@ -137,8 +128,16 @@ export function LLMConfigPage() {
             description={testMutation.data.message ?? '已收到测试结果'}
           />
         ) : null}
+        {testMutation.isError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="连接测试失败"
+            description={testMutation.error instanceof Error ? testMutation.error.message : '未知错误'}
+          />
+        ) : null}
 
-        <form className="config-form-grid" onSubmit={(event) => void handleSubmit(onSubmit)(event)}>
+        <form className="config-form-grid config-form-grid-single" onSubmit={(event) => void handleSubmit(onSubmit)(event)}>
           <section className="data-card form-card">
             <div className="section-heading-row compact-row">
               <div>
@@ -169,37 +168,6 @@ export function LLMConfigPage() {
               value={secretInput}
               onChange={setSecretInput}
             />
-          </section>
-
-          <section className="data-card form-card">
-            <div className="section-heading-row compact-row">
-              <div>
-                <p className="section-eyebrow">Runtime</p>
-                <h2 className="section-title">运行参数</h2>
-              </div>
-            </div>
-
-            <div className="form-grid-two">
-              <div className="form-stack">
-                <label className="form-label" htmlFor="llm-timeout-ms">
-                  Timeout (ms)
-                </label>
-                <input
-                  id="llm-timeout-ms"
-                  className="console-input"
-                  type="number"
-                  {...register('timeout_ms', { valueAsNumber: true })}
-                />
-              </div>
-
-              <label className="toggle-card" htmlFor="llm-enabled">
-                <span>
-                  <span className="form-label">启用 LLM</span>
-                  <span className="field-hint">关闭后任务仍保留，但不会调用模型。</span>
-                </span>
-                <input id="llm-enabled" type="checkbox" {...register('is_enabled')} />
-              </label>
-            </div>
           </section>
         </form>
       </div>

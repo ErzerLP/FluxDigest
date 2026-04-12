@@ -13,6 +13,8 @@ export function DashboardPage() {
   const statusQuery = useAdminStatus();
   const jobsQuery = useJobRuns(5);
   const runMutation = useRunDailyDigest();
+  const latestDigestStatus =
+    statusQuery.data?.runtime?.latest_digest_status ?? statusQuery.data?.runtime?.latest_job_status;
 
   const latestJobs = jobsQuery.data?.items ?? [];
 
@@ -42,6 +44,14 @@ export function DashboardPage() {
             description={statusQuery.error instanceof Error ? statusQuery.error.message : '未知错误'}
           />
         ) : null}
+        {runMutation.isError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="日报触发失败"
+            description={runMutation.error instanceof Error ? runMutation.error.message : '未知错误'}
+          />
+        ) : null}
 
         <div className="dashboard-grid">
           <article className="data-card metric-card">
@@ -54,7 +64,7 @@ export function DashboardPage() {
               )}
             </strong>
             <div className="metric-meta">
-              <StatusBadge status={statusQuery.data?.runtime?.latest_job_status} />
+              <StatusBadge status={latestDigestStatus} />
             </div>
           </article>
 

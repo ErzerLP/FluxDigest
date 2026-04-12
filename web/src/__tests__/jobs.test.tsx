@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { render, screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, test, vi } from 'vitest';
+import { beforeEach, expect, test, vi } from 'vitest';
 
 import { AppProviders } from '../app/providers/AppProviders';
 import { JobsPage } from '../pages/jobs/JobsPage';
@@ -18,19 +18,12 @@ function renderPage(ui: ReactElement) {
   return render(<AppProviders>{ui}</AppProviders>);
 }
 
-test('jobs page opens detail drawer', async () => {
+test('jobs page opens detail drawer from list detail without requesting future endpoint', async () => {
   fetchMock.mockImplementation(async (input) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 
     if (url.includes('/api/v1/admin/jobs/job-1')) {
-      return new Response(
-        JSON.stringify({
-          id: 'job-1',
-          status: 'succeeded',
-          detail: { remote_url: 'https://blog.local/post/1' },
-        }),
-        { headers: { 'Content-Type': 'application/json' } },
-      );
+      throw new Error('detail endpoint should not be requested when list detail exists');
     }
 
     if (url.includes('/api/v1/admin/jobs')) {
@@ -42,6 +35,7 @@ test('jobs page opens detail drawer', async () => {
               job_type: 'daily_digest_run',
               status: 'succeeded',
               digest_date: '2026-04-11',
+              detail: { remote_url: 'https://blog.local/post/1' },
             },
           ],
         }),
@@ -55,4 +49,40 @@ test('jobs page opens detail drawer', async () => {
   renderPage(<JobsPage />);
   await userEvent.click(await screen.findByRole('button', { name: '查看详情' }));
   expect(await screen.findByText('https://blog.local/post/1')).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test('jobs page surfaces detail request failure when future endpoint is unavailable', async () => {
+  fetchMock.mockImplementation(async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url.includes('/api/v1/admin/jobs/job-2')) {
+      return new Response(JSON.stringify({ error: 'detail endpoint unavailable' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url.includes('/api/v1/admin/jobs')) {
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 'job-2',
+              job_type: 'daily_digest_run',
+              status: 'failed',
+              digest_date: '2026-04-12',
+            },
+          ],
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    return new Response('not found', { status: 404 });
+  });
+
+  renderPage(<JobsPage />);
+  await userEvent.click(await screen.findByRole('button', { name: '查看详情' }));
+  expect(await screen.findByText('detail endpoint unavailable')).toBeInTheDocument();
 });

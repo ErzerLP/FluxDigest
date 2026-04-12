@@ -358,6 +358,10 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.config-form-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .placeholder-shell-grid,
 .action-card-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));

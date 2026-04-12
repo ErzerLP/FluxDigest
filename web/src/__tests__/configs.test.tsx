@@ -57,5 +57,19 @@ test('llm config page saves keep-secret payload', async () => {
   await userEvent.type(screen.getByLabelText('Base URL'), 'https://proxy.local/v1');
   await userEvent.click(screen.getByRole('button', { name: '保存配置' }));
 
-  expect(putSpy).toHaveBeenCalledWith(expect.objectContaining({ api_key: { mode: 'keep' } }));
+  expect(putSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      base_url: expect.stringContaining('https://proxy.local/v1'),
+      model: 'gpt-4.1-mini',
+      api_key: { mode: 'keep' },
+    }),
+  );
+  expect(putSpy).toHaveBeenCalledWith(
+    expect.not.objectContaining({
+      is_enabled: expect.anything(),
+      timeout_ms: expect.anything(),
+    }),
+  );
+  expect(screen.queryByLabelText('Timeout (ms)')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('启用 LLM')).not.toBeInTheDocument();
 });

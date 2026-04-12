@@ -1,4 +1,4 @@
-import { Drawer, Spin } from 'antd';
+import { Alert, Drawer, Spin } from 'antd';
 
 import type { JobRunDetail, JobRunRecord } from '../../types/admin';
 import { StatusBadge } from '../status/StatusBadge';
@@ -9,13 +9,14 @@ interface JobRunDrawerProps {
   job?: JobRunRecord;
   detail?: JobRunDetail;
   loading?: boolean;
+  error?: string;
 }
 
 function renderValue(value?: string) {
   return value?.trim() ? value : '—';
 }
 
-export function JobRunDrawer({ open, onClose, job, detail, loading }: JobRunDrawerProps) {
+export function JobRunDrawer({ open, onClose, job, detail, loading, error }: JobRunDrawerProps) {
   const detailPayload = detail?.detail ?? job?.detail;
   const remoteUrl =
     typeof detailPayload?.remote_url === 'string'
@@ -41,6 +42,7 @@ export function JobRunDrawer({ open, onClose, job, detail, loading }: JobRunDraw
         </div>
       ) : (
         <div className="drawer-stack">
+          {error ? <Alert type="error" showIcon message="任务详情读取失败" description={error} /> : null}
           <section className="detail-card">
             <div className="detail-grid">
               <div>
@@ -77,10 +79,12 @@ export function JobRunDrawer({ open, onClose, job, detail, loading }: JobRunDraw
             </section>
           ) : null}
 
-          <section className="detail-card">
-            <span className="detail-label">Detail JSON</span>
-            <pre className="detail-json">{JSON.stringify(detailPayload ?? {}, null, 2)}</pre>
-          </section>
+          {!error || detailPayload ? (
+            <section className="detail-card">
+              <span className="detail-label">Detail JSON</span>
+              <pre className="detail-json">{JSON.stringify(detailPayload ?? {}, null, 2)}</pre>
+            </section>
+          ) : null}
         </div>
       )}
     </Drawer>
