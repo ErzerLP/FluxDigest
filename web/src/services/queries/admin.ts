@@ -32,6 +32,7 @@ export function useJobRuns(limit = 20) {
   return useQuery({
     queryKey: adminQueryKeys.jobs(limit),
     queryFn: () => getJobRuns(limit),
+    retry: false,
   });
 }
 

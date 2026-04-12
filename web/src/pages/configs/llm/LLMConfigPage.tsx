@@ -19,6 +19,7 @@ export function LLMConfigPage() {
   const saveMutation = useSaveLLMConfig();
   const testMutation = useTestLLMConfig();
   const [secretInput, setSecretInput] = useState<SecretInput>({ mode: 'keep' });
+  const [testGuidance, setTestGuidance] = useState<string>();
 
   const currentConfig = configQuery.data?.llm;
 
@@ -39,6 +40,7 @@ export function LLMConfigPage() {
       model: currentConfig.model ?? '',
     });
     setSecretInput({ mode: currentConfig.api_key?.is_set ? 'keep' : 'replace', value: '' });
+    setTestGuidance(undefined);
   }, [currentConfig, reset]);
 
   const saveMessage = useMemo(() => {
@@ -59,18 +61,24 @@ export function LLMConfigPage() {
           : { mode: secretInput.mode },
     };
 
-    await saveMutation.mutateAsync(payload);
+    saveMutation.mutate(payload);
   };
 
-  const handleTest = async () => {
+  const handleTest = () => {
+    if (secretInput.mode !== 'replace' || !secretInput.value?.trim()) {
+      setTestGuidance('测试连接需要切换为替换密钥并输入待测 key。');
+      return;
+    }
+
+    setTestGuidance(undefined);
     const values = getValues();
     const payload: LLMTestDraft = {
       base_url: values.base_url,
       model: values.model,
-      api_key: secretInput.mode === 'replace' ? secretInput.value : undefined,
+      api_key: secretInput.value,
     };
 
-    await testMutation.mutateAsync(payload);
+    testMutation.mutate(payload);
   };
 
   return (
@@ -82,7 +90,7 @@ export function LLMConfigPage() {
           subtitle="管理 base URL、模型与 API key 的最小可用配置入口。"
           actions={
             <div className="button-cluster">
-              <Button onClick={() => void handleTest()} loading={testMutation.isPending}>
+              <Button onClick={handleTest} loading={testMutation.isPending}>
                 测试连接
               </Button>
               <Button
@@ -128,6 +136,7 @@ export function LLMConfigPage() {
             description={testMutation.data.message ?? '已收到测试结果'}
           />
         ) : null}
+        {testGuidance ? <Alert type="warning" showIcon message={testGuidance} /> : null}
         {testMutation.isError ? (
           <Alert
             type="error"

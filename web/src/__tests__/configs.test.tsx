@@ -73,3 +73,37 @@ test('llm config page saves keep-secret payload', async () => {
   expect(screen.queryByLabelText('Timeout (ms)')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('启用 LLM')).not.toBeInTheDocument();
 });
+
+test('llm config page blocks connection test in keep-secret mode', async () => {
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET');
+
+    if (url.endsWith('/api/v1/admin/configs') && method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          llm: {
+            base_url: 'https://llm.local/v1',
+            model: 'gpt-4.1-mini',
+            api_key: { is_set: true, masked_value: 'secr****' },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (url.endsWith('/api/v1/admin/test/llm')) {
+      throw new Error('keep mode should not send test request');
+    }
+
+    return new Response('not found', { status: 404 });
+  });
+
+  renderPage(<LLMConfigPage />);
+
+  await userEvent.click(await screen.findByRole('button', { name: '测试连接' }));
+
+  expect(
+    await screen.findByText('测试连接需要切换为替换密钥并输入待测 key。'),
+  ).toBeInTheDocument();
+});
