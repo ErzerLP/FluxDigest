@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
+	promptassets "rss-platform/configs/prompts"
 	domaindigest "rss-platform/internal/domain/digest"
 )
 
 var errRunnerRequired = errors.New("digest planning runner is required")
+
+const digestPromptFile = "digest.tmpl"
 
 // Runner 抽象真正执行规划提示词的底层能力，后续可替换为 ADK Agent。
 type Runner interface {
@@ -45,6 +49,11 @@ func (a *Agent) Plan(ctx context.Context, items []domaindigest.CandidateArticle)
 }
 
 func buildPrompt(items []domaindigest.CandidateArticle) (string, error) {
+	templateText, err := promptassets.Read(digestPromptFile)
+	if err != nil {
+		return "", err
+	}
+
 	payload, err := json.Marshal(struct {
 		Articles []domaindigest.CandidateArticle `json:"articles"`
 	}{Articles: items})
@@ -52,5 +61,13 @@ func buildPrompt(items []domaindigest.CandidateArticle) (string, error) {
 		return "", err
 	}
 
-	return "请基于候选文章生成 JSON 格式日报规划：" + string(payload), nil
+	var prompt strings.Builder
+	prompt.WriteString(strings.TrimSpace(templateText))
+	prompt.WriteString("\n")
+	prompt.WriteString(`仅输出 JSON：{"title":"","subtitle":"","opening_note":"","sections":[{"name":"","items":[{"article_id":"","title":"","core_summary":""}]}]}`)
+	prompt.WriteString("\n")
+	prompt.WriteString("输入候选文章 JSON：")
+	prompt.Write(payload)
+
+	return prompt.String(), nil
 }

@@ -14,6 +14,8 @@ var (
 	errPlanSectionsRequired = errors.New("digest plan sections are required")
 )
 
+const defaultPlanTitle = "FluxDigest 每日汇总"
+
 // PromptRunner 定义最小文本生成边界。
 type PromptRunner interface {
 	Generate(ctx context.Context, prompt string) (string, error)
@@ -44,6 +46,7 @@ func (r *OpenAIRunner) Run(ctx context.Context, prompt string) (Plan, error) {
 	if err := json.Unmarshal([]byte(normalizePlanJSON(raw)), &plan); err != nil {
 		return Plan{}, err
 	}
+	plan = normalizePlan(plan)
 	if err := validatePlan(plan); err != nil {
 		return Plan{}, err
 	}
@@ -64,6 +67,14 @@ func normalizePlanJSON(raw string) string {
 	}
 
 	return trimmed
+}
+
+func normalizePlan(plan Plan) Plan {
+	if strings.TrimSpace(plan.Title) == "" {
+		plan.Title = defaultPlanTitle
+	}
+
+	return plan
 }
 
 func validatePlan(plan Plan) error {

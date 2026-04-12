@@ -34,15 +34,25 @@ func TestOpenAIRunnerRunParsesPlanJSON(t *testing.T) {
 	}
 }
 
+func TestOpenAIRunnerRunFillsDefaultTitleWhenMissing(t *testing.T) {
+	runner := digest_planning.NewOpenAIRunner(&promptRunnerStub{
+		response: `{"sections":[{"name":"重点速览","items":[{"article_id":"art-1","title":"Model News","core_summary":"核心总结"}]}]}`,
+	})
+
+	plan, err := runner.Run(context.Background(), "prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Title != "FluxDigest 每日汇总" {
+		t.Fatalf("want default title got %s", plan.Title)
+	}
+}
+
 func TestOpenAIRunnerRunRejectsMissingRequiredFields(t *testing.T) {
 	tests := []struct {
 		name     string
 		response string
 	}{
-		{
-			name:     "missing title",
-			response: `{"sections":[{"name":"重点速览","items":[{"article_id":"art-1","title":"Model News","core_summary":"核心总结"}]}]}`,
-		},
 		{
 			name:     "missing sections",
 			response: `{"title":"今日 AI 日报","sections":[]}`,
