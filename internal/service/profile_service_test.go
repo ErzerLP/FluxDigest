@@ -71,3 +71,29 @@ func TestProfileServiceSeedDefaultsIsIdempotentWhenActiveExists(t *testing.T) {
 		t.Fatalf("want 5 created records after two seed calls, got %d", len(repo.created))
 	}
 }
+
+func TestProfileServiceSeedsPromptDefaultsIncludingDossierPrompt(t *testing.T) {
+	repo := &profileRepoStub{}
+	svc := service.NewProfileService(repo)
+
+	if err := svc.SeedDefaults(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var promptsPayload map[string]any
+	if err := json.Unmarshal(repo.created[2].PayloadJSON, &promptsPayload); err != nil {
+		t.Fatalf("unmarshal prompts payload: %v", err)
+	}
+	if promptsPayload["translation_prompt"] == "" {
+		t.Fatalf("translation prompt should not be empty: %+v", promptsPayload)
+	}
+	if promptsPayload["analysis_prompt"] == "" {
+		t.Fatalf("analysis prompt should not be empty: %+v", promptsPayload)
+	}
+	if promptsPayload["dossier_prompt"] == "" {
+		t.Fatalf("dossier prompt should not be empty: %+v", promptsPayload)
+	}
+	if promptsPayload["digest_prompt"] == "" {
+		t.Fatalf("digest prompt should not be empty: %+v", promptsPayload)
+	}
+}

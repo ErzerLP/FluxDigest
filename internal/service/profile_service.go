@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	promptassets "rss-platform/configs/prompts"
 	"rss-platform/internal/domain/profile"
 )
 
@@ -23,6 +24,11 @@ func NewProfileService(repo ProfileRepository) *ProfileService {
 }
 
 func (s *ProfileService) SeedDefaults(ctx context.Context) error {
+	promptsPayload, err := defaultPromptsPayload()
+	if err != nil {
+		return fmt.Errorf("build default prompts payload: %w", err)
+	}
+
 	defaults := []struct {
 		profileType string
 		name        string
@@ -52,13 +58,7 @@ func (s *ProfileService) SeedDefaults(ctx context.Context) error {
 		{
 			profileType: profile.TypePrompts,
 			name:        "default-prompts",
-			payload: map[string]any{
-				"target_language":    "zh-CN",
-				"translation_prompt": "",
-				"analysis_prompt":    "",
-				"digest_prompt":      "",
-				"is_enabled":         true,
-			},
+			payload:     promptsPayload,
 		},
 		{
 			profileType: profile.TypePublish,
@@ -105,4 +105,32 @@ func (s *ProfileService) SeedDefaults(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func defaultPromptsPayload() (map[string]any, error) {
+	translationPrompt, err := promptassets.Read("translation.tmpl")
+	if err != nil {
+		return nil, err
+	}
+	analysisPrompt, err := promptassets.Read("analysis.tmpl")
+	if err != nil {
+		return nil, err
+	}
+	dossierPrompt, err := promptassets.Read("dossier.tmpl")
+	if err != nil {
+		return nil, err
+	}
+	digestPrompt, err := promptassets.Read("digest.tmpl")
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"target_language":    "zh-CN",
+		"translation_prompt": translationPrompt,
+		"analysis_prompt":    analysisPrompt,
+		"dossier_prompt":     dossierPrompt,
+		"digest_prompt":      digestPrompt,
+		"is_enabled":         true,
+	}, nil
 }

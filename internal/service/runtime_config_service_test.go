@@ -144,3 +144,41 @@ func TestRuntimeConfigServiceAllowsAdminProfileToClearModel(t *testing.T) {
 		t.Fatalf("want cleared model got %q", snapshot.LLM.Model)
 	}
 }
+
+func TestRuntimeConfigServiceSnapshotLoadsPromptProfileVersions(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeLLM: {
+			ProfileType: profile.TypeLLM,
+			Version:     4,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"https://db.llm.local/v1","model":"gpt-db","api_key":"db-token"}`),
+		},
+		profile.TypeScheduler: {
+			ProfileType: profile.TypeScheduler,
+			Version:     1,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"schedule_enabled":true,"schedule_time":"07:00","timezone":"Asia/Shanghai"}`),
+		},
+		profile.TypePrompts: {
+			ProfileType: profile.TypePrompts,
+			Version:     6,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"translation_prompt":"T","analysis_prompt":"A","dossier_prompt":"D","digest_prompt":"G"}`),
+		},
+	}}
+
+	svc := service.NewRuntimeConfigService(repo, &config.Config{})
+	snapshot, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.LLM.Version != 4 {
+		t.Fatalf("want llm version 4 got %d", snapshot.LLM.Version)
+	}
+	if snapshot.Prompts.TranslationVersion != 6 || snapshot.Prompts.DossierVersion != 6 || snapshot.Prompts.DigestVersion != 6 {
+		t.Fatalf("unexpected prompt versions %+v", snapshot.Prompts)
+	}
+	if snapshot.Prompts.DossierPrompt != "D" {
+		t.Fatalf("want dossier prompt D got %q", snapshot.Prompts.DossierPrompt)
+	}
+}

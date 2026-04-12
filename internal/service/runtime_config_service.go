@@ -15,6 +15,19 @@ type LLMRuntimeConfig struct {
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key"`
 	Model   string `json:"model"`
+	Version int    `json:"version"`
+}
+
+// PromptRuntimeConfig 表示 worker 使用的 prompt 运行时配置。
+type PromptRuntimeConfig struct {
+	TranslationPrompt  string `json:"translation_prompt"`
+	AnalysisPrompt     string `json:"analysis_prompt"`
+	DossierPrompt      string `json:"dossier_prompt"`
+	DigestPrompt       string `json:"digest_prompt"`
+	TranslationVersion int    `json:"translation_version"`
+	AnalysisVersion    int    `json:"analysis_version"`
+	DossierVersion     int    `json:"dossier_version"`
+	DigestVersion      int    `json:"digest_version"`
 }
 
 // SchedulerRuntimeConfig 表示 scheduler 使用的运行时配置。
@@ -27,6 +40,7 @@ type SchedulerRuntimeConfig struct {
 // RuntimeSnapshot 表示运行时配置快照。
 type RuntimeSnapshot struct {
 	LLM       LLMRuntimeConfig       `json:"llm"`
+	Prompts   PromptRuntimeConfig    `json:"prompts"`
 	Scheduler SchedulerRuntimeConfig `json:"scheduler"`
 }
 
@@ -76,6 +90,20 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 	} else if value := strings.TrimSpace(stringValue(llmProfile.payload, "model")); value != "" {
 		snapshot.LLM.Model = value
 	}
+	snapshot.LLM.Version = llmProfile.version.Version
+
+	promptsProfile, err := s.activeProfile(ctx, profile.TypePrompts)
+	if err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	snapshot.Prompts.TranslationPrompt = stringValue(promptsProfile.payload, "translation_prompt")
+	snapshot.Prompts.AnalysisPrompt = stringValue(promptsProfile.payload, "analysis_prompt")
+	snapshot.Prompts.DossierPrompt = stringValue(promptsProfile.payload, "dossier_prompt")
+	snapshot.Prompts.DigestPrompt = stringValue(promptsProfile.payload, "digest_prompt")
+	snapshot.Prompts.TranslationVersion = promptsProfile.version.Version
+	snapshot.Prompts.AnalysisVersion = promptsProfile.version.Version
+	snapshot.Prompts.DossierVersion = promptsProfile.version.Version
+	snapshot.Prompts.DigestVersion = promptsProfile.version.Version
 
 	schedulerProfile, err := s.activeProfile(ctx, profile.TypeScheduler)
 	if err != nil {
