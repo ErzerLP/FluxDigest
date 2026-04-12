@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 
 	promptassets "rss-platform/configs/prompts"
@@ -51,7 +52,15 @@ func (a *Agent) Plan(ctx context.Context, items []domaindigest.CandidateArticle)
 		return domaindigest.Plan{}, err
 	}
 
-	return a.runner.Run(ctx, prompt)
+	plan, err := a.runner.Run(ctx, prompt)
+	if err == nil {
+		return plan, nil
+	}
+	if len(items) == 0 {
+		return domaindigest.Plan{}, err
+	}
+
+	return fallbackPlan(items), nil
 }
 
 func buildPrompt(templateText string, items []domaindigest.CandidateArticle) (string, error) {
@@ -81,4 +90,66 @@ func buildPrompt(templateText string, items []domaindigest.CandidateArticle) (st
 	prompt.Write(payload)
 
 	return prompt.String(), nil
+}
+
+func fallbackPlan(items []domaindigest.CandidateArticle) domaindigest.Plan {
+	sorted := append([]domaindigest.CandidateArticle(nil), items...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].ImportanceScore == sorted[j].ImportanceScore {
+			if sorted[i].PriorityLevel == sorted[j].PriorityLevel {
+				return sorted[i].Title < sorted[j].Title
+			}
+			return sorted[i].PriorityLevel > sorted[j].PriorityLevel
+		}
+		return sorted[i].ImportanceScore > sorted[j].ImportanceScore
+	})
+
+	featuredCount := 3
+	if len(sorted) < featuredCount {
+		featuredCount = len(sorted)
+	}
+
+	featuredItems := make([]domaindigest.SectionItem, 0, featuredCount)
+	for idx, item := range sorted[:featuredCount] {
+		featuredItems = append(featuredItems, fallbackSectionItem(item, idx == 0))
+	}
+
+	sections := []domaindigest.Section{{
+		Name:  "重点关注",
+		Items: featuredItems,
+	}}
+
+	if len(sorted) > featuredCount {
+		moreItems := make([]domaindigest.SectionItem, 0, len(sorted)-featuredCount)
+		for _, item := range sorted[featuredCount:] {
+			moreItems = append(moreItems, fallbackSectionItem(item, false))
+		}
+		sections = append(sections, domaindigest.Section{
+			Name:  "延伸阅读",
+			Items: moreItems,
+		})
+	}
+
+	return domaindigest.Plan{
+		Title:       "FluxDigest 每日汇总",
+		Subtitle:    "日报规划回退为稳定自动编排输出",
+		OpeningNote: "本期因规划模型输出不稳定，已根据单篇处理结果自动整理重点文章。",
+		Sections:    sections,
+	}
+}
+
+func fallbackSectionItem(item domaindigest.CandidateArticle, featured bool) domaindigest.SectionItem {
+	bucket := "normal"
+	if featured {
+		bucket = "featured"
+	}
+
+	return domaindigest.SectionItem{
+		DossierID:        item.DossierID,
+		ArticleID:        item.ID,
+		Title:            item.Title,
+		CoreSummary:      item.CoreSummary,
+		ImportanceBucket: bucket,
+		IsFeatured:       featured,
+	}
 }

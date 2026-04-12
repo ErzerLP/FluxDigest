@@ -31,9 +31,10 @@ type Config struct {
 		AuthToken string `yaml:"auth_token"`
 	} `yaml:"miniflux"`
 	LLM struct {
-		BaseURL string `yaml:"base_url"`
-		APIKey  string `yaml:"api_key"`
-		Model   string `yaml:"model"`
+		BaseURL   string `yaml:"base_url"`
+		APIKey    string `yaml:"api_key"`
+		Model     string `yaml:"model"`
+		TimeoutMS int    `yaml:"timeout_ms"`
 	} `yaml:"llm"`
 	Publish struct {
 		HoloEndpoint string `yaml:"holo_endpoint"`
@@ -49,6 +50,7 @@ func Load() (*Config, error) {
 	cfg.HTTP.Port = 8080
 	cfg.Job.Queue = "default"
 	cfg.Worker.Concurrency = 10
+	cfg.LLM.TimeoutMS = 30000
 
 	if err := loadFromYAML(cfg); err != nil {
 		return nil, err
@@ -106,6 +108,9 @@ func loadFromYAML(cfg *Config) error {
 	}
 	if fromFile.LLM.Model != "" {
 		cfg.LLM.Model = fromFile.LLM.Model
+	}
+	if fromFile.LLM.TimeoutMS > 0 {
+		cfg.LLM.TimeoutMS = fromFile.LLM.TimeoutMS
 	}
 	if fromFile.Publish.HoloEndpoint != "" {
 		cfg.Publish.HoloEndpoint = fromFile.Publish.HoloEndpoint
@@ -165,6 +170,13 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if value := os.Getenv("APP_LLM_MODEL"); value != "" {
 		cfg.LLM.Model = value
+	}
+	if value := os.Getenv("APP_LLM_TIMEOUT_MS"); value != "" {
+		timeoutMS, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		cfg.LLM.TimeoutMS = timeoutMS
 	}
 	if value := os.Getenv("APP_PUBLISH_HOLO_ENDPOINT"); value != "" {
 		cfg.Publish.HoloEndpoint = value

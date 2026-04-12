@@ -278,3 +278,25 @@ func TestChatModelInvokerGenerateStopsRetryWhenContextCanceled(t *testing.T) {
 		t.Fatalf("Generate() calls = %d, want 1", chat.calls)
 	}
 }
+
+func TestRuntimeLLMFactoryConfigUsesTimeoutMS(t *testing.T) {
+	cfg := runtimeLLMFactoryConfig(service.LLMRuntimeConfig{
+		BaseURL:   "https://llm.local/v1",
+		APIKey:    "token",
+		Model:     "kimi-k2.5",
+		TimeoutMS: 45000,
+	})
+
+	if cfg.BaseURL != "https://llm.local/v1" {
+		t.Fatalf("want base_url passthrough got %q", cfg.BaseURL)
+	}
+	if cfg.APIKey != "token" {
+		t.Fatalf("want api key passthrough got %q", cfg.APIKey)
+	}
+	if cfg.Model != "kimi-k2.5" {
+		t.Fatalf("want model passthrough got %q", cfg.Model)
+	}
+	if cfg.Timeout != 45*time.Second {
+		t.Fatalf("want timeout 45s got %s", cfg.Timeout)
+	}
+}

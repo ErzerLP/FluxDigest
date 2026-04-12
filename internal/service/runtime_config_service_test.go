@@ -15,7 +15,7 @@ func TestRuntimeConfigServiceUsesProfilePayloadBeforeEnvDefaults(t *testing.T) {
 			ProfileType: profile.TypeLLM,
 			Version:     2,
 			IsActive:    true,
-			PayloadJSON: []byte(`{"base_url":"https://db.llm.local/v1","model":"gpt-db","api_key":"db-token"}`),
+			PayloadJSON: []byte(`{"base_url":"https://db.llm.local/v1","model":"gpt-db","api_key":"db-token","timeout_ms":45000}`),
 		},
 		profile.TypeScheduler: {
 			ProfileType: profile.TypeScheduler,
@@ -28,6 +28,7 @@ func TestRuntimeConfigServiceUsesProfilePayloadBeforeEnvDefaults(t *testing.T) {
 	defaults.LLM.BaseURL = "https://env.llm.local/v1"
 	defaults.LLM.Model = "gpt-env"
 	defaults.LLM.APIKey = "env-token"
+	defaults.LLM.TimeoutMS = 30000
 
 	svc := service.NewRuntimeConfigService(repo, defaults)
 	snapshot, err := svc.Snapshot(context.Background())
@@ -43,6 +44,9 @@ func TestRuntimeConfigServiceUsesProfilePayloadBeforeEnvDefaults(t *testing.T) {
 	}
 	if snapshot.LLM.APIKey != "db-token" {
 		t.Fatalf("want db llm api_key got %q", snapshot.LLM.APIKey)
+	}
+	if snapshot.LLM.TimeoutMS != 45000 {
+		t.Fatalf("want db llm timeout 45000 got %d", snapshot.LLM.TimeoutMS)
 	}
 	if snapshot.Scheduler.Enabled {
 		t.Fatal("want scheduler enabled=false from profile payload")
@@ -69,6 +73,7 @@ func TestRuntimeConfigServiceKeepsFallbackForDefaultSeedEmptyValues(t *testing.T
 	defaults.LLM.BaseURL = "https://env.llm.local/v1"
 	defaults.LLM.Model = "gpt-env"
 	defaults.LLM.APIKey = "env-token"
+	defaults.LLM.TimeoutMS = 30000
 
 	svc := service.NewRuntimeConfigService(repo, defaults)
 	snapshot, err := svc.Snapshot(context.Background())
@@ -84,6 +89,9 @@ func TestRuntimeConfigServiceKeepsFallbackForDefaultSeedEmptyValues(t *testing.T
 	}
 	if snapshot.LLM.APIKey != "env-token" {
 		t.Fatalf("want fallback api_key got %q", snapshot.LLM.APIKey)
+	}
+	if snapshot.LLM.TimeoutMS != 30000 {
+		t.Fatalf("want fallback timeout 30000 got %d", snapshot.LLM.TimeoutMS)
 	}
 }
 

@@ -12,10 +12,11 @@ import (
 
 // LLMRuntimeConfig 表示 worker 使用的 LLM 运行时配置。
 type LLMRuntimeConfig struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
-	Model   string `json:"model"`
-	Version int    `json:"version"`
+	BaseURL   string `json:"base_url"`
+	APIKey    string `json:"api_key"`
+	Model     string `json:"model"`
+	TimeoutMS int    `json:"timeout_ms"`
+	Version   int    `json:"version"`
 }
 
 // PromptRuntimeConfig 表示 worker 使用的 prompt 运行时配置。
@@ -64,9 +65,10 @@ func NewRuntimeConfigService(repo ProfileRepository, defaults *config.Config) *R
 func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, error) {
 	snapshot := RuntimeSnapshot{
 		LLM: LLMRuntimeConfig{
-			BaseURL: s.defaultLLMBaseURL(),
-			APIKey:  s.defaultLLMAPIKey(),
-			Model:   s.defaultLLMModel(),
+			BaseURL:   s.defaultLLMBaseURL(),
+			APIKey:    s.defaultLLMAPIKey(),
+			Model:     s.defaultLLMModel(),
+			TimeoutMS: s.defaultLLMTimeoutMS(),
 		},
 		Scheduler: defaultSchedulerRuntimeConfig(),
 	}
@@ -89,6 +91,9 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 		snapshot.LLM.Model = stringValue(llmProfile.payload, "model")
 	} else if value := strings.TrimSpace(stringValue(llmProfile.payload, "model")); value != "" {
 		snapshot.LLM.Model = value
+	}
+	if value := intValue(llmProfile.payload, "timeout_ms"); value > 0 {
+		snapshot.LLM.TimeoutMS = value
 	}
 	snapshot.LLM.Version = llmProfile.version.Version
 
@@ -183,6 +188,16 @@ func (s *RuntimeConfigService) defaultLLMModel() string {
 		return ""
 	}
 	return s.defaults.LLM.Model
+}
+
+func (s *RuntimeConfigService) defaultLLMTimeoutMS() int {
+	if s == nil || s.defaults == nil {
+		return 30000
+	}
+	if s.defaults.LLM.TimeoutMS > 0 {
+		return s.defaults.LLM.TimeoutMS
+	}
+	return 30000
 }
 
 func defaultSchedulerRuntimeConfig() SchedulerRuntimeConfig {

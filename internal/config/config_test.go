@@ -94,6 +94,7 @@ func TestLoadReadsMinifluxLLMAndPublishConfig(t *testing.T) {
 	t.Setenv("APP_MINIFLUX_AUTH_TOKEN", "miniflux-token")
 	t.Setenv("APP_LLM_BASE_URL", "https://llm.local/v1")
 	t.Setenv("APP_LLM_API_KEY", "llm-token")
+	t.Setenv("APP_LLM_TIMEOUT_MS", "45000")
 	t.Setenv("APP_PUBLISH_HOLO_ENDPOINT", "https://blog.local/api/posts")
 
 	cfg, err := config.Load()
@@ -111,6 +112,9 @@ func TestLoadReadsMinifluxLLMAndPublishConfig(t *testing.T) {
 	}
 	if cfg.LLM.APIKey != "llm-token" {
 		t.Fatalf("unexpected llm api key %q", cfg.LLM.APIKey)
+	}
+	if cfg.LLM.TimeoutMS != 45000 {
+		t.Fatalf("unexpected llm timeout %d", cfg.LLM.TimeoutMS)
 	}
 	if cfg.Publish.HoloEndpoint != "https://blog.local/api/posts" {
 		t.Fatalf("unexpected publish endpoint %q", cfg.Publish.HoloEndpoint)

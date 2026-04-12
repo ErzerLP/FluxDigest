@@ -126,11 +126,7 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 		return nil, nil, nil, errors.New("APP_LLM_MODEL is required")
 	}
 
-	chatModel, err := llmadapter.NewChatModel(ctx, llmadapter.FactoryConfig{
-		BaseURL: runtimeSnapshot.LLM.BaseURL,
-		APIKey:  runtimeSnapshot.LLM.APIKey,
-		Model:   runtimeSnapshot.LLM.Model,
-	})
+	chatModel, err := llmadapter.NewChatModel(ctx, runtimeLLMFactoryConfig(runtimeSnapshot.LLM))
 	if err != nil {
 		_ = sqlDB.Close()
 		return nil, nil, nil, err
@@ -204,6 +200,18 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	)
 
 	return runtimeSvc, processingRunner, sqlDB.Close, nil
+}
+
+func runtimeLLMFactoryConfig(cfg service.LLMRuntimeConfig) llmadapter.FactoryConfig {
+	factoryCfg := llmadapter.FactoryConfig{
+		BaseURL: cfg.BaseURL,
+		APIKey:  cfg.APIKey,
+		Model:   cfg.Model,
+	}
+	if cfg.TimeoutMS > 0 {
+		factoryCfg.Timeout = time.Duration(cfg.TimeoutMS) * time.Millisecond
+	}
+	return factoryCfg
 }
 
 type chatModelInvoker struct {
