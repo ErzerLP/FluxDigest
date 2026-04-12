@@ -71,16 +71,23 @@ func main() {
 			cfg.Job.Queue: 1,
 		},
 	})
-	mux := appworker.NewServeMux(nil, asynqtask.NewDailyDigestHandler(func(ctx context.Context, digestDate string) error {
-		now := time.Now().In(shanghaiLocation())
-		result, err := runtimeSvc.Run(ctx, digestDate, now)
-		if err != nil {
-			return err
-		}
+	mux := appworker.NewServeMux(
+		nil,
+		asynqtask.NewDailyDigestHandler(func(ctx context.Context, payload asynqtask.DailyDigestPayload) error {
+			now := time.Now().In(shanghaiLocation())
+			result, err := runtimeSvc.Run(ctx, payload.DigestDate, now, service.RunOptions{Force: payload.Force})
+			if err != nil {
+				return err
+			}
 
-		log.Printf("daily digest task consumed: date=%s url=%s", result.DigestDate, result.RemoteURL)
-		return nil
-	}))
+			log.Printf("daily digest task consumed: date=%s force=%t url=%s", result.DigestDate, payload.Force, result.RemoteURL)
+			return nil
+		}),
+		asynqtask.NewArticleReprocessHandler(func(_ context.Context, payload asynqtask.ReprocessArticlePayload) error {
+			log.Printf("article reprocess task consumed: article_id=%s force=%t", payload.ArticleID, payload.Force)
+			return nil
+		}),
+	)
 
 	log.Println("rss-worker started")
 	if err := server.Run(mux); err != nil {

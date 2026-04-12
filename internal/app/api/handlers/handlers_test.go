@@ -57,12 +57,16 @@ func (profileServiceStub) ActiveProfile(_ context.Context, profileType string) (
 }
 
 type jobTriggerStub struct {
-	calls   []time.Time
-	results []service.JobTriggerResult
+	calls               []time.Time
+	dailyDigestForces   []bool
+	articleReprocessIDs []string
+	articleReprocessOps []bool
+	results             []service.JobTriggerResult
 }
 
 func (s *jobTriggerStub) TriggerDailyDigest(_ context.Context, now time.Time) (service.JobTriggerResult, error) {
 	s.calls = append(s.calls, now)
+	s.dailyDigestForces = append(s.dailyDigestForces, false)
 
 	if len(s.results) == 0 {
 		return service.JobTriggerResult{DigestDate: now.Format("2006-01-02"), Status: "accepted"}, nil
@@ -71,6 +75,25 @@ func (s *jobTriggerStub) TriggerDailyDigest(_ context.Context, now time.Time) (s
 	result := s.results[0]
 	s.results = s.results[1:]
 	return result, nil
+}
+
+func (s *jobTriggerStub) TriggerDailyDigestWithOptions(_ context.Context, now time.Time, opts service.DailyDigestTriggerOptions) (service.JobTriggerResult, error) {
+	s.calls = append(s.calls, now)
+	s.dailyDigestForces = append(s.dailyDigestForces, opts.Force)
+
+	if len(s.results) == 0 {
+		return service.JobTriggerResult{DigestDate: now.Format("2006-01-02"), Status: "accepted"}, nil
+	}
+
+	result := s.results[0]
+	s.results = s.results[1:]
+	return result, nil
+}
+
+func (s *jobTriggerStub) TriggerArticleReprocess(_ context.Context, articleID string, force bool) (service.JobTriggerResult, error) {
+	s.articleReprocessIDs = append(s.articleReprocessIDs, articleID)
+	s.articleReprocessOps = append(s.articleReprocessOps, force)
+	return service.JobTriggerResult{ArticleID: articleID, Status: "accepted"}, nil
 }
 
 func TestLatestDigestRouteReturnsJSON(t *testing.T) {
@@ -215,6 +238,47 @@ func TestJobRouteReturnsSkippedWhenDigestAlreadyQueued(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"skipped"`)) {
 		t.Fatalf("unexpected body %s", rec.Body.String())
+	}
+}
+
+func TestJobRoutePassesForceToDigestTrigger(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	trigger := &jobTriggerStub{}
+	router := gin.New()
+	handlers.RegisterJobRoutes(router.Group("/api/v1"), trigger)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/daily-digest", bytes.NewBufferString(`{"trigger_at":"2026-04-11T07:00:00+08:00","force":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(trigger.dailyDigestForces) != 1 || !trigger.dailyDigestForces[0] {
+		t.Fatalf("want force=true got %#v", trigger.dailyDigestForces)
+	}
+}
+
+func TestJobRouteTriggersArticleReprocess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	trigger := &jobTriggerStub{}
+	router := gin.New()
+	handlers.RegisterJobRoutes(router.Group("/api/v1"), trigger)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/article-reprocess", bytes.NewBufferString(`{"article_id":"art-1","force":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(trigger.articleReprocessIDs) != 1 || trigger.articleReprocessIDs[0] != "art-1" {
+		t.Fatalf("want article id art-1 got %#v", trigger.articleReprocessIDs)
+	}
+	if len(trigger.articleReprocessOps) != 1 || !trigger.articleReprocessOps[0] {
+		t.Fatalf("want force=true got %#v", trigger.articleReprocessOps)
 	}
 }
 

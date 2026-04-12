@@ -192,16 +192,51 @@ type dailyDigestQueue struct {
 }
 
 func (q dailyDigestQueue) EnqueueDailyDigest(ctx context.Context, digestDate string) error {
-	task, err := asynqtask.NewDailyDigestTask(digestDate)
+	return q.EnqueueDailyDigestWithOptions(ctx, digestDate, service.DailyDigestTriggerOptions{})
+}
+
+func (q dailyDigestQueue) EnqueueDailyDigestWithOptions(ctx context.Context, digestDate string, opts service.DailyDigestTriggerOptions) error {
+	task, err := asynqtask.NewDailyDigestTask(asynqtask.DailyDigestPayload{
+		DigestDate: digestDate,
+		Force:      opts.Force,
+	})
 	if err != nil {
 		return err
+	}
+
+	taskID := dailyDigestTaskID(digestDate)
+	if opts.Force {
+		taskID = forceDailyDigestTaskID(digestDate)
 	}
 
 	_, err = q.client.EnqueueContext(
 		ctx,
 		task,
 		asynq.Queue(q.queue),
-		asynq.TaskID(dailyDigestTaskID(digestDate)),
+		asynq.TaskID(taskID),
+	)
+	return err
+}
+
+func (q dailyDigestQueue) EnqueueArticleReprocess(ctx context.Context, articleID string, force bool) error {
+	task, err := asynqtask.NewReprocessArticleTask(asynqtask.ReprocessArticlePayload{
+		ArticleID: articleID,
+		Force:     force,
+	})
+	if err != nil {
+		return err
+	}
+
+	taskID := articleReprocessTaskID(articleID)
+	if force {
+		taskID = forceArticleReprocessTaskID(articleID)
+	}
+
+	_, err = q.client.EnqueueContext(
+		ctx,
+		task,
+		asynq.Queue(q.queue),
+		asynq.TaskID(taskID),
 	)
 	if errors.Is(err, asynq.ErrTaskIDConflict) {
 		return service.ErrDailyDigestAlreadyQueued
@@ -211,6 +246,18 @@ func (q dailyDigestQueue) EnqueueDailyDigest(ctx context.Context, digestDate str
 
 func dailyDigestTaskID(digestDate string) string {
 	return "daily-digest:" + digestDate
+}
+
+func forceDailyDigestTaskID(digestDate string) string {
+	return "daily-digest:force:" + digestDate
+}
+
+func articleReprocessTaskID(articleID string) string {
+	return "article-reprocess:" + articleID
+}
+
+func forceArticleReprocessTaskID(articleID string) string {
+	return "article-reprocess:force:" + articleID
 }
 
 type adminLLMConnectivityChecker struct{}

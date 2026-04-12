@@ -13,6 +13,7 @@ import (
 
 	"rss-platform/internal/config"
 	"rss-platform/internal/repository/postgres/models"
+	"rss-platform/internal/service"
 	"rss-platform/internal/telemetry"
 
 	"gorm.io/driver/sqlite"
@@ -20,11 +21,26 @@ import (
 )
 
 type queueStub struct {
-	dates []string
+	dates             []string
+	dailyDigestForces []bool
+	articleIDs        []string
+	articleForces     []bool
 }
 
 func (s *queueStub) EnqueueDailyDigest(_ context.Context, digestDate string) error {
 	s.dates = append(s.dates, digestDate)
+	return nil
+}
+
+func (s *queueStub) EnqueueDailyDigestWithOptions(_ context.Context, digestDate string, opts service.DailyDigestTriggerOptions) error {
+	s.dates = append(s.dates, digestDate)
+	s.dailyDigestForces = append(s.dailyDigestForces, opts.Force)
+	return nil
+}
+
+func (s *queueStub) EnqueueArticleReprocess(_ context.Context, articleID string, force bool) error {
+	s.articleIDs = append(s.articleIDs, articleID)
+	s.articleForces = append(s.articleForces, force)
 	return nil
 }
 
@@ -109,6 +125,67 @@ func TestBuildAPIRouterConnectsPostgresAndSharesMetrics(t *testing.T) {
 	}
 	if len(queue.dates) != 1 || queue.dates[0] != "2026-04-10" {
 		t.Fatalf("want queued digest date 2026-04-10 got %#v", queue.dates)
+	}
+}
+
+func TestBuildAPIRouterDailyDigestForceUsesQueueOptions(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Database.DSN = "postgres://rss:rss@postgres:5432/rss?sslmode=disable"
+	cfg.Job.APIKey = "secret"
+	cfg.Job.Queue = "default"
+
+	queue := &queueStub{}
+	db := newAPITestDB(t)
+	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+		return db, closeStub{}, nil
+	}, telemetry.NewMetrics())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = closer.Close() }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/daily-digest", bytes.NewBufferString(`{"trigger_at":"2026-04-10T07:00:00+08:00","force":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "secret")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(queue.dailyDigestForces) != 1 || !queue.dailyDigestForces[0] {
+		t.Fatalf("want force=true got %#v", queue.dailyDigestForces)
+	}
+}
+
+func TestBuildAPIRouterArticleReprocessEnqueuesTask(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Database.DSN = "postgres://rss:rss@postgres:5432/rss?sslmode=disable"
+	cfg.Job.APIKey = "secret"
+	cfg.Job.Queue = "default"
+
+	queue := &queueStub{}
+	db := newAPITestDB(t)
+	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+		return db, closeStub{}, nil
+	}, telemetry.NewMetrics())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = closer.Close() }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/article-reprocess", bytes.NewBufferString(`{"article_id":"art-1","force":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "secret")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(queue.articleIDs) != 1 || queue.articleIDs[0] != "art-1" {
+		t.Fatalf("want article id art-1 got %#v", queue.articleIDs)
+	}
+	if len(queue.articleForces) != 1 || !queue.articleForces[0] {
+		t.Fatalf("want force=true got %#v", queue.articleForces)
 	}
 }
 

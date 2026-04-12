@@ -81,7 +81,7 @@ func (t schedulerTrigger) TriggerDailyDigest(ctx context.Context, now time.Time)
 }
 
 func (q dailyDigestQueue) EnqueueDailyDigest(ctx context.Context, digestDate string) error {
-	task, err := asynqtask.NewDailyDigestTask(digestDate)
+	task, err := asynqtask.NewDailyDigestTask(asynqtask.DailyDigestPayload{DigestDate: digestDate})
 	if err != nil {
 		return err
 	}
