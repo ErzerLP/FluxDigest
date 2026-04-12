@@ -270,6 +270,79 @@ func TestDailyDigestRuntimeServiceForceRunBypassesPublishedShortcut(t *testing.T
 	}
 }
 
+func TestDailyDigestRuntimeServiceForceRunBypassesFailedStateShortcut(t *testing.T) {
+	ingestion := &ingestionStub{}
+	processing := &processingWorkflowStub{candidates: []domaindigest.CandidateArticle{{ID: "art-1"}}}
+	digestWorkflow := &digestWorkflowStub{digest: daily_digest_workflow.Digest{Title: "日报", ContentMarkdown: "# 内容", ContentHTML: "<h1>内容</h1>"}}
+	digests := &digestRepoStub{state: "failed", remoteURL: "https://example.com/failed-old"}
+	publisher := &publishStub{results: []publishOutcome{{result: adapterpublisher.PublishDigestResult{RemoteID: "remote-force-failed", RemoteURL: "https://example.com/force-failed"}}}}
+	svc := service.NewDailyDigestRuntimeService(ingestion, processing, digestWorkflow, digests, publisher)
+
+	out, err := svc.Run(context.Background(), "2026-04-11", time.Date(2026, 4, 12, 8, 0, 0, 0, time.FixedZone("CST", 8*3600)), service.RunOptions{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RemoteURL != "https://example.com/force-failed" {
+		t.Fatalf("want forced publish url got %s", out.RemoteURL)
+	}
+	if ingestion.calls != 1 {
+		t.Fatalf("want ingestion called once got %d", ingestion.calls)
+	}
+	if processing.calls != 1 {
+		t.Fatalf("want processing called once got %d", processing.calls)
+	}
+	if digestWorkflow.calls != 1 {
+		t.Fatalf("want digest workflow called once got %d", digestWorkflow.calls)
+	}
+	if publisher.calls != 1 {
+		t.Fatalf("want publisher called once got %d", publisher.calls)
+	}
+	if digests.markFailedCalls != 0 {
+		t.Fatalf("failed state force rerun should start directly, got markFailedCalls=%d", digests.markFailedCalls)
+	}
+	if digests.state != "published" {
+		t.Fatalf("want state published got %s", digests.state)
+	}
+}
+
+func TestDailyDigestRuntimeServiceForceRunBypassesPublishingStateShortcut(t *testing.T) {
+	ingestion := &ingestionStub{}
+	processing := &processingWorkflowStub{candidates: []domaindigest.CandidateArticle{{ID: "art-1"}}}
+	digestWorkflow := &digestWorkflowStub{digest: daily_digest_workflow.Digest{Title: "日报", ContentMarkdown: "# 内容", ContentHTML: "<h1>内容</h1>"}}
+	digests := &digestRepoStub{state: "publishing", remoteURL: "https://example.com/publishing-old"}
+	publisher := &publishStub{results: []publishOutcome{{result: adapterpublisher.PublishDigestResult{RemoteID: "remote-force-publishing", RemoteURL: "https://example.com/force-publishing"}}}}
+	svc := service.NewDailyDigestRuntimeService(ingestion, processing, digestWorkflow, digests, publisher)
+
+	out, err := svc.Run(context.Background(), "2026-04-11", time.Date(2026, 4, 12, 8, 0, 0, 0, time.FixedZone("CST", 8*3600)), service.RunOptions{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RemoteURL != "https://example.com/force-publishing" {
+		t.Fatalf("want forced publish url got %s", out.RemoteURL)
+	}
+	if ingestion.calls != 1 {
+		t.Fatalf("want ingestion called once got %d", ingestion.calls)
+	}
+	if processing.calls != 1 {
+		t.Fatalf("want processing called once got %d", processing.calls)
+	}
+	if digestWorkflow.calls != 1 {
+		t.Fatalf("want digest workflow called once got %d", digestWorkflow.calls)
+	}
+	if publisher.calls != 1 {
+		t.Fatalf("want publisher called once got %d", publisher.calls)
+	}
+	if digests.markFailedCalls != 1 {
+		t.Fatalf("publishing state force rerun should preempt once, got markFailedCalls=%d", digests.markFailedCalls)
+	}
+	if digests.beginCalls != 2 {
+		t.Fatalf("publishing state force rerun should retry begin publish once, got beginCalls=%d", digests.beginCalls)
+	}
+	if digests.state != "published" {
+		t.Fatalf("want state published got %s", digests.state)
+	}
+}
+
 func TestDailyDigestRuntimeServiceForceRunStillBlocksRecoveryRequired(t *testing.T) {
 	ingestion := &ingestionStub{}
 	processing := &processingWorkflowStub{candidates: []domaindigest.CandidateArticle{{ID: "art-1"}}}

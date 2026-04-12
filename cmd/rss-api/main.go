@@ -215,7 +215,7 @@ func (q dailyDigestQueue) EnqueueDailyDigestWithOptions(ctx context.Context, dig
 		asynq.Queue(q.queue),
 		asynq.TaskID(taskID),
 	)
-	return err
+	return mapDailyDigestEnqueueError(err, opts.Force)
 }
 
 func (q dailyDigestQueue) EnqueueArticleReprocess(ctx context.Context, articleID string, force bool) error {
@@ -258,6 +258,13 @@ func articleReprocessTaskID(articleID string) string {
 
 func forceArticleReprocessTaskID(articleID string) string {
 	return "article-reprocess:force:" + articleID
+}
+
+func mapDailyDigestEnqueueError(err error, force bool) error {
+	if !force && errors.Is(err, asynq.ErrTaskIDConflict) {
+		return service.ErrDailyDigestAlreadyQueued
+	}
+	return err
 }
 
 type adminLLMConnectivityChecker struct{}

@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hibiken/asynq"
 
 	"rss-platform/internal/config"
 	"rss-platform/internal/repository/postgres/models"
@@ -186,6 +189,23 @@ func TestBuildAPIRouterArticleReprocessEnqueuesTask(t *testing.T) {
 	}
 	if len(queue.articleForces) != 1 || !queue.articleForces[0] {
 		t.Fatalf("want force=true got %#v", queue.articleForces)
+	}
+}
+
+func TestMapDailyDigestEnqueueErrorMapsTaskIDConflictWhenNotForce(t *testing.T) {
+	got := mapDailyDigestEnqueueError(asynq.ErrTaskIDConflict, false)
+	if !errors.Is(got, service.ErrDailyDigestAlreadyQueued) {
+		t.Fatalf("want ErrDailyDigestAlreadyQueued got %v", got)
+	}
+}
+
+func TestMapDailyDigestEnqueueErrorKeepsConflictWhenForce(t *testing.T) {
+	got := mapDailyDigestEnqueueError(asynq.ErrTaskIDConflict, true)
+	if !errors.Is(got, asynq.ErrTaskIDConflict) {
+		t.Fatalf("want asynq.ErrTaskIDConflict got %v", got)
+	}
+	if errors.Is(got, service.ErrDailyDigestAlreadyQueued) {
+		t.Fatalf("force enqueue should not map to ErrDailyDigestAlreadyQueued, got %v", got)
 	}
 }
 
