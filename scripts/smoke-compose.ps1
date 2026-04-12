@@ -1,6 +1,6 @@
 param(
     [string]$ComposeFile = (Join-Path $PSScriptRoot "..\deployments\compose\docker-compose.yml"),
-    [string]$ApiBaseUrl = "http://localhost:8080",
+    [string]$ApiBaseUrl = "http://127.0.0.1:8080",
     [string]$ApiKey = "dev-api-key",
     [string]$TriggerAt = "2026-04-11T07:00:00+08:00"
 )
@@ -27,20 +27,47 @@ function Wait-HttpJson {
 }
 
 $resolvedComposeFile = (Resolve-Path $ComposeFile).Path
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Write-Host "Using compose file: $resolvedComposeFile"
+Write-Host "Using repo root: $repoRoot"
 
+Push-Location $repoRoot
 try {
     docker compose -f $resolvedComposeFile down --volumes --remove-orphans
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose down --volumes --remove-orphans failed with exit code $LASTEXITCODE"
     }
 
-    docker compose -f $resolvedComposeFile up -d --build
+    npm --prefix web install
     if ($LASTEXITCODE -ne 0) {
-        throw "docker compose up -d --build failed with exit code $LASTEXITCODE"
+        throw "npm --prefix web install failed with exit code $LASTEXITCODE"
+    }
+
+    npm --prefix web run build
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm --prefix web run build failed with exit code $LASTEXITCODE"
+    }
+
+    docker compose -f $resolvedComposeFile build rss-api
+    if ($LASTEXITCODE -ne 0) {
+        throw "docker compose build rss-api failed with exit code $LASTEXITCODE"
+    }
+
+    docker compose -f $resolvedComposeFile up -d
+    if ($LASTEXITCODE -ne 0) {
+        throw "docker compose up -d failed with exit code $LASTEXITCODE"
     }
 
     $null = Wait-HttpJson -Uri "$ApiBaseUrl/healthz"
+    $adminStatus = Wait-HttpJson -Uri "$ApiBaseUrl/api/v1/admin/status"
+    if (-not $adminStatus.runtime) {
+        throw "admin status missing runtime"
+    }
+
+    $indexHtml = Invoke-WebRequest -Uri "$ApiBaseUrl/dashboard"
+    if ($indexHtml.Content -notmatch "FluxDigest") {
+        throw "spa index missing FluxDigest"
+    }
 
     $triggerBody = @{ trigger_at = $TriggerAt } | ConvertTo-Json -Compress
     $trigger = Invoke-RestMethod `
@@ -118,4 +145,5 @@ try {
 }
 finally {
     docker compose -f $resolvedComposeFile down --volumes --remove-orphans | Out-Host
+    Pop-Location
 }

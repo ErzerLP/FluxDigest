@@ -1,12 +1,17 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 
 	"rss-platform/internal/app/api/handlers"
 	"rss-platform/internal/service"
@@ -76,5 +81,26 @@ func TestRouterRegistersAdminStatusRoute(t *testing.T) {
 	}
 	if runtimeBody["latest_digest_date"] != "2026-04-11" {
 		t.Fatalf("want latest_digest_date 2026-04-11 got %#v", runtimeBody["latest_digest_date"])
+	}
+}
+
+func TestRouterServesStaticIndexForNonAPIRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html><body>FluxDigest UI</body></html>"), 0o644); err != nil {
+		t.Fatalf("write index.html: %v", err)
+	}
+
+	router := NewRouter(WithStaticDir(dir))
+
+	req := httptest.NewRequest(http.MethodGet, "/configs/llm", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("FluxDigest UI")) {
+		t.Fatalf("unexpected body %s", rec.Body.String())
 	}
 }

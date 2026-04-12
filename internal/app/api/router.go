@@ -2,6 +2,9 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -18,6 +21,7 @@ type routerConfig struct {
 	jobTrigger    handlers.JobTrigger
 	admin         handlers.AdminDeps
 	metrics       *telemetry.Metrics
+	staticDir     string
 }
 
 // Option 定义 router 组装选项。
@@ -72,6 +76,13 @@ func WithMetrics(metrics *telemetry.Metrics) Option {
 	}
 }
 
+// WithStaticDir 配置 SPA 静态资源目录。
+func WithStaticDir(staticDir string) Option {
+	return func(cfg *routerConfig) {
+		cfg.staticDir = staticDir
+	}
+}
+
 // NewRouter 创建可注入依赖的最小 API router。
 func NewRouter(options ...Option) *gin.Engine {
 	cfg := defaultRouterConfig()
@@ -97,12 +108,34 @@ func NewRouter(options ...Option) *gin.Engine {
 		jobs.Use(middleware.RequireAPIKey(cfg.apiKey))
 	}
 	handlers.RegisterJobRoutes(jobs, cfg.jobTrigger)
+	registerStaticRoutes(router, cfg.staticDir)
 
 	return router
 }
 
 func defaultRouterConfig() routerConfig {
 	return routerConfig{
-		metrics: telemetry.NewMetrics(),
+		metrics:   telemetry.NewMetrics(),
+		staticDir: os.Getenv("APP_STATIC_DIR"),
 	}
+}
+
+func registerStaticRoutes(router *gin.Engine, staticDir string) {
+	if staticDir == "" {
+		return
+	}
+
+	indexFile := filepath.Join(staticDir, "index.html")
+	if _, err := os.Stat(indexFile); err != nil {
+		return
+	}
+
+	router.Static("/assets", filepath.Join(staticDir, "assets"))
+	router.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") || c.Request.URL.Path == "/healthz" || c.Request.URL.Path == "/metrics" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		c.File(indexFile)
+	})
 }

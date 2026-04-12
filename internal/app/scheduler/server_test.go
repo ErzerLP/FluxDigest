@@ -65,6 +65,8 @@ func TestSchedulerLoopTriggersOncePerDigestDate(t *testing.T) {
 			return loc, nil
 		}
 		return time.LoadLocation(name)
+	}), WithNowFunc(func() time.Time {
+		return time.Date(2026, 4, 11, 6, 59, 0, 0, loc)
 	}))
 
 	ctx, cancel := context.WithCancel(context.Background())
