@@ -25,7 +25,10 @@ func newQueryTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(
 		&models.SourceArticleModel{},
 		&models.ArticleProcessingModel{},
+		&models.ArticleDossierModel{},
+		&models.ArticlePublishStateModel{},
 		&models.DailyDigestModel{},
+		&models.DailyDigestItemModel{},
 		&models.ProfileVersionModel{},
 	); err != nil {
 		t.Fatalf("auto migrate query tables: %v", err)
@@ -162,6 +165,128 @@ func TestDigestQueryServiceReturnsLatestDigest(t *testing.T) {
 	}
 	if got.DigestDate != "2026-04-11" {
 		t.Fatalf("want digest date 2026-04-11 got %s", got.DigestDate)
+	}
+}
+
+func TestDigestQueryServiceLatestDigestIncludesItems(t *testing.T) {
+	db := newQueryTestDB(t)
+	ctx := context.Background()
+
+	digest := models.DailyDigestModel{
+		ID:              "digest-1",
+		DigestDate:      time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC),
+		Title:           "今日日报",
+		Subtitle:        "新副标题",
+		ContentMarkdown: "# new",
+		ContentHTML:     "<h1>new</h1>",
+		RemoteID:        "remote-2",
+		RemoteURL:       "https://example.com/new",
+		PublishState:    "published",
+		PublishError:    "",
+		CreatedAt:       time.Date(2026, 4, 12, 8, 0, 0, 0, time.UTC),
+		UpdatedAt:       time.Date(2026, 4, 12, 8, 0, 0, 0, time.UTC),
+	}
+	if err := db.WithContext(ctx).Create(&digest).Error; err != nil {
+		t.Fatalf("create digest: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&models.DailyDigestItemModel{
+		ID:               "item-1",
+		DigestID:         "digest-1",
+		DossierID:        "dos-1",
+		SectionName:      "重点速览",
+		ImportanceBucket: "featured",
+		Position:         1,
+		IsFeatured:       true,
+	}).Error; err != nil {
+		t.Fatalf("create digest item: %v", err)
+	}
+
+	svc := NewDigestQueryService(db)
+	got, err := svc.LatestDigest(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Items) != 1 {
+		t.Fatalf("want 1 digest item got %d", len(got.Items))
+	}
+	if got.Items[0].DossierID != "dos-1" {
+		t.Fatalf("want dossier id dos-1 got %+v", got.Items[0])
+	}
+}
+
+func TestDossierQueryServiceListAndGet(t *testing.T) {
+	db := newQueryTestDB(t)
+	ctx := context.Background()
+
+	if err := db.WithContext(ctx).Create(&models.ArticleDossierModel{
+		ID:                       "dos-1",
+		ArticleID:                "art-1",
+		ProcessingID:             "proc-1",
+		DigestDate:               time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC),
+		Version:                  1,
+		IsActive:                 true,
+		TitleTranslated:          "模型新闻",
+		SummaryPolished:          "润色摘要",
+		CoreSummary:              "核心总结",
+		KeyPointsJSON:            []byte(`["要点一","要点二"]`),
+		TopicCategory:            "AI",
+		ImportanceScore:          0.9,
+		RecommendationReason:     "值得跟进",
+		ReadingValue:             "高",
+		PriorityLevel:            "high",
+		ContentPolishedMarkdown:  "## 正文",
+		AnalysisLongformMarkdown: "## 分析",
+		BackgroundContext:        "背景",
+		ImpactAnalysis:           "影响",
+		DebatePointsJSON:         []byte(`["争议点"]`),
+		TargetAudience:           "工程师",
+		PublishSuggestion:        "suggested",
+		SuggestionReason:         "信息密度高",
+		SuggestedChannelsJSON:    []byte(`["holo"]`),
+		SuggestedTagsJSON:        []byte(`["ai"]`),
+		SuggestedCategoriesJSON:  []byte(`["tech"]`),
+		TranslationPromptVersion: 6,
+		AnalysisPromptVersion:    6,
+		DossierPromptVersion:     6,
+		LLMProfileVersion:        4,
+		CreatedAt:                time.Date(2026, 4, 12, 8, 0, 0, 0, time.UTC),
+		UpdatedAt:                time.Date(2026, 4, 12, 8, 0, 0, 0, time.UTC),
+	}).Error; err != nil {
+		t.Fatalf("create dossier: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&models.ArticlePublishStateModel{
+		ID:             "pub-1",
+		DossierID:      "dos-1",
+		State:          "suggested",
+		PublishChannel: "holo",
+		RemoteURL:      "https://example.com/posts/1",
+		UpdatedAt:      time.Date(2026, 4, 12, 8, 30, 0, 0, time.UTC),
+	}).Error; err != nil {
+		t.Fatalf("create publish state: %v", err)
+	}
+
+	svc := NewDossierQueryService(db)
+	items, err := svc.ListDossiers(ctx, DossierListFilter{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != "dos-1" {
+		t.Fatalf("unexpected dossier list %+v", items)
+	}
+	if items[0].PublishState != "suggested" {
+		t.Fatalf("want suggested publish state got %+v", items[0])
+	}
+
+	got, err := svc.GetDossier(ctx, "dos-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PublishState != "suggested" || got.TitleTranslated != "模型新闻" {
+		t.Fatalf("unexpected dossier %+v", got)
+	}
+	if len(got.KeyPoints) != 2 || got.KeyPoints[0] != "要点一" {
+		t.Fatalf("unexpected key points %+v", got.KeyPoints)
 	}
 }
 

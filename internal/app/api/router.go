@@ -16,6 +16,7 @@ import (
 type routerConfig struct {
 	apiKey        string
 	articleReader handlers.ArticleReader
+	dossierReader handlers.DossierReader
 	digestReader  handlers.DigestReader
 	profileReader handlers.ProfileReader
 	jobTrigger    handlers.JobTrigger
@@ -45,6 +46,13 @@ func WithArticleReader(reader handlers.ArticleReader) Option {
 func WithDigestReader(reader handlers.DigestReader) Option {
 	return func(cfg *routerConfig) {
 		cfg.digestReader = reader
+	}
+}
+
+// WithDossierReader 注入 dossier 读取依赖。
+func WithDossierReader(reader handlers.DossierReader) Option {
+	return func(cfg *routerConfig) {
+		cfg.dossierReader = reader
 	}
 }
 
@@ -99,6 +107,7 @@ func NewRouter(options ...Option) *gin.Engine {
 
 	apiV1 := router.Group("/api/v1")
 	handlers.RegisterArticleRoutes(apiV1, cfg.articleReader)
+	handlers.RegisterDossierRoutes(apiV1, cfg.dossierReader)
 	handlers.RegisterDigestRoutes(apiV1, cfg.digestReader)
 	handlers.RegisterProfileRoutes(apiV1, cfg.profileReader)
 	handlers.RegisterAdminRoutes(apiV1, cfg.admin)

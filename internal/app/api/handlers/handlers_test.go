@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	apiapp "rss-platform/internal/app/api"
 	"rss-platform/internal/app/api/handlers"
@@ -21,6 +22,21 @@ type digestServiceStub struct{}
 
 func (digestServiceStub) LatestDigest(context.Context) (service.DigestView, error) {
 	return service.DigestView{Title: "今日 AI 日报"}, nil
+}
+
+type dossierReaderStub struct {
+	items     []service.DossierListItem
+	detail    service.DossierDetail
+	listErr   error
+	detailErr error
+}
+
+func (s dossierReaderStub) ListDossiers(context.Context, service.DossierListFilter) ([]service.DossierListItem, error) {
+	return s.items, s.listErr
+}
+
+func (s dossierReaderStub) GetDossier(context.Context, string) (service.DossierDetail, error) {
+	return s.detail, s.detailErr
 }
 
 type articleServiceStub struct{}
@@ -79,6 +95,65 @@ func TestLatestDigestRouteReturnsJSON(t *testing.T) {
 	}
 	if _, ok := body["sections"]; ok {
 		t.Fatalf("did not expect sections in response: %#v", body["sections"])
+	}
+}
+
+func TestRegisterDossierRoutesReturnsListAndDetail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterDossierRoutes(router.Group("/api/v1"), dossierReaderStub{
+		items: []service.DossierListItem{{
+			ID:              "dos-1",
+			TitleTranslated: "模型新闻",
+			PublishState:    "suggested",
+		}},
+		detail: service.DossierDetail{
+			ID:              "dos-1",
+			TitleTranslated: "模型新闻",
+			PublishState:    "suggested",
+		},
+	})
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers", nil)
+	listRec := httptest.NewRecorder()
+	router.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d", listRec.Code)
+	}
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers/dos-1", nil)
+	detailRec := httptest.NewRecorder()
+	router.ServeHTTP(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d", detailRec.Code)
+	}
+}
+
+func TestRegisterDossierRoutesRejectsLimitAboveOneHundred(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterDossierRoutes(router.Group("/api/v1"), dossierReaderStub{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers?limit=101", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 got %d", rec.Code)
+	}
+}
+
+func TestRegisterDossierRoutesReturnsNotFoundForMissingDetail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterDossierRoutes(router.Group("/api/v1"), dossierReaderStub{detailErr: gorm.ErrRecordNotFound})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers/missing", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404 got %d", rec.Code)
 	}
 }
 
@@ -183,6 +258,7 @@ func TestRouterRegistersVersionedRoutesAndProtectsJobs(t *testing.T) {
 	trigger := &jobTriggerStub{}
 	router := apiapp.NewRouter(
 		apiapp.WithDigestReader(digestServiceStub{}),
+		apiapp.WithDossierReader(dossierReaderStub{items: []service.DossierListItem{{ID: "dos-1", TitleTranslated: "模型新闻"}}, detail: service.DossierDetail{ID: "dos-1", TitleTranslated: "模型新闻"}}),
 		apiapp.WithArticleReader(articleServiceStub{}),
 		apiapp.WithProfileReader(profileServiceStub{}),
 		apiapp.WithJobTrigger(trigger),
@@ -194,6 +270,13 @@ func TestRouterRegistersVersionedRoutesAndProtectsJobs(t *testing.T) {
 	router.ServeHTTP(latestRec, latestReq)
 	if latestRec.Code != http.StatusOK {
 		t.Fatalf("want digest route 200 got %d", latestRec.Code)
+	}
+
+	dossierReq := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers", nil)
+	dossierRec := httptest.NewRecorder()
+	router.ServeHTTP(dossierRec, dossierReq)
+	if dossierRec.Code != http.StatusOK {
+		t.Fatalf("want dossier route 200 got %d", dossierRec.Code)
 	}
 
 	unauthorizedReq := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/daily-digest", bytes.NewBufferString(`{}`))

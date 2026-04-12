@@ -46,6 +46,45 @@ paths:
                       $ref: '#/components/schemas/Article'
         '503':
           description: Article reader is not configured
+  /api/v1/dossiers:
+    get:
+      summary: List active dossiers
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Dossier list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DossierListResponse'
+        '400':
+          description: Invalid limit
+        '503':
+          description: Dossier reader is not configured
+  /api/v1/dossiers/{id}:
+    get:
+      summary: Get dossier detail
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dossier detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DossierDetail'
+        '503':
+          description: Dossier reader is not configured
   /api/v1/digests/latest:
     get:
       summary: Get latest digest
@@ -266,6 +305,139 @@ components:
           type: string
         publish_error:
           type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DigestItem'
+    DigestItem:
+      type: object
+      properties:
+        dossier_id:
+          type: string
+        section_name:
+          type: string
+        importance_bucket:
+          type: string
+        position:
+          type: integer
+        is_featured:
+          type: boolean
+    DossierListItem:
+      type: object
+      properties:
+        id:
+          type: string
+        article_id:
+          type: string
+        digest_date:
+          type: string
+          format: date
+        title_translated:
+          type: string
+        core_summary:
+          type: string
+        topic_category:
+          type: string
+        importance_score:
+          type: number
+          format: float
+        priority_level:
+          type: string
+        publish_suggestion:
+          type: string
+        publish_state:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    DossierListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DossierListItem'
+    DossierDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        article_id:
+          type: string
+        processing_id:
+          type: string
+        digest_date:
+          type: string
+          format: date
+        version:
+          type: integer
+        is_active:
+          type: boolean
+        title_translated:
+          type: string
+        summary_polished:
+          type: string
+        core_summary:
+          type: string
+        key_points:
+          type: array
+          items:
+            type: string
+        topic_category:
+          type: string
+        importance_score:
+          type: number
+          format: float
+        recommendation_reason:
+          type: string
+        reading_value:
+          type: string
+        priority_level:
+          type: string
+        content_polished_markdown:
+          type: string
+        analysis_longform_markdown:
+          type: string
+        background_context:
+          type: string
+        impact_analysis:
+          type: string
+        debate_points:
+          type: array
+          items:
+            type: string
+        target_audience:
+          type: string
+        publish_suggestion:
+          type: string
+        suggestion_reason:
+          type: string
+        suggested_channels:
+          type: array
+          items:
+            type: string
+        suggested_tags:
+          type: array
+          items:
+            type: string
+        suggested_categories:
+          type: array
+          items:
+            type: string
+        publish_state:
+          type: string
+        publish_channel:
+          type: string
+        remote_url:
+          type: string
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     Profile:
       type: object
       properties:

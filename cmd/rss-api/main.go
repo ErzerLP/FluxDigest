@@ -96,6 +96,7 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, queue service.Daily
 	profileRepo := postgresrepo.NewProfileRepository(db)
 	jobRunRepo := &adminJobRunRepoAdapter{repo: postgresrepo.NewJobRunRepository(db)}
 	articleQueryService := service.NewArticleQueryService(db)
+	dossierQueryService := service.NewDossierQueryService(db)
 	digestQueryService := service.NewDigestQueryService(db)
 	profileQueryService := service.NewProfileQueryService(db)
 	adminConfigService := service.NewAdminConfigService(profileRepo)
@@ -106,6 +107,7 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, queue service.Daily
 		api.WithAPIKey(cfg.Job.APIKey),
 		api.WithMetrics(metrics),
 		api.WithArticleReader(articleQueryService),
+		api.WithDossierReader(dossierQueryService),
 		api.WithDigestReader(digestQueryService),
 		api.WithProfileReader(profileQueryService),
 		api.WithJobTrigger(service.NewJobService(queue, metrics)),

@@ -180,6 +180,85 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	).Error; err != nil {
 		t.Fatalf("create digest: %v", err)
 	}
+	if err := db.WithContext(ctx).Exec(
+		`INSERT INTO article_dossiers (
+			id, article_id, processing_id, digest_date, version, is_active,
+			title_translated, summary_polished, core_summary, key_points_json,
+			topic_category, importance_score, recommendation_reason, reading_value,
+			priority_level, content_polished_markdown, analysis_longform_markdown,
+			background_context, impact_analysis, debate_points_json, target_audience,
+			publish_suggestion, suggestion_reason, suggested_channels_json, suggested_tags_json,
+			suggested_categories_json, translation_prompt_version, analysis_prompt_version,
+			dossier_prompt_version, llm_profile_version, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"dos-1",
+		"art-1",
+		"proc-1",
+		time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC),
+		1,
+		true,
+		"模型新闻",
+		"润色摘要",
+		"这是核心观点",
+		`["要点一"]`,
+		"AI",
+		0.8,
+		"值得跟进",
+		"高",
+		"high",
+		"## 正文",
+		"## 分析",
+		"",
+		"",
+		`[]`,
+		"",
+		"suggested",
+		"",
+		`["holo"]`,
+		`["ai"]`,
+		`["tech"]`,
+		6,
+		6,
+		6,
+		4,
+		time.Date(2026, 4, 11, 8, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 11, 8, 0, 0, 0, time.UTC),
+	).Error; err != nil {
+		t.Fatalf("create dossier: %v", err)
+	}
+	if err := db.WithContext(ctx).Exec(
+		`INSERT INTO article_publish_states (
+			id, dossier_id, state, approved_by, decision_note, publish_channel,
+			remote_id, remote_url, error_message, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"pub-1",
+		"dos-1",
+		"suggested",
+		"",
+		"",
+		"holo",
+		"",
+		"https://example.com/posts/1",
+		"",
+		time.Date(2026, 4, 11, 8, 30, 0, 0, time.UTC),
+	).Error; err != nil {
+		t.Fatalf("create publish state: %v", err)
+	}
+	if err := db.WithContext(ctx).Exec(
+		`INSERT INTO daily_digest_items (
+			id, digest_id, dossier_id, section_name, importance_bucket, position, is_featured, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"item-1",
+		"digest-1",
+		"dos-1",
+		"重点速览",
+		"featured",
+		1,
+		true,
+		time.Date(2026, 4, 11, 8, 0, 0, 0, time.UTC),
+	).Error; err != nil {
+		t.Fatalf("create digest item: %v", err)
+	}
 
 	articlesReq := httptest.NewRequest(http.MethodGet, "/api/v1/articles", nil)
 	articlesRec := httptest.NewRecorder()
@@ -220,6 +299,30 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	}
 	if digestBody["publish_state"] != "published" {
 		t.Fatalf("want publish_state published got %#v", digestBody["publish_state"])
+	}
+	items, ok := digestBody["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("want digest items got %#v", digestBody["items"])
+	}
+
+	dossiersReq := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers", nil)
+	dossiersRec := httptest.NewRecorder()
+	router.ServeHTTP(dossiersRec, dossiersReq)
+	if dossiersRec.Code != http.StatusOK {
+		t.Fatalf("want dossiers 200 got %d body=%s", dossiersRec.Code, dossiersRec.Body.String())
+	}
+
+	var dossiersBody struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(dossiersRec.Body.Bytes(), &dossiersBody); err != nil {
+		t.Fatalf("unmarshal dossiers: %v", err)
+	}
+	if len(dossiersBody.Items) != 1 {
+		t.Fatalf("want 1 dossier got %d", len(dossiersBody.Items))
+	}
+	if dossiersBody.Items[0]["title_translated"] != "模型新闻" {
+		t.Fatalf("want dossier title 模型新闻 got %#v", dossiersBody.Items[0]["title_translated"])
 	}
 
 	profileReq := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/llm/active", nil)
