@@ -187,3 +187,43 @@ test('llm config page keeps actions disabled when config snapshot fails', async 
   expect(putSpy).not.toHaveBeenCalled();
   expect(postSpy).not.toHaveBeenCalled();
 });
+
+test('llm config page blocks save when replace mode has empty api key', async () => {
+  const putSpy = vi.fn();
+
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET');
+
+    if (url.endsWith('/api/v1/admin/configs') && method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          llm: {
+            base_url: 'https://llm.local/v1',
+            model: 'gpt-4.1-mini',
+            api_key: { is_set: true, masked_value: 'secr****' },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (url.endsWith('/api/v1/admin/configs/llm') && method === 'PUT') {
+      putSpy();
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response('not found', { status: 404 });
+  });
+
+  renderPage(<LLMConfigPage />);
+
+  await userEvent.click(await screen.findByText('替换密钥'));
+  await userEvent.click(screen.getByRole('button', { name: '保存配置' }));
+
+  expect(putSpy).not.toHaveBeenCalled();
+  expect(await screen.findByText('替换密钥时必须输入 API key。')).toBeInTheDocument();
+});

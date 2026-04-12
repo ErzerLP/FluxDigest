@@ -20,6 +20,7 @@ export function LLMConfigPage() {
   const testMutation = useTestLLMConfig();
   const [secretInput, setSecretInput] = useState<SecretInput>({ mode: 'keep' });
   const [testGuidance, setTestGuidance] = useState<string>();
+  const [saveGuidance, setSaveGuidance] = useState<string>();
 
   const currentConfig = configQuery.data?.llm;
   const configReady = configQuery.isSuccess;
@@ -42,6 +43,7 @@ export function LLMConfigPage() {
     });
     setSecretInput({ mode: currentConfig.api_key?.is_set ? 'keep' : 'replace', value: '' });
     setTestGuidance(undefined);
+    setSaveGuidance(undefined);
   }, [currentConfig, reset]);
 
   const saveMessage = useMemo(() => {
@@ -57,6 +59,11 @@ export function LLMConfigPage() {
       return;
     }
 
+    if (secretInput.mode === 'replace' && !secretInput.value?.trim()) {
+      setSaveGuidance('替换密钥时必须输入 API key。');
+      return;
+    }
+
     const payload: UpdateLLMConfigInput = {
       base_url: values.base_url,
       model: values.model,
@@ -66,6 +73,7 @@ export function LLMConfigPage() {
           : { mode: secretInput.mode },
     };
 
+    setSaveGuidance(undefined);
     saveMutation.mutate(payload);
   };
 
@@ -138,6 +146,7 @@ export function LLMConfigPage() {
             description={saveMutation.error instanceof Error ? saveMutation.error.message : '未知错误'}
           />
         ) : null}
+        {saveGuidance ? <Alert type="warning" showIcon message={saveGuidance} /> : null}
         {testMutation.isSuccess ? (
           <Alert
             type="info"
