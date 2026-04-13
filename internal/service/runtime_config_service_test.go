@@ -223,3 +223,81 @@ func TestRuntimeConfigServiceDecryptsEncryptedLLMSecret(t *testing.T) {
 		t.Fatalf("want decrypted api_key got %q", snapshot.LLM.APIKey)
 	}
 }
+
+func TestRuntimeConfigServiceIncludesMinifluxAndPublishOverlay(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeMiniflux: {
+			ProfileType: profile.TypeMiniflux,
+			Name:        "admin-miniflux",
+			Version:     3,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"https://db.miniflux.local","api_token":"db-miniflux-token","fetch_limit":120,"lookback_hours":48}`),
+		},
+		profile.TypePublish: {
+			ProfileType: profile.TypePublish,
+			Name:        "admin-publish",
+			Version:     4,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"provider":"halo","halo_base_url":"https://db.halo.local","halo_token":"db-halo-token","output_dir":"D:/db-output"}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.Miniflux.BaseURL = "https://env.miniflux.local"
+	defaults.Miniflux.AuthToken = "env-miniflux-token"
+	defaults.Publish.OutputDir = "D:/env-output"
+
+	svc := service.NewRuntimeConfigService(repo, defaults)
+	snapshot, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snapshot.Miniflux.BaseURL != "https://db.miniflux.local" {
+		t.Fatalf("want db miniflux base_url got %q", snapshot.Miniflux.BaseURL)
+	}
+	if snapshot.Miniflux.AuthToken != "db-miniflux-token" {
+		t.Fatalf("want db miniflux token got %q", snapshot.Miniflux.AuthToken)
+	}
+	if snapshot.Miniflux.FetchLimit != 120 || snapshot.Miniflux.LookbackHours != 48 {
+		t.Fatalf("unexpected miniflux snapshot %+v", snapshot.Miniflux)
+	}
+	if snapshot.Publish.Provider != "halo" {
+		t.Fatalf("want halo publish provider got %q", snapshot.Publish.Provider)
+	}
+	if snapshot.Publish.HaloBaseURL != "https://db.halo.local" || snapshot.Publish.HaloToken != "db-halo-token" {
+		t.Fatalf("unexpected publish halo config %+v", snapshot.Publish)
+	}
+	if snapshot.Publish.OutputDir != "D:/db-output" {
+		t.Fatalf("want db output_dir got %q", snapshot.Publish.OutputDir)
+	}
+}
+
+func TestRuntimeConfigServiceTreatsDefaultPublishSeedAsFallbackForEnvMarkdownExport(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypePublish: {
+			ProfileType: profile.TypePublish,
+			Name:        "default-publish",
+			Version:     1,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"provider":"halo","halo_base_url":"","halo_token":"","output_dir":""}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.Publish.OutputDir = "D:/env-output"
+
+	svc := service.NewRuntimeConfigService(repo, defaults)
+	snapshot, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snapshot.Publish.Provider != "markdown_export" {
+		t.Fatalf("want markdown_export provider got %q", snapshot.Publish.Provider)
+	}
+	if snapshot.Publish.OutputDir != "D:/env-output" {
+		t.Fatalf("want env output_dir got %q", snapshot.Publish.OutputDir)
+	}
+	if snapshot.Publish.HaloBaseURL != "" || snapshot.Publish.HaloToken != "" {
+		t.Fatalf("default publish seed should not force halo config %+v", snapshot.Publish)
+	}
+}

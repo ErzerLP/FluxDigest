@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"rss-platform/internal/config"
 	"rss-platform/internal/domain/profile"
 	"rss-platform/internal/security"
 )
@@ -27,13 +28,14 @@ var errUnsupportedPublishProvider = errors.New("unsupported publish provider")
 
 // AdminConfigService 负责读取与更新管理员配置。
 type AdminConfigService struct {
-	repo   adminConfigProfileRepo
-	cipher secretValueCipher
+	repo     adminConfigProfileRepo
+	cipher   secretValueCipher
+	defaults *config.Config
 }
 
 // NewAdminConfigService 创建 AdminConfigService。
-func NewAdminConfigService(repo adminConfigProfileRepo, cipher secretValueCipher) *AdminConfigService {
-	return &AdminConfigService{repo: repo, cipher: cipher}
+func NewAdminConfigService(repo adminConfigProfileRepo, cipher secretValueCipher, defaults *config.Config) *AdminConfigService {
+	return &AdminConfigService{repo: repo, cipher: cipher, defaults: defaults}
 }
 
 type SecretMode string
@@ -121,15 +123,15 @@ type UpdatePromptConfigInput struct {
 
 // GetSnapshot 返回管理员配置快照。
 func (s *AdminConfigService) GetSnapshot(ctx context.Context) (AdminConfigSnapshot, error) {
-	llmPayload, _, err := s.loadProfile(ctx, profile.TypeLLM)
+	llmPayload, llmProfile, err := s.loadProfile(ctx, profile.TypeLLM)
 	if err != nil {
 		return AdminConfigSnapshot{}, err
 	}
-	minifluxPayload, _, err := s.loadProfile(ctx, profile.TypeMiniflux)
+	minifluxPayload, minifluxProfile, err := s.loadProfile(ctx, profile.TypeMiniflux)
 	if err != nil {
 		return AdminConfigSnapshot{}, err
 	}
-	publishPayload, _, err := s.loadProfile(ctx, profile.TypePublish)
+	publishPayload, publishProfile, err := s.loadProfile(ctx, profile.TypePublish)
 	if err != nil {
 		return AdminConfigSnapshot{}, err
 	}
@@ -138,37 +140,24 @@ func (s *AdminConfigService) GetSnapshot(ctx context.Context) (AdminConfigSnapsh
 		return AdminConfigSnapshot{}, err
 	}
 
-	llmAPIKey, err := s.maskedSecretView(stringValue(llmPayload, "api_key"))
-	if err != nil {
-		return AdminConfigSnapshot{}, err
-	}
-	minifluxAPIToken, err := s.maskedSecretView(stringValue(minifluxPayload, "api_token"))
-	if err != nil {
-		return AdminConfigSnapshot{}, err
-	}
-	publishHaloToken, err := s.maskedSecretView(firstString(publishPayload, "halo_token", "auth_token"))
-	if err != nil {
-		return AdminConfigSnapshot{}, err
-	}
-
-	return AdminConfigSnapshot{
+	snapshot := AdminConfigSnapshot{
 		LLM: LLMConfigView{
-			BaseURL:   stringValue(llmPayload, "base_url"),
-			Model:     stringValue(llmPayload, "model"),
-			TimeoutMS: resolveLLMTimeoutMS(llmPayload, 0),
-			APIKey:    llmAPIKey,
+			BaseURL:   s.defaultLLMBaseURL(),
+			Model:     s.defaultLLMModel(),
+			TimeoutMS: s.defaultLLMTimeoutMS(),
+			APIKey:    maskSecret(s.defaultLLMAPIKey()),
 		},
 		Miniflux: MinifluxConfigView{
-			BaseURL:       stringValue(minifluxPayload, "base_url"),
-			FetchLimit:    intValue(minifluxPayload, "fetch_limit"),
-			LookbackHours: intValue(minifluxPayload, "lookback_hours"),
-			APIToken:      minifluxAPIToken,
+			BaseURL:       s.defaultMinifluxBaseURL(),
+			FetchLimit:    defaultMinifluxFetchLimit,
+			LookbackHours: defaultMinifluxLookbackHours,
+			APIToken:      maskSecret(s.defaultMinifluxAPIToken()),
 		},
 		Publish: PublishConfigView{
-			Provider:    resolvePublishProvider(publishPayload),
-			HaloBaseURL: firstString(publishPayload, "halo_base_url", "endpoint"),
-			HaloToken:   publishHaloToken,
-			OutputDir:   stringValue(publishPayload, "output_dir"),
+			Provider:    ResolvePublishProvider(s.defaultPublishChannel(), s.defaultPublishHaloBaseURL(), s.defaultPublishOutputDir()),
+			HaloBaseURL: s.defaultPublishHaloBaseURL(),
+			HaloToken:   maskSecret(s.defaultPublishHaloToken()),
+			OutputDir:   s.defaultPublishOutputDir(),
 		},
 		Prompts: PromptConfigView{
 			TargetLanguage:    stringValue(promptsPayload, "target_language"),
@@ -177,7 +166,69 @@ func (s *AdminConfigService) GetSnapshot(ctx context.Context) (AdminConfigSnapsh
 			DossierPrompt:     stringValue(promptsPayload, "dossier_prompt"),
 			DigestPrompt:      stringValue(promptsPayload, "digest_prompt"),
 		},
-	}, nil
+	}
+
+	if shouldUseExplicitAdminConfigOverride(llmProfile, "base_url", llmPayload) {
+		snapshot.LLM.BaseURL = stringValue(llmPayload, "base_url")
+	} else if value := strings.TrimSpace(stringValue(llmPayload, "base_url")); value != "" {
+		snapshot.LLM.BaseURL = value
+	}
+	if shouldUseExplicitAdminConfigOverride(llmProfile, "model", llmPayload) {
+		snapshot.LLM.Model = stringValue(llmPayload, "model")
+	} else if value := strings.TrimSpace(stringValue(llmPayload, "model")); value != "" {
+		snapshot.LLM.Model = value
+	}
+	if value := intValue(llmPayload, "timeout_ms"); value > 0 {
+		snapshot.LLM.TimeoutMS = normalizeAdminLLMTimeoutMS(value)
+	}
+	if view, ok, err := s.profileSecretView(llmProfile, llmPayload, "api_key"); err != nil {
+		return AdminConfigSnapshot{}, err
+	} else if ok {
+		snapshot.LLM.APIKey = view
+	}
+
+	if shouldUseExplicitAdminConfigOverride(minifluxProfile, "base_url", minifluxPayload) {
+		snapshot.Miniflux.BaseURL = stringValue(minifluxPayload, "base_url")
+	} else if value := strings.TrimSpace(stringValue(minifluxPayload, "base_url")); value != "" {
+		snapshot.Miniflux.BaseURL = value
+	}
+	if value := intValue(minifluxPayload, "fetch_limit"); value > 0 {
+		snapshot.Miniflux.FetchLimit = value
+	}
+	if value := intValue(minifluxPayload, "lookback_hours"); value > 0 {
+		snapshot.Miniflux.LookbackHours = value
+	}
+	if view, ok, err := s.profileSecretView(minifluxProfile, minifluxPayload, "api_token"); err != nil {
+		return AdminConfigSnapshot{}, err
+	} else if ok {
+		snapshot.Miniflux.APIToken = view
+	}
+
+	if shouldUseExplicitAdminConfigOverride(publishProfile, "provider", publishPayload) {
+		snapshot.Publish.Provider = stringValue(publishPayload, "provider")
+	} else if !isDefaultSeedProfile(publishProfile) {
+		if value := strings.TrimSpace(firstString(publishPayload, "provider", "target_type")); value != "" {
+			snapshot.Publish.Provider = value
+		}
+	}
+	if shouldUseExplicitAdminConfigOverride(publishProfile, "halo_base_url", publishPayload) {
+		snapshot.Publish.HaloBaseURL = stringValue(publishPayload, "halo_base_url")
+	} else if value := strings.TrimSpace(firstString(publishPayload, "halo_base_url", "endpoint")); value != "" {
+		snapshot.Publish.HaloBaseURL = value
+	}
+	if shouldUseExplicitAdminConfigOverride(publishProfile, "output_dir", publishPayload) {
+		snapshot.Publish.OutputDir = stringValue(publishPayload, "output_dir")
+	} else if value := strings.TrimSpace(stringValue(publishPayload, "output_dir")); value != "" {
+		snapshot.Publish.OutputDir = value
+	}
+	if view, ok, err := s.profileSecretView(publishProfile, publishPayload, "halo_token", "auth_token"); err != nil {
+		return AdminConfigSnapshot{}, err
+	} else if ok {
+		snapshot.Publish.HaloToken = view
+	}
+	snapshot.Publish.Provider = ResolvePublishProvider(snapshot.Publish.Provider, snapshot.Publish.HaloBaseURL, snapshot.Publish.OutputDir)
+
+	return snapshot, nil
 }
 
 // UpdateLLM 更新 LLM 配置。
@@ -196,7 +247,7 @@ func (s *AdminConfigService) UpdateLLM(ctx context.Context, input UpdateLLMConfi
 		return profile.Version{}, err
 	}
 
-	return s.saveProfile(ctx, profile.TypeLLM, "admin-llm", currentVersion, payload)
+	return s.saveProfile(ctx, profile.TypeLLM, "admin-llm", currentVersion.Version, payload)
 }
 
 func (s *AdminConfigService) UpdateMiniflux(ctx context.Context, input UpdateMinifluxConfigInput) (profile.Version, error) {
@@ -214,7 +265,7 @@ func (s *AdminConfigService) UpdateMiniflux(ctx context.Context, input UpdateMin
 		return profile.Version{}, err
 	}
 
-	return s.saveProfile(ctx, profile.TypeMiniflux, "admin-miniflux", currentVersion, payload)
+	return s.saveProfile(ctx, profile.TypeMiniflux, "admin-miniflux", currentVersion.Version, payload)
 }
 
 func (s *AdminConfigService) UpdatePublish(ctx context.Context, input UpdatePublishConfigInput) (profile.Version, error) {
@@ -240,7 +291,7 @@ func (s *AdminConfigService) UpdatePublish(ctx context.Context, input UpdatePubl
 		return profile.Version{}, err
 	}
 
-	return s.saveProfile(ctx, profile.TypePublish, "admin-publish", currentVersion, payload)
+	return s.saveProfile(ctx, profile.TypePublish, "admin-publish", currentVersion.Version, payload)
 }
 
 func (s *AdminConfigService) UpdatePrompts(ctx context.Context, input UpdatePromptConfigInput) (profile.Version, error) {
@@ -260,30 +311,30 @@ func (s *AdminConfigService) UpdatePrompts(ctx context.Context, input UpdateProm
 	payload["dossier_prompt"] = input.DossierPrompt
 	payload["digest_prompt"] = input.DigestPrompt
 
-	return s.saveProfile(ctx, profile.TypePrompts, "admin-prompts", currentVersion, payload)
+	return s.saveProfile(ctx, profile.TypePrompts, "admin-prompts", currentVersion.Version, payload)
 }
 
-func (s *AdminConfigService) loadProfile(ctx context.Context, profileType string) (map[string]any, int, error) {
+func (s *AdminConfigService) loadProfile(ctx context.Context, profileType string) (map[string]any, profile.Version, error) {
 	if s == nil || s.repo == nil {
-		return nil, 0, errAdminConfigRepoMissing
+		return nil, profile.Version{}, errAdminConfigRepoMissing
 	}
 
 	version, err := s.repo.GetActive(ctx, profileType)
 	if err != nil {
 		if errors.Is(err, profile.ErrNotFound) {
-			return map[string]any{}, 0, nil
+			return map[string]any{}, profile.Version{}, nil
 		}
-		return nil, 0, err
+		return nil, profile.Version{}, err
 	}
 
 	payload := map[string]any{}
 	if len(version.PayloadJSON) > 0 {
 		if err := json.Unmarshal(version.PayloadJSON, &payload); err != nil {
-			return nil, 0, err
+			return nil, profile.Version{}, err
 		}
 	}
 
-	return payload, version.Version, nil
+	return payload, version, nil
 }
 
 func (s *AdminConfigService) saveProfile(ctx context.Context, profileType, name string, currentVersion int, payload map[string]any) (profile.Version, error) {
@@ -500,4 +551,109 @@ func nextVersion(current int) int {
 		return 1
 	}
 	return current + 1
+}
+
+func (s *AdminConfigService) profileSecretView(version profile.Version, payload map[string]any, key string, legacyKeys ...string) (SecretView, bool, error) {
+	if shouldUseExplicitAdminConfigOverride(version, key, payload) {
+		view, err := s.maskedSecretView(stringValue(payload, key))
+		return view, true, err
+	}
+
+	if value := strings.TrimSpace(firstString(payload, append([]string{key}, legacyKeys...)...)); value != "" {
+		view, err := s.maskedSecretView(value)
+		return view, true, err
+	}
+
+	return SecretView{}, false, nil
+}
+
+func shouldUseExplicitAdminConfigOverride(version profile.Version, key string, payload map[string]any) bool {
+	if payload == nil {
+		return false
+	}
+	value, ok := payload[key]
+	if !ok {
+		return false
+	}
+	_, isString := value.(string)
+	if !isString {
+		return false
+	}
+	return !isDefaultSeedProfile(version)
+}
+
+func (s *AdminConfigService) defaultLLMBaseURL() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.LLM.BaseURL)
+}
+
+func (s *AdminConfigService) defaultLLMAPIKey() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.LLM.APIKey)
+}
+
+func (s *AdminConfigService) defaultLLMModel() string {
+	if s == nil || s.defaults == nil {
+		return "MiniMax-M2.7"
+	}
+	if strings.TrimSpace(s.defaults.LLM.Model) != "" {
+		return strings.TrimSpace(s.defaults.LLM.Model)
+	}
+	return "MiniMax-M2.7"
+}
+
+func (s *AdminConfigService) defaultLLMTimeoutMS() int {
+	if s == nil || s.defaults == nil {
+		return defaultAdminLLMTestTimeoutMS
+	}
+	if s.defaults.LLM.TimeoutMS > 0 {
+		return normalizeAdminLLMTimeoutMS(s.defaults.LLM.TimeoutMS)
+	}
+	return defaultAdminLLMTestTimeoutMS
+}
+
+func (s *AdminConfigService) defaultMinifluxBaseURL() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Miniflux.BaseURL)
+}
+
+func (s *AdminConfigService) defaultMinifluxAPIToken() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Miniflux.AuthToken)
+}
+
+func (s *AdminConfigService) defaultPublishChannel() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Publish.Channel)
+}
+
+func (s *AdminConfigService) defaultPublishHaloBaseURL() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Publish.HaloBaseURL)
+}
+
+func (s *AdminConfigService) defaultPublishHaloToken() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Publish.HaloToken)
+}
+
+func (s *AdminConfigService) defaultPublishOutputDir() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Publish.OutputDir)
 }

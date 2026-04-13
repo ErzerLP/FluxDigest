@@ -50,12 +50,6 @@ func main() {
 	if cfg.Database.DSN == "" {
 		log.Fatal("APP_DATABASE_DSN is required")
 	}
-	if cfg.Miniflux.BaseURL == "" {
-		log.Fatal("APP_MINIFLUX_BASE_URL is required")
-	}
-	if cfg.Miniflux.AuthToken == "" {
-		log.Fatal("APP_MINIFLUX_AUTH_TOKEN is required")
-	}
 
 	runtimeSvc, processingRunner, dbCloser, err := buildRuntimeService(context.Background(), cfg)
 	if err != nil {
@@ -122,9 +116,9 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 		_ = sqlDB.Close()
 		return nil, nil, nil, err
 	}
-	if runtimeSnapshot.LLM.Model == "" {
+	if err := validateRuntimeSnapshot(runtimeSnapshot); err != nil {
 		_ = sqlDB.Close()
-		return nil, nil, nil, errors.New("APP_LLM_MODEL is required")
+		return nil, nil, nil, err
 	}
 
 	invoker, err := buildChatModelInvoker(ctx, runtimeSnapshot.LLM, llmadapter.NewChatModel)
@@ -137,7 +131,7 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	digestRepo := postgres.NewDigestRepository(db)
 	dossierRepo := postgres.NewDossierRepository(db)
 	publishStateRepo := postgres.NewPublishStateRepository(db)
-	minifluxClient := miniflux.NewClient(cfg.Miniflux.BaseURL, cfg.Miniflux.AuthToken)
+	minifluxClient := miniflux.NewClient(runtimeSnapshot.Miniflux.BaseURL, runtimeSnapshot.Miniflux.AuthToken)
 	translationTemplate, analysisTemplate, dossierTemplate, digestTemplate, err := loadDefaultPromptTemplates()
 	if err != nil {
 		_ = sqlDB.Close()
@@ -156,7 +150,7 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 		digestTemplate = runtimeSnapshot.Prompts.DigestPrompt
 	}
 
-	publisher, err := buildPublisher(cfg)
+	publisher, err := buildPublisherFromRuntimeConfig(runtimeSnapshot.Publish)
 	if err != nil {
 		_ = sqlDB.Close()
 		return nil, nil, nil, err
@@ -464,53 +458,62 @@ func (r digestWorkflowRunner) Generate(ctx context.Context, candidates []domaind
 }
 
 func buildPublisher(cfg *config.Config) (adapterpublisher.Publisher, error) {
-	channel := normalizePublishChannel(cfg.Publish.Channel)
-	targetChannel := resolvePublishChannel(channel, cfg.Publish.HaloBaseURL, cfg.Publish.OutputDir)
+	runtimeCfg := service.PublishRuntimeConfig{
+		Provider:    cfg.Publish.Channel,
+		HaloBaseURL: cfg.Publish.HaloBaseURL,
+		HaloToken:   cfg.Publish.HaloToken,
+		OutputDir:   cfg.Publish.OutputDir,
+	}
+	return buildPublisherFromRuntimeConfig(runtimeCfg)
+}
 
+func buildPublisherFromRuntimeConfig(cfg service.PublishRuntimeConfig) (adapterpublisher.Publisher, error) {
+	targetChannel := service.ResolvePublishProvider(cfg.Provider, cfg.HaloBaseURL, cfg.OutputDir)
 	switch targetChannel {
 	case "halo":
 		return buildHaloPublisher(cfg)
 	case "markdown_export":
 		return buildMarkdownPublisher(cfg)
 	default:
-		return nil, fmt.Errorf("unsupported publish channel %q", channel)
+		return nil, fmt.Errorf("unsupported publish channel %q", strings.ToLower(strings.TrimSpace(cfg.Provider)))
 	}
 }
 
-func buildHaloPublisher(cfg *config.Config) (adapterpublisher.Publisher, error) {
-	baseURL := strings.TrimSpace(cfg.Publish.HaloBaseURL)
+func buildHaloPublisher(cfg service.PublishRuntimeConfig) (adapterpublisher.Publisher, error) {
+	baseURL := strings.TrimSpace(cfg.HaloBaseURL)
 	if baseURL == "" {
 		return nil, errors.New("APP_PUBLISH_HALO_BASE_URL is required for halo publisher")
 	}
-	token := strings.TrimSpace(cfg.Publish.HaloToken)
+	token := strings.TrimSpace(cfg.HaloToken)
 	if token == "" {
 		return nil, errors.New("APP_PUBLISH_HALO_TOKEN is required for halo publisher")
 	}
 	return halo.New(baseURL, token), nil
 }
 
-func buildMarkdownPublisher(cfg *config.Config) (adapterpublisher.Publisher, error) {
-	outputDir := strings.TrimSpace(cfg.Publish.OutputDir)
+func buildMarkdownPublisher(cfg service.PublishRuntimeConfig) (adapterpublisher.Publisher, error) {
+	outputDir := strings.TrimSpace(cfg.OutputDir)
 	if outputDir == "" {
 		return nil, errors.New("APP_PUBLISH_OUTPUT_DIR is required for markdown publisher")
 	}
 	return markdown_export.New(outputDir), nil
 }
 
-func resolvePublishChannel(channel, haloBaseURL, outputDir string) string {
-	switch channel {
-	case "halo":
-		return "halo"
-	case "markdown", "markdown_export":
-		return "markdown_export"
-	case "":
-		if strings.TrimSpace(haloBaseURL) != "" {
-			return "halo"
-		}
-		return "markdown_export"
-	default:
-		return channel
+func validateRuntimeSnapshot(snapshot service.RuntimeSnapshot) error {
+	if strings.TrimSpace(snapshot.LLM.Model) == "" {
+		return errors.New("APP_LLM_MODEL is required")
 	}
+	if strings.TrimSpace(snapshot.Miniflux.BaseURL) == "" {
+		return errors.New("APP_MINIFLUX_BASE_URL is required")
+	}
+	if strings.TrimSpace(snapshot.Miniflux.AuthToken) == "" {
+		return errors.New("APP_MINIFLUX_AUTH_TOKEN is required")
+	}
+	return nil
+}
+
+func resolvePublishChannel(channel, haloBaseURL, outputDir string) string {
+	return service.ResolvePublishProvider(channel, haloBaseURL, outputDir)
 }
 
 func normalizePublishChannel(channel string) string {

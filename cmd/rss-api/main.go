@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,9 +131,15 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 	dossierQueryService := service.NewDossierQueryService(db)
 	digestQueryService := service.NewDigestQueryService(db)
 	profileQueryService := service.NewProfileQueryService(db)
-	adminConfigService := service.NewAdminConfigService(profileRepo, adminSecretCipher)
+	runtimeConfigs := service.NewRuntimeConfigService(profileRepo, cfg)
+	adminConfigService := service.NewAdminConfigService(profileRepo, adminSecretCipher, cfg)
 	adminStatusService := service.NewAdminStatusServiceWithDigest(adminConfigService, jobRunRepo, digestQueryService)
-	adminTestService := service.NewAdminTestService(newAdminLLMConnectivityChecker(defaultAdminLLMTestTimeout), nil, nil, jobRunRepo)
+	adminTestService := service.NewAdminTestService(
+		newAdminLLMConnectivityChecker(defaultAdminLLMTestTimeout),
+		newAdminMinifluxConnectivityChecker(runtimeConfigs),
+		newAdminPublishConnectivityChecker(runtimeConfigs),
+		jobRunRepo,
+	)
 	jobRunQueryService := service.NewJobRunQueryService(db)
 	adminUserRepo := postgresrepo.NewAdminUserRepository(db)
 	adminSessionStore, adminSessionCloser := newAdminSessionStore(cfg)
@@ -151,7 +159,7 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 			Status:     adminStatusService,
 			Configs:    adminConfigService,
 			LLMUpdater: adminConfigService,
-			LLMTester:  adminTestService,
+			Tester:     adminTestService,
 			Jobs:       jobRunQueryService,
 		}),
 		api.WithAdminAuthDeps(handlers.AdminAuthDeps{
@@ -390,6 +398,141 @@ func clampAdminLLMTestTimeoutMS(timeoutMS int) int {
 		return maxAdminLLMTestTimeoutMS
 	}
 	return timeoutMS
+}
+
+type adminMinifluxRuntimeReader interface {
+	Miniflux(ctx context.Context) (service.MinifluxRuntimeConfig, error)
+}
+
+type adminPublishRuntimeReader interface {
+	Publish(ctx context.Context) (service.PublishRuntimeConfig, error)
+}
+
+type adminMinifluxConnectivityChecker struct {
+	configs    adminMinifluxRuntimeReader
+	httpClient *http.Client
+}
+
+func newAdminMinifluxConnectivityChecker(configs adminMinifluxRuntimeReader) adminMinifluxConnectivityChecker {
+	return adminMinifluxConnectivityChecker{
+		configs:    configs,
+		httpClient: &http.Client{Timeout: 20 * time.Second},
+	}
+}
+
+func (c adminMinifluxConnectivityChecker) Check(ctx context.Context) (time.Duration, error) {
+	startedAt := time.Now()
+
+	cfg, err := c.configs.Miniflux(ctx)
+	if err != nil {
+		return time.Since(startedAt), err
+	}
+	if strings.TrimSpace(cfg.BaseURL) == "" {
+		return time.Since(startedAt), errors.New("miniflux base url is required")
+	}
+	if strings.TrimSpace(cfg.AuthToken) == "" {
+		return time.Since(startedAt), errors.New("miniflux auth token is required")
+	}
+
+	httpClient := c.httpClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 20 * time.Second}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cfg.BaseURL, "/")+"/v1/entries?limit=1", nil)
+	if err != nil {
+		return time.Since(startedAt), err
+	}
+	req.Header.Set("X-Auth-Token", cfg.AuthToken)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return time.Since(startedAt), err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(resp.Body)
+		return time.Since(startedAt), fmt.Errorf("miniflux connectivity check failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	return time.Since(startedAt), nil
+}
+
+type adminPublishConnectivityChecker struct {
+	configs    adminPublishRuntimeReader
+	httpClient *http.Client
+}
+
+func newAdminPublishConnectivityChecker(configs adminPublishRuntimeReader) adminPublishConnectivityChecker {
+	return adminPublishConnectivityChecker{
+		configs:    configs,
+		httpClient: &http.Client{Timeout: 20 * time.Second},
+	}
+}
+
+func (c adminPublishConnectivityChecker) Check(ctx context.Context) (time.Duration, error) {
+	startedAt := time.Now()
+
+	cfg, err := c.configs.Publish(ctx)
+	if err != nil {
+		return time.Since(startedAt), err
+	}
+
+	switch service.ResolvePublishProvider(cfg.Provider, cfg.HaloBaseURL, cfg.OutputDir) {
+	case "halo":
+		return c.checkHalo(ctx, startedAt, cfg)
+	case "markdown_export":
+		return c.checkMarkdownExport(ctx, startedAt, cfg)
+	default:
+		return time.Since(startedAt), fmt.Errorf("unsupported publish provider %q", cfg.Provider)
+	}
+}
+
+func (c adminPublishConnectivityChecker) checkHalo(ctx context.Context, startedAt time.Time, cfg service.PublishRuntimeConfig) (time.Duration, error) {
+	if strings.TrimSpace(cfg.HaloBaseURL) == "" {
+		return time.Since(startedAt), errors.New("publish halo base url is required")
+	}
+	if strings.TrimSpace(cfg.HaloToken) == "" {
+		return time.Since(startedAt), errors.New("publish halo token is required")
+	}
+
+	httpClient := c.httpClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 20 * time.Second}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cfg.HaloBaseURL, "/")+"/apis/api.console.halo.run/v1alpha1/posts?page=1&size=1", nil)
+	if err != nil {
+		return time.Since(startedAt), err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.HaloToken)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return time.Since(startedAt), err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(resp.Body)
+		return time.Since(startedAt), fmt.Errorf("publish halo connectivity check failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	return time.Since(startedAt), nil
+}
+
+func (c adminPublishConnectivityChecker) checkMarkdownExport(ctx context.Context, startedAt time.Time, cfg service.PublishRuntimeConfig) (time.Duration, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Since(startedAt), err
+	}
+	if strings.TrimSpace(cfg.OutputDir) == "" {
+		return time.Since(startedAt), errors.New("publish output dir is required")
+	}
+	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
+		return time.Since(startedAt), err
+	}
+	return time.Since(startedAt), nil
 }
 
 type adminJobRunRepoAdapter struct {

@@ -7,6 +7,8 @@ import (
 )
 
 var errAdminTestLLMRequired = errors.New("llm connectivity checker is required")
+var errAdminTestMinifluxRequired = errors.New("miniflux connectivity checker is required")
+var errAdminTestPublishRequired = errors.New("publish connectivity checker is required")
 
 const defaultAdminLLMTestTimeoutMS = 30000
 const maxAdminLLMTimeoutMS = 2_147_483_647
@@ -67,6 +69,30 @@ func (s *AdminTestService) TestLLM(ctx context.Context, draft LLMTestDraft) (Con
 	draft.TimeoutMS = normalizeAdminLLMTimeoutMS(draft.TimeoutMS)
 
 	latency, checkErr := s.llm.Check(ctx, draft)
+	return s.finishConnectivityTest(ctx, "llm_test", latency, checkErr)
+}
+
+// TestMiniflux 运行 Miniflux 连通性测试并记录结果。
+func (s *AdminTestService) TestMiniflux(ctx context.Context) (ConnectivityTestResult, error) {
+	if s == nil || s.miniflux == nil {
+		return ConnectivityTestResult{}, errAdminTestMinifluxRequired
+	}
+
+	latency, checkErr := s.miniflux.Check(ctx)
+	return s.finishConnectivityTest(ctx, "miniflux_test", latency, checkErr)
+}
+
+// TestPublish 运行发布链路连通性测试并记录结果。
+func (s *AdminTestService) TestPublish(ctx context.Context) (ConnectivityTestResult, error) {
+	if s == nil || s.publisher == nil {
+		return ConnectivityTestResult{}, errAdminTestPublishRequired
+	}
+
+	latency, checkErr := s.publisher.Check(ctx)
+	return s.finishConnectivityTest(ctx, "publish_test", latency, checkErr)
+}
+
+func (s *AdminTestService) finishConnectivityTest(ctx context.Context, jobType string, latency time.Duration, checkErr error) (ConnectivityTestResult, error) {
 	result := ConnectivityTestResult{Status: "ok", Message: "connection succeeded", LatencyMS: latency.Milliseconds()}
 	if checkErr != nil {
 		result.Status = "error"
@@ -75,9 +101,9 @@ func (s *AdminTestService) TestLLM(ctx context.Context, draft LLMTestDraft) (Con
 
 	now := time.Now()
 	var persistErr error
-	if s.jobs != nil {
+	if s != nil && s.jobs != nil {
 		persistErr = s.jobs.Create(ctx, JobRunRecord{
-			JobType:     "llm_test",
+			JobType:     jobType,
 			Status:      result.Status,
 			Detail:      map[string]any{"message": result.Message, "latency_ms": result.LatencyMS},
 			RequestedAt: now,

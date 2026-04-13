@@ -21,6 +21,24 @@ type LLMRuntimeConfig struct {
 	Version        int      `json:"version"`
 }
 
+// MinifluxRuntimeConfig 表示 worker 使用的 Miniflux 运行时配置。
+type MinifluxRuntimeConfig struct {
+	BaseURL       string `json:"base_url"`
+	AuthToken     string `json:"auth_token"`
+	FetchLimit    int    `json:"fetch_limit"`
+	LookbackHours int    `json:"lookback_hours"`
+	Version       int    `json:"version"`
+}
+
+// PublishRuntimeConfig 表示 worker 使用的发布运行时配置。
+type PublishRuntimeConfig struct {
+	Provider    string `json:"provider"`
+	HaloBaseURL string `json:"halo_base_url"`
+	HaloToken   string `json:"halo_token"`
+	OutputDir   string `json:"output_dir"`
+	Version     int    `json:"version"`
+}
+
 // PromptRuntimeConfig 表示 worker 使用的 prompt 运行时配置。
 type PromptRuntimeConfig struct {
 	TranslationPrompt  string `json:"translation_prompt"`
@@ -43,6 +61,8 @@ type SchedulerRuntimeConfig struct {
 // RuntimeSnapshot 表示运行时配置快照。
 type RuntimeSnapshot struct {
 	LLM       LLMRuntimeConfig       `json:"llm"`
+	Miniflux  MinifluxRuntimeConfig  `json:"miniflux"`
+	Publish   PublishRuntimeConfig   `json:"publish"`
 	Prompts   PromptRuntimeConfig    `json:"prompts"`
 	Scheduler SchedulerRuntimeConfig `json:"scheduler"`
 }
@@ -59,6 +79,9 @@ type activeProfileSnapshot struct {
 	version profile.Version
 	payload map[string]any
 }
+
+const defaultMinifluxFetchLimit = 100
+const defaultMinifluxLookbackHours = 24
 
 // NewRuntimeConfigService 创建 RuntimeConfigService。
 func NewRuntimeConfigService(repo ProfileRepository, defaults *config.Config) *RuntimeConfigService {
@@ -78,6 +101,18 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 			Model:          s.defaultLLMModel(),
 			FallbackModels: s.defaultLLMFallbackModels(),
 			TimeoutMS:      s.defaultLLMTimeoutMS(),
+		},
+		Miniflux: MinifluxRuntimeConfig{
+			BaseURL:       s.defaultMinifluxBaseURL(),
+			AuthToken:     s.defaultMinifluxAuthToken(),
+			FetchLimit:    defaultMinifluxFetchLimit,
+			LookbackHours: defaultMinifluxLookbackHours,
+		},
+		Publish: PublishRuntimeConfig{
+			Provider:    ResolvePublishProvider(s.defaultPublishChannel(), s.defaultPublishHaloBaseURL(), s.defaultPublishOutputDir()),
+			HaloBaseURL: s.defaultPublishHaloBaseURL(),
+			HaloToken:   s.defaultPublishHaloToken(),
+			OutputDir:   s.defaultPublishOutputDir(),
 		},
 		Scheduler: defaultSchedulerRuntimeConfig(),
 	}
@@ -117,6 +152,73 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 	}
 	snapshot.LLM.Version = llmProfile.version.Version
 
+	minifluxProfile, err := s.activeProfile(ctx, profile.TypeMiniflux)
+	if err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	if s.shouldUseExplicitStringOverride(minifluxProfile.version, "base_url", minifluxProfile.payload) {
+		snapshot.Miniflux.BaseURL = stringValue(minifluxProfile.payload, "base_url")
+	} else if value := strings.TrimSpace(stringValue(minifluxProfile.payload, "base_url")); value != "" {
+		snapshot.Miniflux.BaseURL = value
+	}
+	if s.shouldUseExplicitStringOverride(minifluxProfile.version, "api_token", minifluxProfile.payload) {
+		value, err := s.resolveSecretString(stringValue(minifluxProfile.payload, "api_token"))
+		if err != nil {
+			return RuntimeSnapshot{}, err
+		}
+		snapshot.Miniflux.AuthToken = value
+	} else if value := strings.TrimSpace(stringValue(minifluxProfile.payload, "api_token")); value != "" {
+		resolved, err := s.resolveSecretString(value)
+		if err != nil {
+			return RuntimeSnapshot{}, err
+		}
+		snapshot.Miniflux.AuthToken = resolved
+	}
+	if value := intValue(minifluxProfile.payload, "fetch_limit"); value > 0 {
+		snapshot.Miniflux.FetchLimit = value
+	}
+	if value := intValue(minifluxProfile.payload, "lookback_hours"); value > 0 {
+		snapshot.Miniflux.LookbackHours = value
+	}
+	snapshot.Miniflux.Version = minifluxProfile.version.Version
+
+	publishProfile, err := s.activeProfile(ctx, profile.TypePublish)
+	if err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	if s.shouldUseExplicitStringOverride(publishProfile.version, "provider", publishProfile.payload) {
+		snapshot.Publish.Provider = stringValue(publishProfile.payload, "provider")
+	} else if !isDefaultSeedProfile(publishProfile.version) {
+		if value := strings.TrimSpace(firstString(publishProfile.payload, "provider", "target_type")); value != "" {
+			snapshot.Publish.Provider = value
+		}
+	}
+	if s.shouldUseExplicitStringOverride(publishProfile.version, "halo_base_url", publishProfile.payload) {
+		snapshot.Publish.HaloBaseURL = stringValue(publishProfile.payload, "halo_base_url")
+	} else if value := strings.TrimSpace(firstString(publishProfile.payload, "halo_base_url", "endpoint")); value != "" {
+		snapshot.Publish.HaloBaseURL = value
+	}
+	if s.shouldUseExplicitStringOverride(publishProfile.version, "halo_token", publishProfile.payload) {
+		value, err := s.resolveSecretString(firstString(publishProfile.payload, "halo_token", "auth_token"))
+		if err != nil {
+			return RuntimeSnapshot{}, err
+		}
+		snapshot.Publish.HaloToken = value
+	} else if value := strings.TrimSpace(firstString(publishProfile.payload, "halo_token", "auth_token")); value != "" {
+		resolved, err := s.resolveSecretString(value)
+		if err != nil {
+			return RuntimeSnapshot{}, err
+		}
+		snapshot.Publish.HaloToken = resolved
+	}
+	if s.shouldUseExplicitStringOverride(publishProfile.version, "output_dir", publishProfile.payload) {
+		snapshot.Publish.OutputDir = stringValue(publishProfile.payload, "output_dir")
+	} else if value := strings.TrimSpace(stringValue(publishProfile.payload, "output_dir")); value != "" {
+		snapshot.Publish.OutputDir = value
+	}
+	snapshot.Publish.Provider = ResolvePublishProvider(snapshot.Publish.Provider, snapshot.Publish.HaloBaseURL, snapshot.Publish.OutputDir)
+	snapshot.Publish.Version = publishProfile.version.Version
+
 	promptsProfile, err := s.activeProfile(ctx, profile.TypePrompts)
 	if err != nil {
 		return RuntimeSnapshot{}, err
@@ -154,6 +256,24 @@ func (s *RuntimeConfigService) LLM(ctx context.Context) (LLMRuntimeConfig, error
 		return LLMRuntimeConfig{}, err
 	}
 	return snapshot.LLM, nil
+}
+
+// Miniflux 返回 Miniflux 运行时配置。
+func (s *RuntimeConfigService) Miniflux(ctx context.Context) (MinifluxRuntimeConfig, error) {
+	snapshot, err := s.Snapshot(ctx)
+	if err != nil {
+		return MinifluxRuntimeConfig{}, err
+	}
+	return snapshot.Miniflux, nil
+}
+
+// Publish 返回发布运行时配置。
+func (s *RuntimeConfigService) Publish(ctx context.Context) (PublishRuntimeConfig, error) {
+	snapshot, err := s.Snapshot(ctx)
+	if err != nil {
+		return PublishRuntimeConfig{}, err
+	}
+	return snapshot.Publish, nil
 }
 
 // Scheduler 返回 scheduler 运行时配置。
@@ -228,6 +348,64 @@ func (s *RuntimeConfigService) defaultLLMTimeoutMS() int {
 		return s.defaults.LLM.TimeoutMS
 	}
 	return 30000
+}
+
+func (s *RuntimeConfigService) defaultMinifluxBaseURL() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Miniflux.BaseURL)
+}
+
+func (s *RuntimeConfigService) defaultMinifluxAuthToken() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Miniflux.AuthToken)
+}
+
+func (s *RuntimeConfigService) defaultPublishChannel() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Publish.Channel)
+}
+
+func (s *RuntimeConfigService) defaultPublishHaloBaseURL() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Publish.HaloBaseURL)
+}
+
+func (s *RuntimeConfigService) defaultPublishHaloToken() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Publish.HaloToken)
+}
+
+func (s *RuntimeConfigService) defaultPublishOutputDir() string {
+	if s == nil || s.defaults == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.defaults.Publish.OutputDir)
+}
+
+// ResolvePublishProvider 解析实际生效的发布器类型。
+func ResolvePublishProvider(provider, haloBaseURL, outputDir string) string {
+	if normalized, ok := normalizePublishProviderValue(provider); ok {
+		return normalized
+	}
+
+	if strings.TrimSpace(provider) == "" {
+		if strings.TrimSpace(haloBaseURL) != "" {
+			return "halo"
+		}
+		return "markdown_export"
+	}
+
+	return strings.ToLower(strings.TrimSpace(provider))
 }
 
 func defaultSchedulerRuntimeConfig() SchedulerRuntimeConfig {

@@ -44,6 +44,27 @@ func (s adminLLMUpdaterStub) UpdateLLM(_ context.Context, _ service.UpdateLLMCon
 	return s.version, nil
 }
 
+type adminConnectivityTesterStub struct {
+	llmResult      service.ConnectivityTestResult
+	llmErr         error
+	minifluxResult service.ConnectivityTestResult
+	minifluxErr    error
+	publishResult  service.ConnectivityTestResult
+	publishErr     error
+}
+
+func (s adminConnectivityTesterStub) TestLLM(_ context.Context, _ service.LLMTestDraft) (service.ConnectivityTestResult, error) {
+	return s.llmResult, s.llmErr
+}
+
+func (s adminConnectivityTesterStub) TestMiniflux(_ context.Context) (service.ConnectivityTestResult, error) {
+	return s.minifluxResult, s.minifluxErr
+}
+
+func (s adminConnectivityTesterStub) TestPublish(_ context.Context) (service.ConnectivityTestResult, error) {
+	return s.publishResult, s.publishErr
+}
+
 type adminJobReaderStub struct {
 	items []service.JobRunRecord
 	err   error
@@ -202,6 +223,48 @@ func TestAdminJobsRouteRejectsNonPositiveLimit(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminMinifluxTestRouteReturnsConnectivityJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
+		Tester: adminConnectivityTesterStub{
+			minifluxResult: service.ConnectivityTestResult{Status: "ok", Message: "connection succeeded", LatencyMS: 123},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/test/miniflux", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"ok"`)) {
+		t.Fatalf("unexpected body %s", rec.Body.String())
+	}
+}
+
+func TestAdminPublishTestRouteReturnsConnectivityJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
+		Tester: adminConnectivityTesterStub{
+			publishResult: service.ConnectivityTestResult{Status: "ok", Message: "connection succeeded", LatencyMS: 88},
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/test/publish", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"latency_ms":88`)) {
+		t.Fatalf("unexpected body %s", rec.Body.String())
 	}
 }
 

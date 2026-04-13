@@ -16,7 +16,7 @@ import (
 var errAdminStatusReaderRequired = errors.New("admin status reader is not configured")
 var errAdminConfigReaderRequired = errors.New("admin config reader is not configured")
 var errAdminLLMUpdaterRequired = errors.New("admin llm updater is not configured")
-var errAdminLLMTesterRequired = errors.New("admin llm tester is not configured")
+var errAdminConnectivityTesterRequired = errors.New("admin connectivity tester is not configured")
 var errAdminJobReaderRequired = errors.New("admin job reader is not configured")
 
 // AdminStatusReader 定义 dashboard 状态读取能力。
@@ -34,9 +34,11 @@ type AdminLLMUpdater interface {
 	UpdateLLM(ctx context.Context, input service.UpdateLLMConfigInput) (profile.Version, error)
 }
 
-// AdminLLMTester 定义管理员 LLM 连通性测试能力。
-type AdminLLMTester interface {
+// AdminConnectivityTester 定义管理员连通性测试能力。
+type AdminConnectivityTester interface {
 	TestLLM(ctx context.Context, draft service.LLMTestDraft) (service.ConnectivityTestResult, error)
+	TestMiniflux(ctx context.Context) (service.ConnectivityTestResult, error)
+	TestPublish(ctx context.Context) (service.ConnectivityTestResult, error)
 }
 
 // AdminJobReader 定义管理员作业列表读取能力。
@@ -49,7 +51,7 @@ type AdminDeps struct {
 	Status     AdminStatusReader
 	Configs    AdminConfigReader
 	LLMUpdater AdminLLMUpdater
-	LLMTester  AdminLLMTester
+	Tester     AdminConnectivityTester
 	Jobs       AdminJobReader
 }
 
@@ -116,8 +118,8 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 	})
 
 	admin.POST("/test/llm", func(c *gin.Context) {
-		if deps.LLMTester == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminLLMTesterRequired.Error()})
+		if deps.Tester == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConnectivityTesterRequired.Error()})
 			return
 		}
 
@@ -127,7 +129,37 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 			return
 		}
 
-		result, err := deps.LLMTester.TestLLM(c.Request.Context(), req)
+		result, err := deps.Tester.TestLLM(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
+			return
+		}
+
+		c.JSON(http.StatusOK, result)
+	})
+
+	admin.POST("/test/miniflux", func(c *gin.Context) {
+		if deps.Tester == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConnectivityTesterRequired.Error()})
+			return
+		}
+
+		result, err := deps.Tester.TestMiniflux(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
+			return
+		}
+
+		c.JSON(http.StatusOK, result)
+	})
+
+	admin.POST("/test/publish", func(c *gin.Context) {
+		if deps.Tester == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConnectivityTesterRequired.Error()})
+			return
+		}
+
+		result, err := deps.Tester.TestPublish(c.Request.Context())
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
 			return

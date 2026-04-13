@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -90,12 +91,22 @@ func (s *AdminStatusService) GetStatus(ctx context.Context) (AdminStatusView, er
 
 	latestRun := JobRunRecord{}
 	latestLLMTest := JobRunRecord{}
+	latestMinifluxTest := JobRunRecord{}
+	latestPublishTest := JobRunRecord{}
 	if s.jobs != nil {
 		latestRun, err = s.jobs.LatestByType(ctx, "daily_digest_run")
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return AdminStatusView{}, err
 		}
 		latestLLMTest, err = s.jobs.LatestByType(ctx, "llm_test")
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return AdminStatusView{}, err
+		}
+		latestMinifluxTest, err = s.jobs.LatestByType(ctx, "miniflux_test")
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return AdminStatusView{}, err
+		}
+		latestPublishTest, err = s.jobs.LatestByType(ctx, "publish_test")
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return AdminStatusView{}, err
 		}
@@ -110,6 +121,8 @@ func (s *AdminStatusService) GetStatus(ctx context.Context) (AdminStatusView, er
 	}
 
 	llmConfigured := snapshot.LLM.BaseURL != "" && snapshot.LLM.APIKey.IsSet
+	minifluxConfigured := snapshot.Miniflux.BaseURL != "" && snapshot.Miniflux.APIToken.IsSet
+	publisherConfigured := isPublisherConfigured(snapshot.Publish)
 
 	return AdminStatusView{
 		System: SystemStatusView{
@@ -123,6 +136,16 @@ func (s *AdminStatusService) GetStatus(ctx context.Context) (AdminStatusView, er
 				LastTestStatus: latestLLMTest.Status,
 				LastTestAt:     formatRFC3339(latestLLMTest.FinishedAt),
 			},
+			Miniflux: IntegrationState{
+				Configured:     minifluxConfigured,
+				LastTestStatus: latestMinifluxTest.Status,
+				LastTestAt:     formatRFC3339(latestMinifluxTest.FinishedAt),
+			},
+			Publisher: IntegrationState{
+				Configured:     publisherConfigured,
+				LastTestStatus: latestPublishTest.Status,
+				LastTestAt:     formatRFC3339(latestPublishTest.FinishedAt),
+			},
 		},
 		Runtime: RuntimeStatusView{
 			LatestDigestDate:   latestDigest.DigestDate,
@@ -130,6 +153,17 @@ func (s *AdminStatusService) GetStatus(ctx context.Context) (AdminStatusView, er
 			LatestJobStatus:    latestRun.Status,
 		},
 	}, nil
+}
+
+func isPublisherConfigured(view PublishConfigView) bool {
+	switch strings.ToLower(strings.TrimSpace(view.Provider)) {
+	case "halo":
+		return view.HaloBaseURL != "" && view.HaloToken.IsSet
+	case "markdown_export":
+		return view.OutputDir != ""
+	default:
+		return false
+	}
 }
 
 func formatRFC3339(value time.Time) string {

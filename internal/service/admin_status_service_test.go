@@ -83,6 +83,63 @@ func TestAdminStatusServiceBuildsDashboardState(t *testing.T) {
 	}
 }
 
+func TestAdminStatusServiceIncludesMinifluxAndPublisherConfig(t *testing.T) {
+	t.Run("halo publisher", func(t *testing.T) {
+		configs := adminConfigSnapshotStub{snapshot: service.AdminConfigSnapshot{
+			LLM: service.LLMConfigView{BaseURL: "https://llm.local/v1", APIKey: service.SecretView{IsSet: true}},
+			Miniflux: service.MinifluxConfigView{
+				BaseURL:  "https://miniflux.local",
+				APIToken: service.SecretView{IsSet: true},
+			},
+			Publish: service.PublishConfigView{
+				Provider:    "halo",
+				HaloBaseURL: "https://halo.local",
+				HaloToken:   service.SecretView{IsSet: true},
+			},
+		}}
+		jobs := jobRunRepoStub{latestByType: map[string]service.JobRunRecord{
+			"miniflux_test": {JobType: "miniflux_test", Status: "ok", FinishedAt: mustRFC3339("2026-04-11T18:30:00+08:00")},
+			"publish_test":  {JobType: "publish_test", Status: "ok", FinishedAt: mustRFC3339("2026-04-11T18:31:00+08:00")},
+		}}
+		svc := service.NewAdminStatusServiceWithDigest(configs, jobs, digestLatestStub{err: gorm.ErrRecordNotFound})
+
+		status, err := svc.GetStatus(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !status.Integrations.Miniflux.Configured {
+			t.Fatalf("expected miniflux configured, got %+v", status.Integrations.Miniflux)
+		}
+		if status.Integrations.Miniflux.LastTestStatus != "ok" {
+			t.Fatalf("want miniflux last test ok got %+v", status.Integrations.Miniflux)
+		}
+		if !status.Integrations.Publisher.Configured {
+			t.Fatalf("expected publisher configured, got %+v", status.Integrations.Publisher)
+		}
+		if status.Integrations.Publisher.LastTestStatus != "ok" {
+			t.Fatalf("want publish last test ok got %+v", status.Integrations.Publisher)
+		}
+	})
+
+	t.Run("markdown export publisher", func(t *testing.T) {
+		configs := adminConfigSnapshotStub{snapshot: service.AdminConfigSnapshot{
+			Publish: service.PublishConfigView{
+				Provider:  "markdown_export",
+				OutputDir: "D:/digests",
+			},
+		}}
+		svc := service.NewAdminStatusServiceWithDigest(configs, jobRunRepoStub{}, digestLatestStub{err: gorm.ErrRecordNotFound})
+
+		status, err := svc.GetStatus(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !status.Integrations.Publisher.Configured {
+			t.Fatalf("expected markdown export publisher configured, got %+v", status.Integrations.Publisher)
+		}
+	})
+}
+
 func TestAdminStatusServiceAllowsNotFound(t *testing.T) {
 	configs := adminConfigSnapshotStub{snapshot: service.AdminConfigSnapshot{LLM: service.LLMConfigView{BaseURL: "https://llm.local/v1", APIKey: service.SecretView{IsSet: true}}}}
 	svc := service.NewAdminStatusServiceWithDigest(configs, jobRunRepoStub{}, digestLatestStub{err: gorm.ErrRecordNotFound})

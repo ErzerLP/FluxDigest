@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -580,5 +582,74 @@ func TestNewAdminSecretCipherTrimsSecretKeyWhitespace(t *testing.T) {
 	}
 	if cipher == nil {
 		t.Fatal("want cipher created")
+	}
+}
+
+type adminRuntimeConfigReaderStub struct {
+	miniflux service.MinifluxRuntimeConfig
+	publish  service.PublishRuntimeConfig
+	err      error
+}
+
+func (s adminRuntimeConfigReaderStub) Miniflux(_ context.Context) (service.MinifluxRuntimeConfig, error) {
+	if s.err != nil {
+		return service.MinifluxRuntimeConfig{}, s.err
+	}
+	return s.miniflux, nil
+}
+
+func (s adminRuntimeConfigReaderStub) Publish(_ context.Context) (service.PublishRuntimeConfig, error) {
+	if s.err != nil {
+		return service.PublishRuntimeConfig{}, s.err
+	}
+	return s.publish, nil
+}
+
+func TestAdminPublishConnectivityCheckerUsesRuntimeConfigMarkdownExportSemantics(t *testing.T) {
+	outputDir := t.TempDir() + "/digests"
+	checker := newAdminPublishConnectivityChecker(adminRuntimeConfigReaderStub{
+		publish: service.PublishRuntimeConfig{
+			Provider:  "markdown_export",
+			OutputDir: outputDir,
+		},
+	})
+
+	latency, err := checker.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if latency < 0 {
+		t.Fatalf("want non-negative latency got %s", latency)
+	}
+	if _, err := os.Stat(outputDir); err != nil {
+		t.Fatalf("want output dir created, got %v", err)
+	}
+}
+
+func TestAdminMinifluxConnectivityCheckerUsesRuntimeConfig(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if r.Header.Get("X-Auth-Token") != "runtime-token" {
+			t.Fatalf("want runtime token header got %q", r.Header.Get("X-Auth-Token"))
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"entries":[]}`)
+	}))
+	defer server.Close()
+
+	checker := newAdminMinifluxConnectivityChecker(adminRuntimeConfigReaderStub{
+		miniflux: service.MinifluxRuntimeConfig{
+			BaseURL:   server.URL,
+			AuthToken: "runtime-token",
+		},
+	})
+
+	_, err := checker.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if gotPath != "/v1/entries" {
+		t.Fatalf("want /v1/entries got %q", gotPath)
 	}
 }

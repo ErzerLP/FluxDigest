@@ -486,6 +486,18 @@ func TestBuildPublisherUsesMarkdownExportWhenChannelEmptyWithoutHalo(t *testing.
 	}
 }
 
+func TestBuildPublisherFromRuntimeConfigUsesMarkdownExportWhenProviderEmptyWithoutHalo(t *testing.T) {
+	publisher, err := buildPublisherFromRuntimeConfig(service.PublishRuntimeConfig{
+		OutputDir: "data/output",
+	})
+	if err != nil {
+		t.Fatalf("buildPublisherFromRuntimeConfig() error = %v", err)
+	}
+	if publisher.Name() != "markdown_export" {
+		t.Fatalf("want markdown_export publisher got %q", publisher.Name())
+	}
+}
+
 func TestBuildPublisherRejectsDeprecatedLegacyAlias(t *testing.T) {
 	deprecatedAlias := strings.Join([]string{"ho", "lo"}, "")
 	cfg := &config.Config{}
@@ -499,6 +511,32 @@ func TestBuildPublisherRejectsDeprecatedLegacyAlias(t *testing.T) {
 	}
 	assertErrorContains(t, err, "unsupported publish channel")
 	assertErrorContains(t, err, `"`+deprecatedAlias+`"`)
+}
+
+func TestValidateRuntimeSnapshotRequiresResolvedMinifluxBaseURL(t *testing.T) {
+	err := validateRuntimeSnapshot(service.RuntimeSnapshot{
+		LLM:       service.LLMRuntimeConfig{Model: "MiniMax-M2.7"},
+		Miniflux:  service.MinifluxRuntimeConfig{AuthToken: "token"},
+		Publish:   service.PublishRuntimeConfig{Provider: "markdown_export", OutputDir: "data/output"},
+		Scheduler: service.SchedulerRuntimeConfig{Enabled: true},
+	})
+	if err == nil {
+		t.Fatal("want error for missing resolved miniflux base_url")
+	}
+	assertErrorContains(t, err, "APP_MINIFLUX_BASE_URL")
+}
+
+func TestValidateRuntimeSnapshotRequiresResolvedMinifluxAuthToken(t *testing.T) {
+	err := validateRuntimeSnapshot(service.RuntimeSnapshot{
+		LLM:       service.LLMRuntimeConfig{Model: "MiniMax-M2.7"},
+		Miniflux:  service.MinifluxRuntimeConfig{BaseURL: "https://miniflux.local"},
+		Publish:   service.PublishRuntimeConfig{Provider: "markdown_export", OutputDir: "data/output"},
+		Scheduler: service.SchedulerRuntimeConfig{Enabled: true},
+	})
+	if err == nil {
+		t.Fatal("want error for missing resolved miniflux auth token")
+	}
+	assertErrorContains(t, err, "APP_MINIFLUX_AUTH_TOKEN")
 }
 
 func assertErrorContains(t *testing.T, err error, want string) {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"rss-platform/internal/config"
 	"rss-platform/internal/domain/profile"
 	"rss-platform/internal/security"
 	"rss-platform/internal/service"
@@ -24,7 +25,9 @@ func newAdminConfigTestCipher(t *testing.T) *security.SecretCipher {
 
 func newAdminConfigService(t *testing.T, repo *profileRepoStub) *service.AdminConfigService {
 	t.Helper()
-	return service.NewAdminConfigService(repo, newAdminConfigTestCipher(t))
+	defaults := &config.Config{}
+	defaults.Security.SecretKey = adminConfigTestSecretKey
+	return service.NewAdminConfigService(repo, newAdminConfigTestCipher(t), defaults)
 }
 
 func decodePayload(t *testing.T, raw []byte) map[string]any {
@@ -237,6 +240,45 @@ func TestAdminConfigServiceUpdateMinifluxAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestAdminConfigServiceSnapshotFallsBackToDefaultsForMinifluxAndMarkdownExport(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypePublish: {
+			ProfileType: profile.TypePublish,
+			Name:        "default-publish",
+			Version:     1,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"provider":"halo","halo_base_url":"","halo_token":"","output_dir":""}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.Security.SecretKey = adminConfigTestSecretKey
+	defaults.Miniflux.BaseURL = "https://env.miniflux.local"
+	defaults.Miniflux.AuthToken = "env-miniflux-token"
+	defaults.Publish.OutputDir = "D:/env-output"
+
+	svc := service.NewAdminConfigService(repo, newAdminConfigTestCipher(t), defaults)
+	snapshot, err := svc.GetSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if snapshot.Miniflux.BaseURL != "https://env.miniflux.local" {
+		t.Fatalf("want env miniflux base_url got %q", snapshot.Miniflux.BaseURL)
+	}
+	if !snapshot.Miniflux.APIToken.IsSet {
+		t.Fatalf("want miniflux token configured got %+v", snapshot.Miniflux.APIToken)
+	}
+	if snapshot.Publish.Provider != "markdown_export" {
+		t.Fatalf("want markdown_export provider got %q", snapshot.Publish.Provider)
+	}
+	if snapshot.Publish.OutputDir != "D:/env-output" {
+		t.Fatalf("want env output_dir got %q", snapshot.Publish.OutputDir)
+	}
+	if snapshot.Publish.HaloBaseURL != "" || snapshot.Publish.HaloToken.IsSet {
+		t.Fatalf("default publish seed should not force halo config %+v", snapshot.Publish)
+	}
+}
+
 func TestAdminConfigServiceUpdatePublishNormalizesLegacyPayloadAndSnapshot(t *testing.T) {
 	repo := &profileRepoStub{active: map[string]profile.Version{
 		profile.TypePublish: {
@@ -298,7 +340,7 @@ func TestAdminConfigServiceSnapshotKeepsConfiguredStateWhenCipherMissing(t *test
 			PayloadJSON: []byte(`{"api_key":"` + encryptedValue(t, "secret-llm") + `"}`),
 		},
 	}}
-	svc := service.NewAdminConfigService(repo, nil)
+	svc := service.NewAdminConfigService(repo, nil, nil)
 
 	snapshot, err := svc.GetSnapshot(context.Background())
 	if err != nil {
