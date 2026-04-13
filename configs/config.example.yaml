@@ -20,11 +20,8 @@ llm:
     - mimo-v2-pro
   timeout_ms: 30000
 publish:
-  # 迁移到 Halo 官方发布器时，建议显式设置 channel=halo，避免被旧 output_dir 配置误导。
+  # 建议显式设置 channel=halo，避免被 output_dir 配置误导到 markdown_export。
   channel: halo
   halo_base_url: https://blog.local
   halo_token: change-me
-  # 兼容旧的 Holo 风格自定义发布端点，保留给非官方适配器使用。
-  holo_endpoint: https://blog.local/api/posts
-  holo_token: change-me
   output_dir: data/output

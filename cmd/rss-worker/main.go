@@ -18,7 +18,6 @@ import (
 	"rss-platform/internal/adapter/miniflux"
 	adapterpublisher "rss-platform/internal/adapter/publisher"
 	"rss-platform/internal/adapter/publisher/halo"
-	"rss-platform/internal/adapter/publisher/holo"
 	"rss-platform/internal/adapter/publisher/markdown_export"
 	"rss-platform/internal/agent/digest_planning"
 	appworker "rss-platform/internal/app/worker"
@@ -465,39 +464,57 @@ func (r digestWorkflowRunner) Generate(ctx context.Context, candidates []domaind
 }
 
 func buildPublisher(cfg *config.Config) (adapterpublisher.Publisher, error) {
-	channel := strings.ToLower(strings.TrimSpace(cfg.Publish.Channel))
+	channel := normalizePublishChannel(cfg.Publish.Channel)
+	targetChannel := resolvePublishChannel(channel, cfg.Publish.HaloBaseURL, cfg.Publish.OutputDir)
 
-	switch {
-	case channel == "" && cfg.Publish.HaloBaseURL != "":
-		if cfg.Publish.HaloToken == "" {
-			return nil, errors.New("APP_PUBLISH_HALO_TOKEN is required for halo publisher")
-		}
-		return halo.New(cfg.Publish.HaloBaseURL, cfg.Publish.HaloToken), nil
-	case channel == "" && cfg.Publish.HoloEndpoint != "":
-		return holo.New(cfg.Publish.HoloEndpoint, cfg.Publish.HoloToken), nil
-	case channel == "" && cfg.Publish.OutputDir != "":
-		return markdown_export.New(cfg.Publish.OutputDir), nil
-	case channel == "" || channel == "markdown" || channel == "markdown_export":
-		if cfg.Publish.OutputDir == "" {
-			return nil, errors.New("APP_PUBLISH_OUTPUT_DIR is required for markdown publisher")
-		}
-		return markdown_export.New(cfg.Publish.OutputDir), nil
-	case channel == "halo":
-		if cfg.Publish.HaloBaseURL == "" {
-			return nil, errors.New("APP_PUBLISH_HALO_BASE_URL is required for halo publisher")
-		}
-		if cfg.Publish.HaloToken == "" {
-			return nil, errors.New("APP_PUBLISH_HALO_TOKEN is required for halo publisher")
-		}
-		return halo.New(cfg.Publish.HaloBaseURL, cfg.Publish.HaloToken), nil
-	case channel == "holo":
-		if cfg.Publish.HoloEndpoint == "" {
-			return nil, errors.New("APP_PUBLISH_HOLO_ENDPOINT is required for holo publisher")
-		}
-		return holo.New(cfg.Publish.HoloEndpoint, cfg.Publish.HoloToken), nil
+	switch targetChannel {
+	case "halo":
+		return buildHaloPublisher(cfg)
+	case "markdown_export":
+		return buildMarkdownPublisher(cfg)
 	default:
-		return nil, fmt.Errorf("unsupported publish channel %q", cfg.Publish.Channel)
+		return nil, fmt.Errorf("unsupported publish channel %q", channel)
 	}
+}
+
+func buildHaloPublisher(cfg *config.Config) (adapterpublisher.Publisher, error) {
+	baseURL := strings.TrimSpace(cfg.Publish.HaloBaseURL)
+	if baseURL == "" {
+		return nil, errors.New("APP_PUBLISH_HALO_BASE_URL is required for halo publisher")
+	}
+	token := strings.TrimSpace(cfg.Publish.HaloToken)
+	if token == "" {
+		return nil, errors.New("APP_PUBLISH_HALO_TOKEN is required for halo publisher")
+	}
+	return halo.New(baseURL, token), nil
+}
+
+func buildMarkdownPublisher(cfg *config.Config) (adapterpublisher.Publisher, error) {
+	outputDir := strings.TrimSpace(cfg.Publish.OutputDir)
+	if outputDir == "" {
+		return nil, errors.New("APP_PUBLISH_OUTPUT_DIR is required for markdown publisher")
+	}
+	return markdown_export.New(outputDir), nil
+}
+
+func resolvePublishChannel(channel, haloBaseURL, outputDir string) string {
+	switch channel {
+	case "halo":
+		return "halo"
+	case "markdown", "markdown_export":
+		return "markdown_export"
+	case "":
+		if strings.TrimSpace(haloBaseURL) != "" {
+			return "halo"
+		}
+		return "markdown_export"
+	default:
+		return channel
+	}
+}
+
+func normalizePublishChannel(channel string) string {
+	return strings.ToLower(strings.TrimSpace(channel))
 }
 
 func shanghaiLocation() *time.Location {

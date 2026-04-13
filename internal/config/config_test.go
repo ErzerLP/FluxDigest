@@ -105,7 +105,8 @@ func TestLoadReadsMinifluxLLMAndPublishConfig(t *testing.T) {
 	t.Setenv("APP_LLM_TIMEOUT_MS", "45000")
 	t.Setenv("APP_PUBLISH_HALO_BASE_URL", "https://halo.local")
 	t.Setenv("APP_PUBLISH_HALO_TOKEN", "halo-token")
-	t.Setenv("APP_PUBLISH_HOLO_ENDPOINT", "https://blog.local/api/posts")
+	t.Setenv("APP_PUBLISH_CHANNEL", "halo")
+	t.Setenv("APP_PUBLISH_OUTPUT_DIR", "data/output")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -132,14 +133,17 @@ func TestLoadReadsMinifluxLLMAndPublishConfig(t *testing.T) {
 	if cfg.LLM.TimeoutMS != 45000 {
 		t.Fatalf("unexpected llm timeout %d", cfg.LLM.TimeoutMS)
 	}
-	if cfg.Publish.HoloEndpoint != "https://blog.local/api/posts" {
-		t.Fatalf("unexpected publish endpoint %q", cfg.Publish.HoloEndpoint)
-	}
 	if cfg.Publish.HaloBaseURL != "https://halo.local" {
 		t.Fatalf("unexpected halo base url %q", cfg.Publish.HaloBaseURL)
 	}
 	if cfg.Publish.HaloToken != "halo-token" {
 		t.Fatalf("unexpected halo token %q", cfg.Publish.HaloToken)
+	}
+	if cfg.Publish.Channel != "halo" {
+		t.Fatalf("unexpected publish channel %q", cfg.Publish.Channel)
+	}
+	if cfg.Publish.OutputDir != "data/output" {
+		t.Fatalf("unexpected output dir %q", cfg.Publish.OutputDir)
 	}
 }
 

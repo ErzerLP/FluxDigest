@@ -16,10 +16,10 @@ func TestPublishStateRepositoryUpsertSuggestion(t *testing.T) {
 
 	repo := postgres.NewPublishStateRepository(db)
 	ctx := context.Background()
-	if err := repo.Upsert(ctx, postgres.ArticlePublishStateRecord{DossierID: "dos-1", State: "suggested", DecisionNote: "high score", PublishChannel: "holo"}); err != nil {
+	if err := repo.Upsert(ctx, postgres.ArticlePublishStateRecord{DossierID: "dos-1", State: "suggested", DecisionNote: "high score", PublishChannel: "halo"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Upsert(ctx, postgres.ArticlePublishStateRecord{DossierID: "dos-1", State: "ignored", DecisionNote: "manual skip", PublishChannel: "holo"}); err != nil {
+	if err := repo.Upsert(ctx, postgres.ArticlePublishStateRecord{DossierID: "dos-1", State: "ignored", DecisionNote: "manual skip", PublishChannel: "halo"}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -39,12 +39,10 @@ type Config struct {
 		TimeoutMS      int      `yaml:"timeout_ms"`
 	} `yaml:"llm"`
 	Publish struct {
-		HaloBaseURL  string `yaml:"halo_base_url"`
-		HaloToken    string `yaml:"halo_token"`
-		HoloEndpoint string `yaml:"holo_endpoint"`
-		HoloToken    string `yaml:"holo_token"`
-		Channel      string `yaml:"channel"`
-		OutputDir    string `yaml:"output_dir"`
+		HaloBaseURL string `yaml:"halo_base_url"`
+		HaloToken   string `yaml:"halo_token"`
+		Channel     string `yaml:"channel"`
+		OutputDir   string `yaml:"output_dir"`
 	} `yaml:"publish"`
 }
 
@@ -121,12 +119,6 @@ func loadFromYAML(cfg *Config) error {
 	if fromFile.LLM.TimeoutMS > 0 {
 		cfg.LLM.TimeoutMS = fromFile.LLM.TimeoutMS
 	}
-	if fromFile.Publish.HoloEndpoint != "" {
-		cfg.Publish.HoloEndpoint = fromFile.Publish.HoloEndpoint
-	}
-	if fromFile.Publish.HoloToken != "" {
-		cfg.Publish.HoloToken = fromFile.Publish.HoloToken
-	}
 	if fromFile.Publish.HaloBaseURL != "" {
 		cfg.Publish.HaloBaseURL = fromFile.Publish.HaloBaseURL
 	}
@@ -201,12 +193,6 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if value := os.Getenv("APP_PUBLISH_HALO_TOKEN"); value != "" {
 		cfg.Publish.HaloToken = value
-	}
-	if value := os.Getenv("APP_PUBLISH_HOLO_ENDPOINT"); value != "" {
-		cfg.Publish.HoloEndpoint = value
-	}
-	if value := os.Getenv("APP_PUBLISH_HOLO_TOKEN"); value != "" {
-		cfg.Publish.HoloToken = value
 	}
 	if value := os.Getenv("APP_PUBLISH_CHANNEL"); value != "" {
 		cfg.Publish.Channel = value

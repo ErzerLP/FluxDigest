@@ -54,7 +54,7 @@ func (s *publishStateRepoStub) Upsert(_ context.Context, input postgres.ArticleP
 }
 
 func TestDossierServiceMaterializeStoresNormalizedSuggestionAndPublishState(t *testing.T) {
-	builder := dossierBuilderStub{out: dossier.ArticleDossier{TitleTranslated: "模型新闻", SummaryPolished: "润色摘要", CoreSummary: "核心总结", KeyPoints: []string{"k1", "k2"}, TopicCategory: "AI", ImportanceScore: 0.91, RecommendationReason: "具备长期影响", ReadingValue: "适合持续关注", PriorityLevel: "high", ContentPolishedMarkdown: "## 正文", AnalysisLongformMarkdown: "## 分析", DebatePoints: []string{"争议点"}, PublishSuggestion: "suggested", SuggestionReason: "高价值", SuggestedChannels: []string{"holo"}}}
+	builder := dossierBuilderStub{out: dossier.ArticleDossier{TitleTranslated: "模型新闻", SummaryPolished: "润色摘要", CoreSummary: "核心总结", KeyPoints: []string{"k1", "k2"}, TopicCategory: "AI", ImportanceScore: 0.91, RecommendationReason: "具备长期影响", ReadingValue: "适合持续关注", PriorityLevel: "high", ContentPolishedMarkdown: "## 正文", AnalysisLongformMarkdown: "## 分析", DebatePoints: []string{"争议点"}, PublishSuggestion: "suggested", SuggestionReason: "高价值", SuggestedChannels: []string{"halo"}}}
 	dossiers := &dossierRepoStub{}
 	publishStates := &publishStateRepoStub{}
 	svc := service.NewDossierService(builder, dossiers, publishStates)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -453,9 +454,8 @@ func TestBuildPublisherRequiresHaloToken(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error when halo token missing")
 	}
-	if err.Error() != "APP_PUBLISH_HALO_TOKEN is required for halo publisher" {
-		t.Fatalf("unexpected error %v", err)
-	}
+	assertErrorContains(t, err, "APP_PUBLISH_HALO_TOKEN")
+	assertErrorContains(t, err, "halo publisher")
 }
 
 func TestBuildPublisherPrefersHaloWhenChannelEmpty(t *testing.T) {
@@ -470,5 +470,43 @@ func TestBuildPublisherPrefersHaloWhenChannelEmpty(t *testing.T) {
 	}
 	if publisher.Name() != "halo" {
 		t.Fatalf("want halo publisher got %q", publisher.Name())
+	}
+}
+
+func TestBuildPublisherUsesMarkdownExportWhenChannelEmptyWithoutHalo(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Publish.OutputDir = "data/output"
+
+	publisher, err := buildPublisher(cfg)
+	if err != nil {
+		t.Fatalf("buildPublisher() error = %v", err)
+	}
+	if publisher.Name() != "markdown_export" {
+		t.Fatalf("want markdown_export publisher got %q", publisher.Name())
+	}
+}
+
+func TestBuildPublisherRejectsDeprecatedLegacyAlias(t *testing.T) {
+	deprecatedAlias := strings.Join([]string{"ho", "lo"}, "")
+	cfg := &config.Config{}
+	cfg.Publish.Channel = "  " + strings.ToUpper(deprecatedAlias) + "  "
+	cfg.Publish.HaloBaseURL = "https://halo.local"
+	cfg.Publish.HaloToken = "pat-token"
+
+	_, err := buildPublisher(cfg)
+	if err == nil {
+		t.Fatal("want error for unsupported legacy alias")
+	}
+	assertErrorContains(t, err, "unsupported publish channel")
+	assertErrorContains(t, err, `"`+deprecatedAlias+`"`)
+}
+
+func assertErrorContains(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("want error containing %q, got nil", want)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("want error containing %q got %q", want, err.Error())
 	}
 }

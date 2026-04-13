@@ -110,7 +110,7 @@ func TestDossierBuilderBuildAcceptsPublishSuggestionBool(t *testing.T) {
 }
 
 func TestDossierBuilderBuildAcceptsFlexibleListFields(t *testing.T) {
-	chat := &dossierChatStub{response: "```json\n{\"key_points\":\"- 要点一\\n- 要点二\",\"debate_points\":\"- 观点一\\n- 观点二\",\"suggested_channels\":{\"holo\":\"primary, backup\",\"blog\":\"secondary\"},\"suggested_tags\":[\"AI\",[\"LLM\",\"RSS\"]],\"suggested_categories\":\"技术, 资讯\"}\n```"}
+	chat := &dossierChatStub{response: "```json\n{\"key_points\":\"- 要点一\\n- 要点二\",\"debate_points\":\"- 观点一\\n- 观点二\",\"suggested_channels\":{\"halo\":\"primary, backup\",\"blog\":\"secondary\"},\"suggested_tags\":[\"AI\",[\"LLM\",\"RSS\"]],\"suggested_categories\":\"技术, 资讯\"}\n```"}
 	builder := llm.NewDossierBuilderFromTemplateText(chat, "生成 dossier")
 
 	out, err := builder.Build(context.Background(), llm.DossierBuildInput{
@@ -126,7 +126,7 @@ func TestDossierBuilderBuildAcceptsFlexibleListFields(t *testing.T) {
 	if len(out.KeyPoints) != 2 || out.KeyPoints[0] != "要点一" || out.KeyPoints[1] != "要点二" {
 		t.Fatalf("want normalized key points got %#v", out.KeyPoints)
 	}
-	if len(out.SuggestedChannels) != 2 || out.SuggestedChannels[0] != "blog: secondary" || out.SuggestedChannels[1] != "holo: primary, backup" {
+	if len(out.SuggestedChannels) != 2 || out.SuggestedChannels[0] != "blog: secondary" || out.SuggestedChannels[1] != "halo: primary, backup" {
 		t.Fatalf("want normalized suggested channels got %#v", out.SuggestedChannels)
 	}
 	if len(out.SuggestedTags) != 3 || out.SuggestedTags[0] != "AI" || out.SuggestedTags[1] != "LLM" || out.SuggestedTags[2] != "RSS" {

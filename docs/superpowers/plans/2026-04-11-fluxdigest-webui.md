@@ -140,7 +140,7 @@ func (s *ProfileService) SeedDefaults(ctx context.Context) error {
 		{profileType: profile.TypeLLM, name: "default-llm", payload: map[string]any{"base_url": "", "model": "gpt-4.1-mini", "timeout_ms": 30000, "is_enabled": true}},
 		{profileType: profile.TypeMiniflux, name: "default-miniflux", payload: map[string]any{"base_url": "", "api_token": "", "fetch_limit": 100, "lookback_hours": 24, "is_enabled": true}},
 		{profileType: profile.TypePrompts, name: "default-prompts", payload: map[string]any{"target_language": "zh-CN", "translation_prompt": "", "analysis_prompt": "", "digest_prompt": "", "is_enabled": true}},
-		{profileType: profile.TypePublish, name: "default-publish", payload: map[string]any{"target_type": "holo", "endpoint": "", "auth_token": "", "content_format": "markdown", "is_enabled": true}},
+		{profileType: profile.TypePublish, name: "default-publish", payload: map[string]any{"target_type": "halo", "endpoint": "", "auth_token": "", "content_format": "markdown", "is_enabled": true}},
 		{profileType: profile.TypeScheduler, name: "default-scheduler", payload: map[string]any{"schedule_enabled": true, "schedule_time": "07:00", "timezone": "Asia/Shanghai"}},
 	}
 	for _, def := range defaults {
@@ -864,3 +864,4 @@ Expected: PASS
 git add internal/app/api/router.go internal/app/api/router_test.go deployments/docker/api.Dockerfile deployments/compose/docker-compose.yml scripts/smoke-compose.ps1
 git commit -m "feat: ship webui with api image"
 ```
+

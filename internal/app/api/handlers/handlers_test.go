@@ -240,7 +240,7 @@ func TestRegisterDossierRoutesExposeNormalizedPublishSemantics(t *testing.T) {
 		ID:             "pub-legacy",
 		DossierID:      "dos-legacy",
 		State:          "suggested",
-		PublishChannel: "holo",
+		PublishChannel: "halo",
 		RemoteURL:      "https://example.com/posts/legacy",
 		UpdatedAt:      time.Date(2026, 4, 13, 8, 30, 0, 0, time.UTC),
 	}).Error; err != nil {
