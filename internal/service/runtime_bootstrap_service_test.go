@@ -9,7 +9,7 @@ import (
 )
 
 type bootstrapState struct {
-	locked             bool
+	lockHeld           *bool
 	lockCalls          int
 	migrateCalls       int
 	seedCalls          int
@@ -30,9 +30,12 @@ func (s *bootstrapMigratorStub) WithLock(ctx context.Context, run func(context.C
 		return s.state.lockErr
 	}
 
-	s.state.locked = true
+	if s.state.lockHeld == nil {
+		s.state.lockHeld = new(bool)
+	}
+	*s.state.lockHeld = true
 	defer func() {
-		s.state.locked = false
+		*s.state.lockHeld = false
 	}()
 
 	return run(ctx)
@@ -40,7 +43,7 @@ func (s *bootstrapMigratorStub) WithLock(ctx context.Context, run func(context.C
 
 func (s *bootstrapMigratorStub) Migrate(_ context.Context) error {
 	s.state.migrateCalls++
-	if !s.state.locked {
+	if s.state.lockHeld == nil || !*s.state.lockHeld {
 		s.state.migrateOutsideLock = true
 	}
 	return s.state.migrateErr
@@ -52,14 +55,15 @@ type bootstrapSeederStub struct {
 
 func (s *bootstrapSeederStub) SeedDefaults(_ context.Context) error {
 	s.state.seedCalls++
-	if !s.state.locked {
+	if s.state.lockHeld == nil || !*s.state.lockHeld {
 		s.state.seedOutsideLock = true
 	}
 	return s.state.seedErr
 }
 
 func TestBootstrapServiceRunsMigratorAndSeedsDefaultsWithinLock(t *testing.T) {
-	state := &bootstrapState{}
+	lockHeld := false
+	state := &bootstrapState{lockHeld: &lockHeld}
 	svc := service.NewRuntimeBootstrapService(
 		&bootstrapMigratorStub{state: state},
 		&bootstrapSeederStub{state: state},
@@ -85,16 +89,45 @@ func TestBootstrapServiceRunsMigratorAndSeedsDefaultsWithinLock(t *testing.T) {
 	}
 }
 
+func TestBootstrapServiceRunsAllSeeders(t *testing.T) {
+	lockHeld := false
+	stateA := &bootstrapState{lockHeld: &lockHeld}
+	stateB := &bootstrapState{lockHeld: &lockHeld}
+	svc := service.NewRuntimeBootstrapService(
+		&bootstrapMigratorStub{state: stateA},
+		&bootstrapSeederStub{state: stateA},
+		&bootstrapSeederStub{state: stateB},
+	)
+
+	if err := svc.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if stateA.seedCalls != 1 {
+		t.Fatalf("want first seeder called once got %d", stateA.seedCalls)
+	}
+	if stateB.seedCalls != 1 {
+		t.Fatalf("want second seeder called once got %d", stateB.seedCalls)
+	}
+	if stateA.seedOutsideLock {
+		t.Fatal("first seeder ran outside lock")
+	}
+	if stateB.seedOutsideLock {
+		t.Fatal("second seeder ran outside lock")
+	}
+}
+
 func TestBootstrapServiceDoesNotSeedWhenMigrateFails(t *testing.T) {
-	state := &bootstrapState{migrateErr: errors.New("migrate failed")}
+	lockHeld := false
+	errMigrateFailed := errors.New("migrate failed")
+	state := &bootstrapState{lockHeld: &lockHeld, migrateErr: errMigrateFailed}
 	svc := service.NewRuntimeBootstrapService(
 		&bootstrapMigratorStub{state: state},
 		&bootstrapSeederStub{state: state},
 	)
 
 	err := svc.Ensure(context.Background())
-	if err == nil || err.Error() != "migrate failed" {
-		t.Fatalf("want migrate failed got %v", err)
+	if !errors.Is(err, errMigrateFailed) {
+		t.Fatalf("want migrate error wrapped got %v", err)
 	}
 	if state.seedCalls != 0 {
 		t.Fatalf("want no seed call got %d", state.seedCalls)
@@ -102,15 +135,17 @@ func TestBootstrapServiceDoesNotSeedWhenMigrateFails(t *testing.T) {
 }
 
 func TestBootstrapServiceReturnsSeedError(t *testing.T) {
-	state := &bootstrapState{seedErr: errors.New("seed failed")}
+	lockHeld := false
+	errSeedFailed := errors.New("seed failed")
+	state := &bootstrapState{lockHeld: &lockHeld, seedErr: errSeedFailed}
 	svc := service.NewRuntimeBootstrapService(
 		&bootstrapMigratorStub{state: state},
 		&bootstrapSeederStub{state: state},
 	)
 
 	err := svc.Ensure(context.Background())
-	if err == nil || err.Error() != "seed failed" {
-		t.Fatalf("want seed failed got %v", err)
+	if !errors.Is(err, errSeedFailed) {
+		t.Fatalf("want seed error wrapped got %v", err)
 	}
 	if state.migrateCalls != 1 {
 		t.Fatalf("want 1 migrate call got %d", state.migrateCalls)

@@ -164,6 +164,7 @@ func ensureRuntimeState(ctx context.Context, db *gorm.DB) error {
 	bootstrap := service.NewRuntimeBootstrapService(
 		postgresrepo.NewMigrator(sqlDB, migrationsDir),
 		service.NewProfileService(postgresrepo.NewProfileRepository(db)),
+		service.NewAdminUserService(postgresrepo.NewAdminUserRepository(db)),
 	)
 
 	return bootstrap.Ensure(ctx)

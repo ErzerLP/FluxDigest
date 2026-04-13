@@ -13,13 +13,13 @@ type DefaultsSeeder interface {
 
 type RuntimeBootstrapService struct {
 	migrator BootstrapMigrator
-	seeder   DefaultsSeeder
+	seeders  []DefaultsSeeder
 }
 
-func NewRuntimeBootstrapService(migrator BootstrapMigrator, seeder DefaultsSeeder) *RuntimeBootstrapService {
+func NewRuntimeBootstrapService(migrator BootstrapMigrator, seeders ...DefaultsSeeder) *RuntimeBootstrapService {
 	return &RuntimeBootstrapService{
 		migrator: migrator,
-		seeder:   seeder,
+		seeders:  seeders,
 	}
 }
 
@@ -29,6 +29,15 @@ func (s *RuntimeBootstrapService) Ensure(ctx context.Context) error {
 			return err
 		}
 
-		return s.seeder.SeedDefaults(ctx)
+		for _, seeder := range s.seeders {
+			if seeder == nil {
+				continue
+			}
+			if err := seeder.SeedDefaults(ctx); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 }
