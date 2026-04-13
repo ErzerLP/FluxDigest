@@ -15,7 +15,7 @@ import (
 
 var errAdminStatusReaderRequired = errors.New("admin status reader is not configured")
 var errAdminConfigReaderRequired = errors.New("admin config reader is not configured")
-var errAdminLLMUpdaterRequired = errors.New("admin llm updater is not configured")
+var errAdminConfigUpdaterRequired = errors.New("admin config updater is not configured")
 var errAdminConnectivityTesterRequired = errors.New("admin connectivity tester is not configured")
 var errAdminJobReaderRequired = errors.New("admin job reader is not configured")
 
@@ -29,9 +29,12 @@ type AdminConfigReader interface {
 	GetSnapshot(ctx context.Context) (service.AdminConfigSnapshot, error)
 }
 
-// AdminLLMUpdater 定义管理员 LLM 配置更新能力。
-type AdminLLMUpdater interface {
+// AdminConfigUpdater 定义管理员配置更新能力。
+type AdminConfigUpdater interface {
 	UpdateLLM(ctx context.Context, input service.UpdateLLMConfigInput) (profile.Version, error)
+	UpdateMiniflux(ctx context.Context, input service.UpdateMinifluxConfigInput) (profile.Version, error)
+	UpdatePublish(ctx context.Context, input service.UpdatePublishConfigInput) (profile.Version, error)
+	UpdatePrompts(ctx context.Context, input service.UpdatePromptConfigInput) (profile.Version, error)
 }
 
 // AdminConnectivityTester 定义管理员连通性测试能力。
@@ -48,11 +51,11 @@ type AdminJobReader interface {
 
 // AdminDeps 定义 admin handler 依赖。
 type AdminDeps struct {
-	Status     AdminStatusReader
-	Configs    AdminConfigReader
-	LLMUpdater AdminLLMUpdater
-	Tester     AdminConnectivityTester
-	Jobs       AdminJobReader
+	Status        AdminStatusReader
+	Configs       AdminConfigReader
+	ConfigUpdater AdminConfigUpdater
+	Tester        AdminConnectivityTester
+	Jobs          AdminJobReader
 }
 
 type profileVersionResponse struct {
@@ -97,8 +100,8 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 	})
 
 	admin.PUT("/configs/llm", func(c *gin.Context) {
-		if deps.LLMUpdater == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminLLMUpdaterRequired.Error()})
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
 			return
 		}
 
@@ -108,7 +111,70 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 			return
 		}
 
-		version, err := deps.LLMUpdater.UpdateLLM(c.Request.Context(), req)
+		version, err := deps.ConfigUpdater.UpdateLLM(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
+	})
+
+	admin.PUT("/configs/miniflux", func(c *gin.Context) {
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
+			return
+		}
+
+		var req service.UpdateMinifluxConfigInput
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		version, err := deps.ConfigUpdater.UpdateMiniflux(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
+	})
+
+	admin.PUT("/configs/publish", func(c *gin.Context) {
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
+			return
+		}
+
+		var req service.UpdatePublishConfigInput
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		version, err := deps.ConfigUpdater.UpdatePublish(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
+	})
+
+	admin.PUT("/configs/prompts", func(c *gin.Context) {
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
+			return
+		}
+
+		var req service.UpdatePromptConfigInput
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		version, err := deps.ConfigUpdater.UpdatePrompts(c.Request.Context(), req)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

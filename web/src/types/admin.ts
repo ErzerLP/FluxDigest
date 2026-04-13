@@ -14,11 +14,33 @@ export interface LLMConfigView {
   api_key?: SecretView;
 }
 
+export interface MinifluxConfigView {
+  base_url?: string;
+  fetch_limit?: number;
+  lookback_hours?: number;
+  api_token?: SecretView;
+}
+
+export interface PublishConfigView {
+  provider?: string;
+  halo_base_url?: string;
+  halo_token?: SecretView;
+  output_dir?: string;
+}
+
+export interface PromptConfigView {
+  target_language?: string;
+  translation_prompt?: string;
+  analysis_prompt?: string;
+  dossier_prompt?: string;
+  digest_prompt?: string;
+}
+
 export interface AdminConfigSnapshot {
   llm?: LLMConfigView;
-  miniflux?: RecordValue;
-  prompts?: RecordValue;
-  publish?: RecordValue;
+  miniflux?: MinifluxConfigView;
+  publish?: PublishConfigView;
+  prompts?: PromptConfigView;
 }
 
 export interface IntegrationState {
@@ -56,6 +78,28 @@ export interface UpdateLLMConfigInput {
   model?: string;
   timeout_ms?: number;
   api_key?: SecretInput;
+}
+
+export interface UpdateMinifluxConfigInput {
+  base_url?: string;
+  fetch_limit?: number;
+  lookback_hours?: number;
+  api_token?: SecretInput;
+}
+
+export interface UpdatePublishConfigInput {
+  provider?: string;
+  halo_base_url?: string;
+  halo_token?: SecretInput;
+  output_dir?: string;
+}
+
+export interface UpdatePromptConfigInput {
+  target_language?: string;
+  translation_prompt?: string;
+  analysis_prompt?: string;
+  dossier_prompt?: string;
+  digest_prompt?: string;
 }
 
 export interface LLMTestDraft {

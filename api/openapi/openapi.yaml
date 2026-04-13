@@ -160,7 +160,73 @@ paths:
         '500':
           description: Update failed
         '503':
-          description: Admin llm updater is not configured
+          description: Admin config updater is not configured
+  /api/v1/admin/configs/miniflux:
+    put:
+      summary: Update Miniflux admin config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMinifluxConfigInput'
+      responses:
+        '200':
+          description: Created active profile version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Update failed
+        '503':
+          description: Admin config updater is not configured
+  /api/v1/admin/configs/publish:
+    put:
+      summary: Update publish admin config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePublishConfigInput'
+      responses:
+        '200':
+          description: Created active profile version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Update failed
+        '503':
+          description: Admin config updater is not configured
+  /api/v1/admin/configs/prompts:
+    put:
+      summary: Update prompts admin config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePromptConfigInput'
+      responses:
+        '200':
+          description: Created active profile version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Update failed
+        '503':
+          description: Admin config updater is not configured
   /api/v1/admin/test/llm:
     post:
       summary: Test LLM connectivity
@@ -488,13 +554,56 @@ components:
           type: string
         model:
           type: string
+        timeout_ms:
+          type: integer
         api_key:
           $ref: '#/components/schemas/SecretView'
+    MinifluxConfigView:
+      type: object
+      properties:
+        base_url:
+          type: string
+        fetch_limit:
+          type: integer
+        lookback_hours:
+          type: integer
+        api_token:
+          $ref: '#/components/schemas/SecretView'
+    PublishConfigView:
+      type: object
+      properties:
+        provider:
+          type: string
+        halo_base_url:
+          type: string
+        halo_token:
+          $ref: '#/components/schemas/SecretView'
+        output_dir:
+          type: string
+    PromptConfigView:
+      type: object
+      properties:
+        target_language:
+          type: string
+        translation_prompt:
+          type: string
+        analysis_prompt:
+          type: string
+        dossier_prompt:
+          type: string
+        digest_prompt:
+          type: string
     AdminConfigSnapshot:
       type: object
       properties:
         llm:
           $ref: '#/components/schemas/LLMConfigView'
+        miniflux:
+          $ref: '#/components/schemas/MinifluxConfigView'
+        publish:
+          $ref: '#/components/schemas/PublishConfigView'
+        prompts:
+          $ref: '#/components/schemas/PromptConfigView'
     IntegrationState:
       type: object
       properties:
@@ -551,8 +660,45 @@ components:
           type: string
         model:
           type: string
+        timeout_ms:
+          type: integer
         api_key:
           $ref: '#/components/schemas/SecretInput'
+    UpdateMinifluxConfigInput:
+      type: object
+      properties:
+        base_url:
+          type: string
+        fetch_limit:
+          type: integer
+        lookback_hours:
+          type: integer
+        api_token:
+          $ref: '#/components/schemas/SecretInput'
+    UpdatePublishConfigInput:
+      type: object
+      properties:
+        provider:
+          type: string
+        halo_base_url:
+          type: string
+        halo_token:
+          $ref: '#/components/schemas/SecretInput'
+        output_dir:
+          type: string
+    UpdatePromptConfigInput:
+      type: object
+      properties:
+        target_language:
+          type: string
+        translation_prompt:
+          type: string
+        analysis_prompt:
+          type: string
+        dossier_prompt:
+          type: string
+        digest_prompt:
+          type: string
     LLMTestDraft:
       type: object
       properties:
@@ -562,6 +708,8 @@ components:
           type: string
         api_key:
           type: string
+        timeout_ms:
+          type: integer
     ConnectivityTestResult:
       type: object
       properties:

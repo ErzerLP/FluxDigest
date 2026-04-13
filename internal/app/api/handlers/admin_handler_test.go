@@ -32,16 +32,55 @@ func (s adminStatusReaderStub) GetStatus(_ context.Context) (service.AdminStatus
 	return s.view, nil
 }
 
-type adminLLMUpdaterStub struct {
-	version profile.Version
-	err     error
+type adminConfigReaderStub struct {
+	snapshot service.AdminConfigSnapshot
+	err      error
 }
 
-func (s adminLLMUpdaterStub) UpdateLLM(_ context.Context, _ service.UpdateLLMConfigInput) (profile.Version, error) {
+func (s adminConfigReaderStub) GetSnapshot(_ context.Context) (service.AdminConfigSnapshot, error) {
 	if s.err != nil {
-		return profile.Version{}, s.err
+		return service.AdminConfigSnapshot{}, s.err
 	}
-	return s.version, nil
+	return s.snapshot, nil
+}
+
+type adminConfigUpdaterStub struct {
+	llmVersion      profile.Version
+	llmErr          error
+	minifluxVersion profile.Version
+	minifluxErr     error
+	publishVersion  profile.Version
+	publishErr      error
+	promptsVersion  profile.Version
+	promptsErr      error
+}
+
+func (s adminConfigUpdaterStub) UpdateLLM(_ context.Context, _ service.UpdateLLMConfigInput) (profile.Version, error) {
+	if s.llmErr != nil {
+		return profile.Version{}, s.llmErr
+	}
+	return s.llmVersion, nil
+}
+
+func (s adminConfigUpdaterStub) UpdateMiniflux(_ context.Context, _ service.UpdateMinifluxConfigInput) (profile.Version, error) {
+	if s.minifluxErr != nil {
+		return profile.Version{}, s.minifluxErr
+	}
+	return s.minifluxVersion, nil
+}
+
+func (s adminConfigUpdaterStub) UpdatePublish(_ context.Context, _ service.UpdatePublishConfigInput) (profile.Version, error) {
+	if s.publishErr != nil {
+		return profile.Version{}, s.publishErr
+	}
+	return s.publishVersion, nil
+}
+
+func (s adminConfigUpdaterStub) UpdatePrompts(_ context.Context, _ service.UpdatePromptConfigInput) (profile.Version, error) {
+	if s.promptsErr != nil {
+		return profile.Version{}, s.promptsErr
+	}
+	return s.promptsVersion, nil
 }
 
 type adminConnectivityTesterStub struct {
@@ -165,7 +204,7 @@ func TestAdminUpdateLLMRouteReturnsProfileVersionContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
-		LLMUpdater: adminLLMUpdaterStub{version: profile.Version{
+		ConfigUpdater: adminConfigUpdaterStub{llmVersion: profile.Version{
 			ID:          "ver-1",
 			ProfileType: profile.TypeLLM,
 			Name:        "admin-llm",
@@ -207,6 +246,164 @@ func TestAdminUpdateLLMRouteReturnsProfileVersionContract(t *testing.T) {
 	}
 	if _, ok := body["payload_json"]; ok {
 		t.Fatalf("did not expect payload_json key in response: %#v", body)
+	}
+}
+
+func TestAdminConfigsRouteReturnsFullSnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
+		Configs: adminConfigReaderStub{snapshot: service.AdminConfigSnapshot{
+			LLM: service.LLMConfigView{
+				BaseURL:   "https://llm.local/v1",
+				Model:     "gpt-4.1",
+				TimeoutMS: 60000,
+				APIKey:    service.SecretView{IsSet: true, MaskedValue: "abcd****"},
+			},
+			Miniflux: service.MinifluxConfigView{
+				BaseURL:       "https://miniflux.local",
+				FetchLimit:    30,
+				LookbackHours: 24,
+				APIToken:      service.SecretView{IsSet: true, MaskedValue: "mflt****"},
+			},
+			Publish: service.PublishConfigView{
+				Provider:    "halo",
+				HaloBaseURL: "https://halo.local",
+				HaloToken:   service.SecretView{IsSet: true, MaskedValue: "halo****"},
+				OutputDir:   "/tmp/publish",
+			},
+			Prompts: service.PromptConfigView{
+				TargetLanguage:    "zh-CN",
+				TranslationPrompt: "translate",
+				AnalysisPrompt:    "analyze",
+				DossierPrompt:     "dossier",
+				DigestPrompt:      "digest",
+			},
+		}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/configs", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	for _, key := range []string{"llm", "miniflux", "publish", "prompts"} {
+		if _, ok := body[key]; !ok {
+			t.Fatalf("want snapshot key %q in response: %#v", key, body)
+		}
+	}
+}
+
+func TestAdminUpdateMinifluxRouteReturnsProfileVersionContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
+		ConfigUpdater: adminConfigUpdaterStub{minifluxVersion: profile.Version{
+			ID:          "ver-miniflux-1",
+			ProfileType: profile.TypeMiniflux,
+			Name:        "admin-miniflux",
+			Version:     2,
+			IsActive:    true,
+		}},
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/api/v1/admin/configs/miniflux",
+		bytes.NewBufferString(`{"base_url":"https://miniflux.local","fetch_limit":30,"lookback_hours":48,"api_token":{"mode":"keep"}}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body["profile_type"] != profile.TypeMiniflux {
+		t.Fatalf("want profile_type %q got %#v", profile.TypeMiniflux, body["profile_type"])
+	}
+}
+
+func TestAdminUpdatePublishRouteReturnsProfileVersionContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
+		ConfigUpdater: adminConfigUpdaterStub{publishVersion: profile.Version{
+			ID:          "ver-publish-1",
+			ProfileType: profile.TypePublish,
+			Name:        "admin-publish",
+			Version:     4,
+			IsActive:    true,
+		}},
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/api/v1/admin/configs/publish",
+		bytes.NewBufferString(`{"provider":"halo","halo_base_url":"https://halo.local","halo_token":{"mode":"keep"},"output_dir":"/tmp/publish"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body["profile_type"] != profile.TypePublish {
+		t.Fatalf("want profile_type %q got %#v", profile.TypePublish, body["profile_type"])
+	}
+}
+
+func TestAdminUpdatePromptsRouteReturnsProfileVersionContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
+		ConfigUpdater: adminConfigUpdaterStub{promptsVersion: profile.Version{
+			ID:          "ver-prompts-1",
+			ProfileType: profile.TypePrompts,
+			Name:        "admin-prompts",
+			Version:     5,
+			IsActive:    true,
+		}},
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/api/v1/admin/configs/prompts",
+		bytes.NewBufferString(`{"target_language":"zh-CN","translation_prompt":"translate","analysis_prompt":"analyze","dossier_prompt":"dossier","digest_prompt":"digest"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body["profile_type"] != profile.TypePrompts {
+		t.Fatalf("want profile_type %q got %#v", profile.TypePrompts, body["profile_type"])
 	}
 }
 

@@ -156,11 +156,11 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 		api.WithProfileReader(profileQueryService),
 		api.WithJobTrigger(service.NewJobService(dailyQueue, articleQueue, metrics)),
 		api.WithAdminDeps(handlers.AdminDeps{
-			Status:     adminStatusService,
-			Configs:    adminConfigService,
-			LLMUpdater: adminConfigService,
-			Tester:     adminTestService,
-			Jobs:       jobRunQueryService,
+			Status:        adminStatusService,
+			Configs:       adminConfigService,
+			ConfigUpdater: adminConfigService,
+			Tester:        adminTestService,
+			Jobs:          jobRunQueryService,
 		}),
 		api.WithAdminAuthDeps(handlers.AdminAuthDeps{
 			Auth:        adminAuthService,
