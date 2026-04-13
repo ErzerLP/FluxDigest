@@ -20,6 +20,7 @@ ENV_EXAMPLE="${SYSTEMD_TEMPLATE_DIR}/fluxdigest.env.example"
 HEALTH_ENDPOINT="${HEALTH_ENDPOINT:-/healthz}"
 HEALTH_RETRY="${HEALTH_RETRY:-30}"
 HEALTH_INTERVAL="${HEALTH_INTERVAL:-2}"
+RELEASE_RETENTION="${RELEASE_RETENTION:-5}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 
 usage() {
@@ -32,6 +33,7 @@ Options:
   --env-file <path>      共享 env 文件路径，默认 /etc/fluxdigest/fluxdigest.env
   --service-dir <path>   systemd unit 目录，默认 /etc/systemd/system
   --source-dir <path>    源码目录，默认脚本上两级目录
+  --release-retention <n> 保留最近 n 个 release（0 表示关闭清理），默认 5
   --skip-build           跳过 go/npm 构建，直接安装已有产物
   -h, --help             显示帮助
 EOF
@@ -72,6 +74,10 @@ while [[ $# -gt 0 ]]; do
       SYSTEMD_TEMPLATE_DIR="${SOURCE_DIR}/deploy/systemd"
       shift 2
       ;;
+    --release-retention)
+      RELEASE_RETENTION="$2"
+      shift 2
+      ;;
     --skip-build)
       SKIP_BUILD=1
       shift
@@ -87,6 +93,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ ! "${RELEASE_RETENTION}" =~ ^[0-9]+$ ]]; then
+  echo "--release-retention 必须是非负整数，当前值: ${RELEASE_RETENTION}" >&2
+  exit 1
+fi
 
 if [[ -z "${APP_USER}" ]]; then
   APP_USER="$(default_app_user)"
@@ -113,6 +124,10 @@ need_cmd systemctl
 need_cmd install
 need_cmd sed
 need_cmd curl
+need_cmd find
+need_cmd sort
+need_cmd readlink
+need_cmd grep
 
 if [[ "${SKIP_BUILD}" != "1" ]]; then
   need_cmd go
@@ -152,14 +167,8 @@ ensure_app_user() {
     return
   fi
 
-  if [[ -n "${SUDO}" ]]; then
-    echo "==> 创建运行用户 ${APP_USER}"
-    ${SUDO} useradd --system --user-group --create-home --shell /usr/sbin/nologin "${APP_USER}"
-    return
-  fi
-
-  echo "运行用户 ${APP_USER} 不存在，且当前没有 sudo 权限创建" >&2
-  exit 1
+  echo "==> 创建运行用户 ${APP_USER}"
+  ${SUDO} useradd --system --user-group --create-home --shell /usr/sbin/nologin "${APP_USER}"
 }
 
 ensure_env_file() {
@@ -216,7 +225,10 @@ ensure_env_file() {
 }
 
 load_env_file() {
-  local runtime_env="${TMP_DIR}/runtime.env"
+  local runtime_env
+  runtime_env="$(mktemp)"
+  trap 'rm -f "${runtime_env}"; trap - RETURN' RETURN
+
   ${SUDO} cat "${ENV_FILE}" > "${runtime_env}"
   set -a
   # shellcheck disable=SC1090
@@ -251,6 +263,10 @@ install_release() {
 
   ${SUDO} cp -R "${SOURCE_DIR}/migrations/." "${RELEASE_DIR}/migrations/"
   ${SUDO} chown -R "${APP_USER}:${APP_GROUP}" "${RELEASE_DIR}"
+}
+
+switch_current_release() {
+  echo "==> 切换 current -> ${RELEASE_DIR}"
   ${SUDO} ln -sfn "${RELEASE_DIR}" "${CURRENT_DIR}"
 }
 
@@ -291,9 +307,13 @@ render_unit() {
 
 reload_and_restart() {
   echo "==> 重新加载并重启 systemd 服务"
-  ${SUDO} systemctl daemon-reload
-  ${SUDO} systemctl enable --now fluxdigest-api.service fluxdigest-worker.service fluxdigest-scheduler.service
-  ${SUDO} systemctl restart fluxdigest-api.service fluxdigest-worker.service fluxdigest-scheduler.service
+  ${SUDO} systemctl daemon-reload || return 1
+  ${SUDO} systemctl enable --now fluxdigest-api.service fluxdigest-worker.service fluxdigest-scheduler.service || return 1
+  ${SUDO} systemctl restart fluxdigest-api.service fluxdigest-worker.service fluxdigest-scheduler.service || return 1
+}
+
+print_service_status() {
+  ${SUDO} systemctl status --no-pager fluxdigest-api.service fluxdigest-worker.service fluxdigest-scheduler.service >&2 || true
 }
 
 health_check() {
@@ -304,17 +324,94 @@ health_check() {
   for ((i = 1; i <= HEALTH_RETRY; i++)); do
     if curl --silent --show-error --fail "${url}" >/dev/null; then
       echo "health check ok"
-      return
+      return 0
     fi
     sleep "${HEALTH_INTERVAL}"
   done
 
   echo "health check failed: ${url}" >&2
-  ${SUDO} systemctl status --no-pager fluxdigest-api.service >&2 || true
-  exit 1
+  print_service_status
+  return 1
+}
+
+recover_from_failed_deploy() {
+  local failed_stage="$1"
+  local previous_current="$2"
+
+  echo "!! 部署失败阶段: ${failed_stage}" >&2
+
+  if [[ -n "${previous_current}" ]] && ${SUDO} test -d "${previous_current}"; then
+    echo "!! 尝试恢复 current 到部署前 release: ${previous_current}" >&2
+    ${SUDO} ln -sfn "${previous_current}" "${CURRENT_DIR}" || true
+    echo "!! 尝试恢复后重载并重启服务" >&2
+    ${SUDO} systemctl daemon-reload || true
+    ${SUDO} systemctl restart fluxdigest-api.service fluxdigest-worker.service fluxdigest-scheduler.service || true
+  else
+    echo "!! 未检测到可恢复的旧 current（可能是首次部署），无法执行回滚恢复" >&2
+  fi
+
+  echo "!! 当前服务状态（失败路径）" >&2
+  print_service_status
+}
+
+cleanup_old_releases() {
+  if [[ "${RELEASE_RETENTION}" -eq 0 ]]; then
+    echo "==> 已关闭旧 release 清理"
+    return
+  fi
+
+  local releases_dir="${APP_ROOT}/releases"
+  if ! ${SUDO} test -d "${releases_dir}"; then
+    return
+  fi
+
+  local current_target=""
+  if ${SUDO} test -L "${CURRENT_DIR}"; then
+    current_target="$(${SUDO} readlink -f "${CURRENT_DIR}" 2>/dev/null || true)"
+  fi
+
+  local -a release_ids=()
+  mapfile -t release_ids < <(
+    ${SUDO} find "${releases_dir}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+      | grep -E '^[0-9]{14}$' \
+      | sort -r || true
+  )
+
+  local total="${#release_ids[@]}"
+  if (( total <= RELEASE_RETENTION )); then
+    echo "==> release 保留策略：当前 ${total} 个，无需清理"
+    return
+  fi
+
+  echo "==> 清理旧 release（保留最近 ${RELEASE_RETENTION} 个）"
+  local idx
+  for ((idx = RELEASE_RETENTION; idx < total; idx++)); do
+    local release_id="${release_ids[idx]}"
+    local target_dir="${releases_dir}/${release_id}"
+    local resolved_target
+    resolved_target="$(${SUDO} readlink -f "${target_dir}" 2>/dev/null || true)"
+
+    if [[ -z "${resolved_target}" ]]; then
+      echo "  - 跳过无法解析路径: ${target_dir}"
+      continue
+    fi
+    if [[ -n "${current_target}" && "${resolved_target}" == "${current_target}" ]]; then
+      echo "  - 跳过 current 指向 release: ${release_id}"
+      continue
+    fi
+    if [[ "${resolved_target}" != "${releases_dir}/"* ]]; then
+      echo "  - 跳过可疑路径: ${resolved_target}"
+      continue
+    fi
+
+    ${SUDO} rm -rf -- "${target_dir}"
+    echo "  - 已删除旧 release: ${release_id}"
+  done
 }
 
 main() {
+  local previous_current=""
+
   ensure_app_user
   if [[ -z "${APP_GROUP}" ]]; then
     APP_GROUP="$(id -gn "${APP_USER}")"
@@ -329,12 +426,23 @@ main() {
   ensure_env_file
   load_env_file
   ensure_runtime_directories
+  if ${SUDO} test -L "${CURRENT_DIR}"; then
+    previous_current="$(${SUDO} readlink -f "${CURRENT_DIR}" 2>/dev/null || true)"
+  fi
   install_release
   render_unit "fluxdigest-api.service.tpl" "fluxdigest-api.service"
   render_unit "fluxdigest-worker.service.tpl" "fluxdigest-worker.service"
   render_unit "fluxdigest-scheduler.service.tpl" "fluxdigest-scheduler.service"
-  reload_and_restart
-  health_check
+  switch_current_release
+  if ! reload_and_restart; then
+    recover_from_failed_deploy "restart" "${previous_current}"
+    exit 1
+  fi
+  if ! health_check; then
+    recover_from_failed_deploy "health-check" "${previous_current}"
+    exit 1
+  fi
+  cleanup_old_releases
 
   echo "==> 部署完成"
   echo "current release: ${RELEASE_DIR}"
