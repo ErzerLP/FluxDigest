@@ -98,7 +98,7 @@ resolve_current_release() {
 
   local current_target
   current_target="$(${SUDO} readlink -f "${CURRENT_DIR}" 2>/dev/null || true)"
-  if [[ -z "${current_target}" || ! ${SUDO} test -d "${current_target}" ]]; then
+  if [[ -z "${current_target}" ]] || ! ${SUDO} test -d "${current_target}"; then
     echo "current 链接目标无效: ${CURRENT_DIR}" >&2
     exit 1
   fi
