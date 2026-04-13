@@ -4,17 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	apiapp "rss-platform/internal/app/api"
 	"rss-platform/internal/app/api/handlers"
 	"rss-platform/internal/app/api/middleware"
+	"rss-platform/internal/repository/postgres/models"
 	"rss-platform/internal/service"
 )
 
@@ -103,6 +106,24 @@ func (s *jobTriggerStub) TriggerArticleReprocess(_ context.Context, articleID st
 	return result, nil
 }
 
+func newDossierHandlerQueryDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	dsn := fmt.Sprintf("file:%s-handlers?mode=memory&cache=shared", t.Name())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open dossier handler db: %v", err)
+	}
+	if err := db.AutoMigrate(
+		&models.ArticleDossierModel{},
+		&models.ArticlePublishStateModel{},
+	); err != nil {
+		t.Fatalf("auto migrate dossier handler db: %v", err)
+	}
+
+	return db
+}
+
 func TestLatestDigestRouteReturnsJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -133,14 +154,16 @@ func TestRegisterDossierRoutesReturnsListAndDetail(t *testing.T) {
 	router := gin.New()
 	handlers.RegisterDossierRoutes(router.Group("/api/v1"), dossierReaderStub{
 		items: []service.DossierListItem{{
-			ID:              "dos-1",
-			TitleTranslated: "模型新闻",
-			PublishState:    "suggested",
+			ID:                "dos-1",
+			TitleTranslated:   "模型新闻",
+			PublishState:      "draft",
+			PublishSuggestion: "suggested",
 		}},
 		detail: service.DossierDetail{
-			ID:              "dos-1",
-			TitleTranslated: "模型新闻",
-			PublishState:    "suggested",
+			ID:                "dos-1",
+			TitleTranslated:   "模型新闻",
+			PublishState:      "draft",
+			PublishSuggestion: "suggested",
 		},
 	})
 
@@ -150,12 +173,125 @@ func TestRegisterDossierRoutesReturnsListAndDetail(t *testing.T) {
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("want 200 got %d", listRec.Code)
 	}
+	var listBody struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("unmarshal dossier list: %v", err)
+	}
+	if len(listBody.Items) != 1 {
+		t.Fatalf("unexpected dossier list %+v", listBody.Items)
+	}
+	if listBody.Items[0]["publish_state"] != "draft" {
+		t.Fatalf("want draft publish state got %#v", listBody.Items[0]["publish_state"])
+	}
+	if listBody.Items[0]["publish_suggestion"] != "suggested" {
+		t.Fatalf("want suggested publish suggestion got %#v", listBody.Items[0]["publish_suggestion"])
+	}
 
 	detailReq := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers/dos-1", nil)
 	detailRec := httptest.NewRecorder()
 	router.ServeHTTP(detailRec, detailReq)
 	if detailRec.Code != http.StatusOK {
 		t.Fatalf("want 200 got %d", detailRec.Code)
+	}
+	var detailBody map[string]any
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &detailBody); err != nil {
+		t.Fatalf("unmarshal dossier detail: %v", err)
+	}
+	if detailBody["publish_state"] != "draft" {
+		t.Fatalf("want draft publish state got %#v", detailBody["publish_state"])
+	}
+	if detailBody["publish_suggestion"] != "suggested" {
+		t.Fatalf("want suggested publish suggestion got %#v", detailBody["publish_suggestion"])
+	}
+}
+
+func TestRegisterDossierRoutesExposeNormalizedPublishSemantics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newDossierHandlerQueryDB(t)
+	ctx := context.Background()
+	naturalSuggestion := "这篇文章沉淀了重大趋势，提供了独到判断，值得立刻发布"
+
+	if err := db.WithContext(ctx).Create(&models.ArticleDossierModel{
+		ID:                       "dos-legacy",
+		ArticleID:                "art-legacy",
+		ProcessingID:             "proc-legacy",
+		DigestDate:               time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+		Version:                  1,
+		IsActive:                 true,
+		TitleTranslated:          "旧文章",
+		SummaryPolished:          "摘要",
+		CoreSummary:              "核心观点",
+		KeyPointsJSON:            []byte(`["要点"]`),
+		TopicCategory:            "AI",
+		ImportanceScore:          0.95,
+		PriorityLevel:            "high",
+		ContentPolishedMarkdown:  "## 正文",
+		AnalysisLongformMarkdown: "## 分析",
+		PublishSuggestion:        naturalSuggestion,
+		SuggestionReason:         "",
+		CreatedAt:                time.Date(2026, 4, 13, 8, 0, 0, 0, time.UTC),
+		UpdatedAt:                time.Date(2026, 4, 13, 8, 0, 0, 0, time.UTC),
+	}).Error; err != nil {
+		t.Fatalf("create dossier: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&models.ArticlePublishStateModel{
+		ID:             "pub-legacy",
+		DossierID:      "dos-legacy",
+		State:          "suggested",
+		PublishChannel: "holo",
+		RemoteURL:      "https://example.com/posts/legacy",
+		UpdatedAt:      time.Date(2026, 4, 13, 8, 30, 0, 0, time.UTC),
+	}).Error; err != nil {
+		t.Fatalf("create publish state: %v", err)
+	}
+
+	router := gin.New()
+	handlers.RegisterDossierRoutes(router.Group("/api/v1"), service.NewDossierQueryService(db))
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers?limit=5", nil)
+	listRec := httptest.NewRecorder()
+	router.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("want list 200 got %d body=%s", listRec.Code, listRec.Body.String())
+	}
+
+	var listBody struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("unmarshal dossier list: %v", err)
+	}
+	if len(listBody.Items) != 1 {
+		t.Fatalf("unexpected dossier list %+v", listBody.Items)
+	}
+	if listBody.Items[0]["publish_suggestion"] != "suggested" {
+		t.Fatalf("want normalized publish suggestion got %#v", listBody.Items[0]["publish_suggestion"])
+	}
+	if listBody.Items[0]["publish_state"] != "draft" {
+		t.Fatalf("want cleaned publish state got %#v", listBody.Items[0]["publish_state"])
+	}
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers/dos-legacy", nil)
+	detailRec := httptest.NewRecorder()
+	router.ServeHTTP(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("want detail 200 got %d body=%s", detailRec.Code, detailRec.Body.String())
+	}
+
+	var detailBody map[string]any
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &detailBody); err != nil {
+		t.Fatalf("unmarshal dossier detail: %v", err)
+	}
+	if detailBody["publish_suggestion"] != "suggested" {
+		t.Fatalf("want normalized detail publish suggestion got %#v", detailBody["publish_suggestion"])
+	}
+	if detailBody["publish_state"] != "draft" {
+		t.Fatalf("want cleaned detail publish state got %#v", detailBody["publish_state"])
+	}
+	if detailBody["suggestion_reason"] != naturalSuggestion {
+		t.Fatalf("want preserved suggestion reason got %#v", detailBody["suggestion_reason"])
 	}
 }
 

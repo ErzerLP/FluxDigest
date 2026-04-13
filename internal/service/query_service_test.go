@@ -274,19 +274,101 @@ func TestDossierQueryServiceListAndGet(t *testing.T) {
 	if len(items) != 1 || items[0].ID != "dos-1" {
 		t.Fatalf("unexpected dossier list %+v", items)
 	}
-	if items[0].PublishState != "suggested" {
-		t.Fatalf("want suggested publish state got %+v", items[0])
+	if items[0].PublishState != "draft" {
+		t.Fatalf("want draft publish state got %+v", items[0])
 	}
 
 	got, err := svc.GetDossier(ctx, "dos-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.PublishState != "suggested" || got.TitleTranslated != "模型新闻" {
+	if got.PublishState != "draft" || got.TitleTranslated != "模型新闻" {
 		t.Fatalf("unexpected dossier %+v", got)
 	}
 	if len(got.KeyPoints) != 2 || got.KeyPoints[0] != "要点一" {
 		t.Fatalf("unexpected key points %+v", got.KeyPoints)
+	}
+}
+
+func TestDossierQueryServiceNormalizesDirtyPublishData(t *testing.T) {
+	db := newQueryTestDB(t)
+	ctx := context.Background()
+
+	naturalSuggestion := "这篇文章沉淀了重大趋势，提供了独到判断，值得立刻发布"
+	if err := db.WithContext(ctx).Create(&models.ArticleDossierModel{
+		ID:                       "dos-2",
+		ArticleID:                "art-1",
+		ProcessingID:             "proc-2",
+		DigestDate:               time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC),
+		Version:                  1,
+		IsActive:                 true,
+		TitleTranslated:          "自然语言案例",
+		SummaryPolished:          "摘要",
+		CoreSummary:              "核心观点",
+		KeyPointsJSON:            []byte(`["要点"]`),
+		TopicCategory:            "AI",
+		ImportanceScore:          0.95,
+		RecommendationReason:     "值得关注",
+		ReadingValue:             "高",
+		PriorityLevel:            "high",
+		ContentPolishedMarkdown:  "## 正文",
+		AnalysisLongformMarkdown: "## 分析",
+		BackgroundContext:        "背景",
+		ImpactAnalysis:           "影响",
+		DebatePointsJSON:         []byte(`["争议点"]`),
+		TargetAudience:           "工程师",
+		PublishSuggestion:        naturalSuggestion,
+		SuggestionReason:         "",
+		SuggestedChannelsJSON:    []byte(`["holo"]`),
+		SuggestedTagsJSON:        []byte(`["ai"]`),
+		SuggestedCategoriesJSON:  []byte(`["tech"]`),
+		TranslationPromptVersion: 6,
+		AnalysisPromptVersion:    6,
+		DossierPromptVersion:     6,
+		LLMProfileVersion:        4,
+		CreatedAt:                time.Date(2026, 4, 13, 8, 0, 0, 0, time.UTC),
+		UpdatedAt:                time.Date(2026, 4, 13, 8, 0, 0, 0, time.UTC),
+	}).Error; err != nil {
+		t.Fatalf("create dossier: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&models.ArticlePublishStateModel{
+		ID:             "pub-2",
+		DossierID:      "dos-2",
+		State:          "suggested",
+		PublishChannel: "holo",
+		RemoteURL:      "https://example.com/posts/2",
+		UpdatedAt:      time.Date(2026, 4, 13, 8, 30, 0, 0, time.UTC),
+	}).Error; err != nil {
+		t.Fatalf("create publish state: %v", err)
+	}
+
+	svc := NewDossierQueryService(db)
+	items, err := svc.ListDossiers(ctx, DossierListFilter{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("want 1 item got %+v", items)
+	}
+	if items[0].PublishSuggestion != "suggested" {
+		t.Fatalf("want normalized suggestion suggested got %q", items[0].PublishSuggestion)
+	}
+	if items[0].PublishState != "draft" {
+		t.Fatalf("want default draft publish state got %q", items[0].PublishState)
+	}
+
+	got, err := svc.GetDossier(ctx, "dos-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PublishSuggestion != "suggested" {
+		t.Fatalf("want normalized suggestion suggested got %q", got.PublishSuggestion)
+	}
+	if got.PublishState != "draft" {
+		t.Fatalf("want cleaned publish state got %q", got.PublishState)
+	}
+	if got.SuggestionReason != naturalSuggestion {
+		t.Fatalf("want suggestion reason preserved got %q", got.SuggestionReason)
 	}
 }
 

@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"rss-platform/internal/domain/article"
 	"rss-platform/internal/domain/dossier"
@@ -65,7 +68,7 @@ func NewDossierService(builder DossierBuilder, dossiers DossierRepository, publi
 	return &DossierService{builder: builder, dossiers: dossiers, publishState: publishState}
 }
 
-// Materialize 生成并持久化 dossier，同时写入建议发布状态。
+// Materialize 生成并持久化 dossier，同时初始化真实发布状态。
 func (s *DossierService) Materialize(ctx context.Context, input MaterializeDossierInput) (dossier.ArticleDossier, error) {
 	articleInput := input.Article
 	if articleInput.ID == "" {
@@ -131,6 +134,12 @@ func (s *DossierService) Materialize(ctx context.Context, input MaterializeDossi
 	materialized.DossierPromptVersion = input.DossierPromptVersion
 	materialized.LLMProfileVersion = input.LLMProfileVersion
 
+	normalizedSuggestion, suggestionReasonCandidate := normalizePublishSuggestionValue(materialized.PublishSuggestion)
+	if materialized.SuggestionReason == "" && suggestionReasonCandidate != "" {
+		materialized.SuggestionReason = suggestionReasonCandidate
+	}
+	materialized.PublishSuggestion = normalizedSuggestion
+
 	saved, err := s.dossiers.SaveActive(ctx, postgres.ArticleDossierRecord{
 		ID:                       materialized.ID,
 		ArticleID:                materialized.ArticleID,
@@ -175,10 +184,7 @@ func (s *DossierService) Materialize(ctx context.Context, input MaterializeDossi
 	materialized.CreatedAt = saved.CreatedAt
 	materialized.UpdatedAt = saved.UpdatedAt
 
-	publishState := materialized.PublishSuggestion
-	if strings.TrimSpace(publishState) == "" {
-		publishState = "draft"
-	}
+	publishState := defaultPublishState
 	if err := s.publishState.Upsert(ctx, postgres.ArticlePublishStateRecord{
 		DossierID: materialized.ID,
 		State:     publishState,
@@ -245,4 +251,135 @@ func copyStringSlice(in []string) []string {
 	out := make([]string, len(in))
 	copy(out, in)
 	return out
+}
+
+const (
+	publishSuggestionSuggested = "suggested"
+	publishSuggestionDraft     = "draft"
+	defaultPublishState        = publishSuggestionDraft
+)
+
+var (
+	positivePublishSuggestionPatterns = []*regexp.Regexp{
+		mustCompilePublishSuggestionPattern(`(?i)\brecommend(?:ed)?\s+(?:to\s+)?publish(?:ing)?\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\brecommend(?:ed)?\s+for\s+publish(?:ing|ation)?\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bshould\s+publish\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bshould\s+go\s+to\s+digest\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bworth\s+publish(?:ing)?\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bworth\s+including\s+in\s+the?\s*digest\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bready\s+to\s+publish\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bpublish\s+now\b`),
+		mustCompilePublishSuggestionPattern(`建议.{0,8}(发布|收录|纳入日报|进日报)`),
+		mustCompilePublishSuggestionPattern(`推荐.{0,8}(发布|收录|纳入日报|进日报)`),
+		mustCompilePublishSuggestionPattern(`值得.{0,8}(发布|收录|纳入日报|进日报)`),
+		mustCompilePublishSuggestionPattern(`适合.{0,8}(发布|收录|纳入日报|进日报)`),
+		mustCompilePublishSuggestionPattern(`(纳入日报|进日报)`),
+	}
+	negativePublishSuggestionPatterns = []*regexp.Regexp{
+		mustCompilePublishSuggestionPattern(`(?i)\b(do\s+not|don't|dont|not)\s+publish(?:ing)?\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bnot\s+ready\s+to\s+publish\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bnot\s+for\s+publish(?:ing)?\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bwait\s+before\s+publish(?:ing)?\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bhold\b.*\bpublish(?:ing)?\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bskip\s+publish(?:ing)?\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bdraft\s+only\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bkeep\s+as\s+draft\b`),
+		mustCompilePublishSuggestionPattern(`(?i)\bready\s+for\s+review\b.*\bnot\s+for\s+publish(?:ing)?\b`),
+		mustCompilePublishSuggestionPattern(`不建议.{0,8}(发布|收录|纳入日报|进日报)?`),
+		mustCompilePublishSuggestionPattern(`不推荐.{0,8}(发布|收录|纳入日报|进日报)?`),
+		mustCompilePublishSuggestionPattern(`不值得.{0,8}(发布|收录|纳入日报|进日报)?`),
+		mustCompilePublishSuggestionPattern(`暂不.{0,8}(发布|收录|纳入日报|进日报)?`),
+		mustCompilePublishSuggestionPattern(`暂缓.{0,8}(发布|收录|纳入日报|进日报)?`),
+		mustCompilePublishSuggestionPattern(`无需.{0,8}(发布|收录|纳入日报|进日报)?`),
+		mustCompilePublishSuggestionPattern(`不纳入日报`),
+		mustCompilePublishSuggestionPattern(`不进日报`),
+		mustCompilePublishSuggestionPattern(`不发`),
+	}
+	allowedPublishStates = map[string]struct{}{
+		publishSuggestionDraft: {},
+		"publishing":           {},
+		"published":            {},
+		"failed":               {},
+	}
+)
+
+func normalizePublishSuggestionValue(raw string) (string, string) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return publishSuggestionDraft, ""
+	}
+
+	lower := strings.ToLower(trimmed)
+	normalized := publishSuggestionDraft
+	switch lower {
+	case publishSuggestionSuggested:
+		normalized = publishSuggestionSuggested
+	case publishSuggestionDraft, "hold", "ignore":
+		normalized = publishSuggestionDraft
+	default:
+		if boolValue, err := strconv.ParseBool(lower); err == nil {
+			if boolValue {
+				normalized = publishSuggestionSuggested
+			}
+		} else if matchesPublishSuggestionPattern(trimmed, negativePublishSuggestionPatterns) {
+			normalized = publishSuggestionDraft
+		} else if matchesPublishSuggestionPattern(trimmed, positivePublishSuggestionPatterns) {
+			normalized = publishSuggestionSuggested
+		}
+	}
+
+	reason := ""
+	if looksLikeNaturalLanguageSuggestion(trimmed) {
+		reason = trimmed
+	}
+
+	return normalized, reason
+}
+
+func normalizePublishStateValue(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return defaultPublishState
+	}
+	lower := strings.ToLower(trimmed)
+	if _, ok := allowedPublishStates[lower]; ok {
+		return lower
+	}
+	return defaultPublishState
+}
+
+func looksLikeNaturalLanguageSuggestion(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	if strings.Contains(trimmed, "\n") {
+		return true
+	}
+	if utf8.RuneCountInString(trimmed) >= 32 {
+		return true
+	}
+	if strings.Count(trimmed, " ") >= 2 {
+		return true
+	}
+	if strings.ContainsAny(trimmed, "。！？!?") {
+		return true
+	}
+	if strings.ContainsAny(trimmed, "，；、：") && utf8.RuneCountInString(trimmed) >= 12 {
+		return true
+	}
+	return false
+}
+
+func matchesPublishSuggestionPattern(text string, patterns []*regexp.Regexp) bool {
+	for _, pattern := range patterns {
+		if pattern.MatchString(text) {
+			return true
+		}
+	}
+	return false
+}
+
+func mustCompilePublishSuggestionPattern(pattern string) *regexp.Regexp {
+	return regexp.MustCompile(pattern)
 }

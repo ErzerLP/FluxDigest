@@ -345,8 +345,12 @@ components:
           type: string
         publish_suggestion:
           type: string
+          enum: [suggested, draft]
+          description: Normalized editorial suggestion enum; positive natural-language or boolean hints normalize to suggested, while negative or unknown values normalize to draft.
         publish_state:
           type: string
+          enum: [draft, publishing, published, failed]
+          description: Runtime publish lifecycle state; legacy dirty values are normalized to draft.
         created_at:
           type: string
           format: date-time
@@ -410,8 +414,11 @@ components:
           type: string
         publish_suggestion:
           type: string
+          enum: [suggested, draft]
+          description: Normalized editorial suggestion enum; positive natural-language or boolean hints normalize to suggested, while negative or unknown values normalize to draft.
         suggestion_reason:
           type: string
+          description: If publish_suggestion originally came from a natural-language sentence and this field was empty, the original text is preserved here.
         suggested_channels:
           type: array
           items:
@@ -426,6 +433,8 @@ components:
             type: string
         publish_state:
           type: string
+          enum: [draft, publishing, published, failed]
+          description: Runtime publish lifecycle state; legacy dirty values are normalized to draft.
         publish_channel:
           type: string
         remote_url:

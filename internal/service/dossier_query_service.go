@@ -130,6 +130,7 @@ func (s *DossierQueryService) ListDossiers(ctx context.Context, filter DossierLi
 			return nil, err
 		}
 
+		publishSuggestion, _ := normalizePublishSuggestionValue(row.PublishSuggestion)
 		items = append(items, DossierListItem{
 			ID:                row.ID,
 			ArticleID:         row.ArticleID,
@@ -139,8 +140,8 @@ func (s *DossierQueryService) ListDossiers(ctx context.Context, filter DossierLi
 			TopicCategory:     row.TopicCategory,
 			ImportanceScore:   row.ImportanceScore,
 			PriorityLevel:     row.PriorityLevel,
-			PublishSuggestion: row.PublishSuggestion,
-			PublishState:      row.PublishState,
+			PublishSuggestion: publishSuggestion,
+			PublishState:      normalizePublishStateValue(row.PublishState),
 			CreatedAt:         createdAt,
 		})
 	}
@@ -185,10 +186,8 @@ func (s *DossierQueryService) GetDossier(ctx context.Context, dossierID string) 
 		return DossierDetail{}, err
 	}
 
-	publishState := strings.TrimSpace(publishModel.State)
-	if publishState == "" {
-		publishState = "draft"
-	}
+	publishSuggestion, suggestionReasonCandidate := normalizePublishSuggestionValue(dossierModel.PublishSuggestion)
+	publishState := normalizePublishStateValue(publishModel.State)
 
 	return DossierDetail{
 		ID:                       dossierModel.ID,
@@ -212,8 +211,8 @@ func (s *DossierQueryService) GetDossier(ctx context.Context, dossierID string) 
 		ImpactAnalysis:           dossierModel.ImpactAnalysis,
 		DebatePoints:             debatePoints,
 		TargetAudience:           dossierModel.TargetAudience,
-		PublishSuggestion:        dossierModel.PublishSuggestion,
-		SuggestionReason:         dossierModel.SuggestionReason,
+		PublishSuggestion:        publishSuggestion,
+		SuggestionReason:         firstNonEmpty(dossierModel.SuggestionReason, suggestionReasonCandidate),
 		SuggestedChannels:        suggestedChannels,
 		SuggestedTags:            suggestedTags,
 		SuggestedCategories:      suggestedCategories,
