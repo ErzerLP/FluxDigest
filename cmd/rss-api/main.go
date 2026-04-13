@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/eino/components/model"
@@ -21,6 +22,7 @@ import (
 	"rss-platform/internal/app/api/middleware"
 	"rss-platform/internal/config"
 	postgresrepo "rss-platform/internal/repository/postgres"
+	"rss-platform/internal/security"
 	"rss-platform/internal/service"
 	asynqtask "rss-platform/internal/task/asynq"
 	"rss-platform/internal/telemetry"
@@ -117,12 +119,17 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 	}
 
 	profileRepo := postgresrepo.NewProfileRepository(db)
+	adminSecretCipher, err := newAdminSecretCipher(cfg)
+	if err != nil {
+		_ = closer.Close()
+		return nil, nil, err
+	}
 	jobRunRepo := &adminJobRunRepoAdapter{repo: postgresrepo.NewJobRunRepository(db)}
 	articleQueryService := service.NewArticleQueryService(db)
 	dossierQueryService := service.NewDossierQueryService(db)
 	digestQueryService := service.NewDigestQueryService(db)
 	profileQueryService := service.NewProfileQueryService(db)
-	adminConfigService := service.NewAdminConfigService(profileRepo)
+	adminConfigService := service.NewAdminConfigService(profileRepo, adminSecretCipher)
 	adminStatusService := service.NewAdminStatusServiceWithDigest(adminConfigService, jobRunRepo, digestQueryService)
 	adminTestService := service.NewAdminTestService(newAdminLLMConnectivityChecker(defaultAdminLLMTestTimeout), nil, nil, jobRunRepo)
 	jobRunQueryService := service.NewJobRunQueryService(db)
@@ -165,6 +172,13 @@ func newAdminSessionStore(cfg *config.Config) (service.AdminSessionStore, dbClos
 		return store, store
 	}
 	return service.NewInMemoryAdminSessionStore(), nil
+}
+
+func newAdminSecretCipher(cfg *config.Config) (*security.SecretCipher, error) {
+	if cfg == nil || strings.TrimSpace(cfg.Security.SecretKey) == "" {
+		return nil, nil
+	}
+	return security.NewSecretCipher(strings.TrimSpace(cfg.Security.SecretKey))
 }
 
 func connectPostgres(ctx context.Context, dsn string) (*gorm.DB, dbCloser, error) {

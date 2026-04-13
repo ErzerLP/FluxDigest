@@ -65,11 +65,11 @@ func (s *ProfileService) SeedDefaults(ctx context.Context) error {
 			profileType: profile.TypePublish,
 			name:        "default-publish",
 			payload: map[string]any{
-				"target_type":    "halo",
-				"endpoint":       "",
-				"auth_token":     "",
-				"content_format": "markdown",
-				"is_enabled":     true,
+				"provider":      "halo",
+				"halo_base_url": "",
+				"halo_token":    "",
+				"output_dir":    "",
+				"is_enabled":    true,
 			},
 		},
 		{

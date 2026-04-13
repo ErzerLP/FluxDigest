@@ -201,3 +201,25 @@ func TestRuntimeConfigServiceSnapshotLoadsPromptProfileVersions(t *testing.T) {
 		t.Fatalf("want dossier prompt D got %q", snapshot.Prompts.DossierPrompt)
 	}
 }
+
+func TestRuntimeConfigServiceDecryptsEncryptedLLMSecret(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeLLM: {
+			ProfileType: profile.TypeLLM,
+			Version:     2,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"https://db.llm.local/v1","model":"gpt-db","api_key":"` + encryptedValue(t, "db-token") + `"}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.Security.SecretKey = adminConfigTestSecretKey
+
+	svc := service.NewRuntimeConfigService(repo, defaults)
+	snapshot, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.LLM.APIKey != "db-token" {
+		t.Fatalf("want decrypted api_key got %q", snapshot.LLM.APIKey)
+	}
+}

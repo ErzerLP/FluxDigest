@@ -567,3 +567,18 @@ func TestResolveAdminLLMCheckTimeoutCapsOversizedDraftTimeoutMS(t *testing.T) {
 		t.Fatalf("want capped timeout got %s", got)
 	}
 }
+
+func TestNewAdminSecretCipherTrimsSecretKeyWhitespace(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	cfg.Security.SecretKey = " 0123456789abcdef0123456789abcdef "
+
+	cipher, err := newAdminSecretCipher(cfg)
+	if err != nil {
+		t.Fatalf("want trimmed secret key accepted, got %v", err)
+	}
+	if cipher == nil {
+		t.Fatal("want cipher created")
+	}
+}

@@ -8,6 +8,7 @@ import (
 
 	"rss-platform/internal/config"
 	"rss-platform/internal/domain/profile"
+	"rss-platform/internal/security"
 )
 
 // LLMRuntimeConfig 表示 worker 使用的 LLM 运行时配置。
@@ -48,8 +49,10 @@ type RuntimeSnapshot struct {
 
 // RuntimeConfigService 负责按 DB 优先、配置兜底读取运行时配置。
 type RuntimeConfigService struct {
-	repo     ProfileRepository
-	defaults *config.Config
+	repo      ProfileRepository
+	defaults  *config.Config
+	cipher    *security.SecretCipher
+	cipherErr error
 }
 
 type activeProfileSnapshot struct {
@@ -59,7 +62,11 @@ type activeProfileSnapshot struct {
 
 // NewRuntimeConfigService 创建 RuntimeConfigService。
 func NewRuntimeConfigService(repo ProfileRepository, defaults *config.Config) *RuntimeConfigService {
-	return &RuntimeConfigService{repo: repo, defaults: defaults}
+	svc := &RuntimeConfigService{repo: repo, defaults: defaults}
+	if defaults != nil && strings.TrimSpace(defaults.Security.SecretKey) != "" {
+		svc.cipher, svc.cipherErr = security.NewSecretCipher(strings.TrimSpace(defaults.Security.SecretKey))
+	}
+	return svc
 }
 
 // Snapshot 返回运行时配置快照。
@@ -85,9 +92,17 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 		snapshot.LLM.BaseURL = value
 	}
 	if s.shouldUseExplicitStringOverride(llmProfile.version, "api_key", llmProfile.payload) {
-		snapshot.LLM.APIKey = stringValue(llmProfile.payload, "api_key")
-	} else if value := strings.TrimSpace(stringValue(llmProfile.payload, "api_key")); value != "" {
+		value, err := s.resolveSecretString(stringValue(llmProfile.payload, "api_key"))
+		if err != nil {
+			return RuntimeSnapshot{}, err
+		}
 		snapshot.LLM.APIKey = value
+	} else if value := strings.TrimSpace(stringValue(llmProfile.payload, "api_key")); value != "" {
+		resolved, err := s.resolveSecretString(value)
+		if err != nil {
+			return RuntimeSnapshot{}, err
+		}
+		snapshot.LLM.APIKey = resolved
 	}
 	if s.shouldUseExplicitStringOverride(llmProfile.version, "model", llmProfile.payload) {
 		snapshot.LLM.Model = stringValue(llmProfile.payload, "model")
@@ -294,4 +309,20 @@ func (s *RuntimeConfigService) shouldUseExplicitStringOverride(version profile.V
 
 func isDefaultSeedProfile(version profile.Version) bool {
 	return version.Name == "default-"+version.ProfileType
+}
+
+func (s *RuntimeConfigService) resolveSecretString(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if !security.HasEncryptedPrefix(value) {
+		return value, nil
+	}
+	if s != nil && s.cipherErr != nil {
+		return "", s.cipherErr
+	}
+	if s == nil || s.cipher == nil {
+		return "", errors.New("runtime secret cipher is required")
+	}
+	return s.cipher.DecryptString(value)
 }

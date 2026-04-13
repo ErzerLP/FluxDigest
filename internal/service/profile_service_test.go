@@ -63,8 +63,11 @@ func TestProfileServiceSeedsDefaults(t *testing.T) {
 	if err := json.Unmarshal(repo.created[3].PayloadJSON, &publishPayload); err != nil {
 		t.Fatalf("unmarshal publish payload: %v", err)
 	}
-	if publishPayload["target_type"] != "halo" {
-		t.Fatalf("want default publish target_type halo got %+v", publishPayload["target_type"])
+	if publishPayload["provider"] != "halo" {
+		t.Fatalf("want default publish provider halo got %+v", publishPayload["provider"])
+	}
+	if _, ok := publishPayload["target_type"]; ok {
+		t.Fatalf("did not expect legacy target_type in payload: %+v", publishPayload)
 	}
 }
 
