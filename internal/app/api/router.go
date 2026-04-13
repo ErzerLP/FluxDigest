@@ -14,15 +14,17 @@ import (
 )
 
 type routerConfig struct {
-	apiKey        string
-	articleReader handlers.ArticleReader
-	dossierReader handlers.DossierReader
-	digestReader  handlers.DigestReader
-	profileReader handlers.ProfileReader
-	jobTrigger    handlers.JobTrigger
-	admin         handlers.AdminDeps
-	metrics       *telemetry.Metrics
-	staticDir     string
+	apiKey                 string
+	articleReader          handlers.ArticleReader
+	dossierReader          handlers.DossierReader
+	digestReader           handlers.DigestReader
+	profileReader          handlers.ProfileReader
+	jobTrigger             handlers.JobTrigger
+	admin                  handlers.AdminDeps
+	adminAuth              handlers.AdminAuthDeps
+	adminSessionMiddleware gin.HandlerFunc
+	metrics                *telemetry.Metrics
+	staticDir              string
 }
 
 // Option 定义 router 组装选项。
@@ -77,6 +79,20 @@ func WithAdminDeps(deps handlers.AdminDeps) Option {
 	}
 }
 
+// WithAdminAuthDeps 注入 admin auth 路由依赖。
+func WithAdminAuthDeps(deps handlers.AdminAuthDeps) Option {
+	return func(cfg *routerConfig) {
+		cfg.adminAuth = deps
+	}
+}
+
+// WithAdminSessionMiddleware 注入 admin session 校验中间件。
+func WithAdminSessionMiddleware(mw gin.HandlerFunc) Option {
+	return func(cfg *routerConfig) {
+		cfg.adminSessionMiddleware = mw
+	}
+}
+
 // WithMetrics 注入 metrics 导出器。
 func WithMetrics(metrics *telemetry.Metrics) Option {
 	return func(cfg *routerConfig) {
@@ -110,7 +126,13 @@ func NewRouter(options ...Option) *gin.Engine {
 	handlers.RegisterDossierRoutes(apiV1, cfg.dossierReader)
 	handlers.RegisterDigestRoutes(apiV1, cfg.digestReader)
 	handlers.RegisterProfileRoutes(apiV1, cfg.profileReader)
-	handlers.RegisterAdminRoutes(apiV1, cfg.admin)
+	handlers.RegisterAdminAuthRoutes(apiV1.Group("/admin/auth"), cfg.adminAuth)
+
+	adminRoutes := apiV1.Group("/admin")
+	if cfg.adminSessionMiddleware != nil {
+		adminRoutes.Use(cfg.adminSessionMiddleware)
+	}
+	handlers.RegisterAdminRoutes(adminRoutes, cfg.admin)
 
 	jobs := apiV1.Group("")
 	if cfg.apiKey != "" {

@@ -18,6 +18,7 @@ import (
 	llmadapter "rss-platform/internal/adapter/llm"
 	"rss-platform/internal/app/api"
 	"rss-platform/internal/app/api/handlers"
+	"rss-platform/internal/app/api/middleware"
 	"rss-platform/internal/config"
 	postgresrepo "rss-platform/internal/repository/postgres"
 	"rss-platform/internal/service"
@@ -32,6 +33,23 @@ const maxAdminLLMTestTimeoutMS = 2_147_483_647
 
 type dbCloser interface {
 	Close() error
+}
+
+type multiCloser struct {
+	closers []dbCloser
+}
+
+func (c multiCloser) Close() error {
+	var firstErr error
+	for _, closer := range c.closers {
+		if closer == nil {
+			continue
+		}
+		if err := closer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 type connectPostgresFunc func(ctx context.Context, dsn string) (*gorm.DB, dbCloser, error)
@@ -64,7 +82,7 @@ func main() {
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
-			log.Printf("close postgres: %v", err)
+			log.Printf("close api resources: %v", err)
 		}
 	}()
 
@@ -108,6 +126,12 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 	adminStatusService := service.NewAdminStatusServiceWithDigest(adminConfigService, jobRunRepo, digestQueryService)
 	adminTestService := service.NewAdminTestService(newAdminLLMConnectivityChecker(defaultAdminLLMTestTimeout), nil, nil, jobRunRepo)
 	jobRunQueryService := service.NewJobRunQueryService(db)
+	adminUserRepo := postgresrepo.NewAdminUserRepository(db)
+	adminSessionStore, adminSessionCloser := newAdminSessionStore(cfg)
+	adminAuthService := service.NewAdminAuthService(adminUserRepo, adminSessionStore)
+	adminSessionMiddleware := middleware.RequireAdminSession(adminAuthService, middleware.AdminSessionOptions{
+		CookieName: service.DefaultAdminSessionCookieName,
+	})
 	router := api.NewRouter(
 		api.WithAPIKey(cfg.Job.APIKey),
 		api.WithMetrics(metrics),
@@ -123,9 +147,24 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 			LLMTester:  adminTestService,
 			Jobs:       jobRunQueryService,
 		}),
+		api.WithAdminAuthDeps(handlers.AdminAuthDeps{
+			Auth:        adminAuthService,
+			CookieName:  service.DefaultAdminSessionCookieName,
+			CookiePath:  "/",
+			SessionAuth: adminSessionMiddleware,
+		}),
+		api.WithAdminSessionMiddleware(adminSessionMiddleware),
 	)
 
-	return router, closer, nil
+	return router, multiCloser{closers: []dbCloser{closer, adminSessionCloser}}, nil
+}
+
+func newAdminSessionStore(cfg *config.Config) (service.AdminSessionStore, dbCloser) {
+	if cfg != nil && cfg.Redis.Addr != "" {
+		store := service.NewRedisAdminSessionStore(cfg.Redis.Addr)
+		return store, store
+	}
+	return service.NewInMemoryAdminSessionStore(), nil
 }
 
 func connectPostgres(ctx context.Context, dsn string) (*gorm.DB, dbCloser, error) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -62,7 +63,7 @@ type profileVersionResponse struct {
 
 // RegisterAdminRoutes 注册管理后台接口。
 func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
-	admin := group.Group("/admin")
+	admin := adminRouteGroup(group)
 	admin.GET("/status", func(c *gin.Context) {
 		if deps.Status == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminStatusReaderRequired.Error()})
@@ -163,6 +164,13 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 
 		c.JSON(http.StatusOK, gin.H{"items": runs})
 	})
+}
+
+func adminRouteGroup(group *gin.RouterGroup) *gin.RouterGroup {
+	if strings.HasSuffix(group.BasePath(), "/admin") {
+		return group
+	}
+	return group.Group("/admin")
 }
 
 func toProfileVersionResponse(version profile.Version) profileVersionResponse {
