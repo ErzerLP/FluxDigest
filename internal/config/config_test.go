@@ -103,6 +103,8 @@ func TestLoadReadsMinifluxLLMAndPublishConfig(t *testing.T) {
 	t.Setenv("APP_LLM_MODEL", "MiniMax-M2.7")
 	t.Setenv("APP_LLM_FALLBACK_MODELS", "mimo-v2-pro, kimi-k2.5 ")
 	t.Setenv("APP_LLM_TIMEOUT_MS", "45000")
+	t.Setenv("APP_PUBLISH_HALO_BASE_URL", "https://halo.local")
+	t.Setenv("APP_PUBLISH_HALO_TOKEN", "halo-token")
 	t.Setenv("APP_PUBLISH_HOLO_ENDPOINT", "https://blog.local/api/posts")
 
 	cfg, err := config.Load()
@@ -132,5 +134,42 @@ func TestLoadReadsMinifluxLLMAndPublishConfig(t *testing.T) {
 	}
 	if cfg.Publish.HoloEndpoint != "https://blog.local/api/posts" {
 		t.Fatalf("unexpected publish endpoint %q", cfg.Publish.HoloEndpoint)
+	}
+	if cfg.Publish.HaloBaseURL != "https://halo.local" {
+		t.Fatalf("unexpected halo base url %q", cfg.Publish.HaloBaseURL)
+	}
+	if cfg.Publish.HaloToken != "halo-token" {
+		t.Fatalf("unexpected halo token %q", cfg.Publish.HaloToken)
+	}
+}
+
+func TestLoadHaloYAMLCanBeOverriddenByEnv(t *testing.T) {
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "configs")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	yaml := "publish:\n  channel: halo\n  halo_base_url: https://yaml-halo.local\n  halo_token: yaml-token\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(tempDir)
+	t.Setenv("APP_PUBLISH_HALO_BASE_URL", "https://env-halo.local")
+	t.Setenv("APP_PUBLISH_HALO_TOKEN", "env-token")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Publish.Channel != "halo" {
+		t.Fatalf("want halo channel got %q", cfg.Publish.Channel)
+	}
+	if cfg.Publish.HaloBaseURL != "https://env-halo.local" {
+		t.Fatalf("want env halo base url got %q", cfg.Publish.HaloBaseURL)
+	}
+	if cfg.Publish.HaloToken != "env-token" {
+		t.Fatalf("want env halo token got %q", cfg.Publish.HaloToken)
 	}
 }

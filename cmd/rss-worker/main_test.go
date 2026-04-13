@@ -10,6 +10,7 @@ import (
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"rss-platform/internal/config"
 	"rss-platform/internal/domain/article"
 	domaindossier "rss-platform/internal/domain/dossier"
 	"rss-platform/internal/domain/processing"
@@ -425,5 +426,49 @@ func TestRuntimeLLMFactoryConfigsIncludesFallbackModels(t *testing.T) {
 		if cfg.Timeout != 45*time.Second {
 			t.Fatalf("want timeout 45s got %s", cfg.Timeout)
 		}
+	}
+}
+
+func TestBuildPublisherReturnsHaloPublisher(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Publish.Channel = "halo"
+	cfg.Publish.HaloBaseURL = "https://halo.local"
+	cfg.Publish.HaloToken = "pat-token"
+
+	publisher, err := buildPublisher(cfg)
+	if err != nil {
+		t.Fatalf("buildPublisher() error = %v", err)
+	}
+	if publisher.Name() != "halo" {
+		t.Fatalf("want halo publisher got %q", publisher.Name())
+	}
+}
+
+func TestBuildPublisherRequiresHaloToken(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Publish.Channel = "halo"
+	cfg.Publish.HaloBaseURL = "https://halo.local"
+
+	_, err := buildPublisher(cfg)
+	if err == nil {
+		t.Fatal("want error when halo token missing")
+	}
+	if err.Error() != "APP_PUBLISH_HALO_TOKEN is required for halo publisher" {
+		t.Fatalf("unexpected error %v", err)
+	}
+}
+
+func TestBuildPublisherPrefersHaloWhenChannelEmpty(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Publish.HaloBaseURL = "https://halo.local"
+	cfg.Publish.HaloToken = "pat-token"
+	cfg.Publish.OutputDir = "data/output"
+
+	publisher, err := buildPublisher(cfg)
+	if err != nil {
+		t.Fatalf("buildPublisher() error = %v", err)
+	}
+	if publisher.Name() != "halo" {
+		t.Fatalf("want halo publisher got %q", publisher.Name())
 	}
 }
