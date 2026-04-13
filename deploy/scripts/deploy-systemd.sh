@@ -178,6 +178,10 @@ ensure_env_file() {
 
   local env_keys=(
     GIN_MODE
+    http_proxy
+    https_proxy
+    HTTP_PROXY
+    HTTPS_PROXY
     APP_HTTP_PORT
     APP_DATABASE_DSN
     APP_REDIS_ADDR
