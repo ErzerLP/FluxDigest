@@ -261,6 +261,47 @@ func TestMigratorAppliesContentAssetFoundationMigration(t *testing.T) {
 	}
 }
 
+func TestMigratorAppliesAdminUsersMigration(t *testing.T) {
+	tempDir := t.TempDir()
+	db := openSQLiteDB(t, filepath.Join(tempDir, "runtime.db"))
+	migrator := NewMigrator(db, projectMigrationsDir(t))
+
+	if err := migrator.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate project files: %v", err)
+	}
+
+	adminColumns := tableInfoByName(t, db, "admin_users")
+	if _, ok := adminColumns["id"]; !ok {
+		t.Fatal("missing admin_users.id")
+	}
+	if _, ok := adminColumns["username"]; !ok {
+		t.Fatal("missing admin_users.username")
+	}
+	if _, ok := adminColumns["password_hash"]; !ok {
+		t.Fatal("missing admin_users.password_hash")
+	}
+	if _, ok := adminColumns["must_change_password"]; !ok {
+		t.Fatal("missing admin_users.must_change_password")
+	}
+	if _, ok := adminColumns["last_login_at"]; !ok {
+		t.Fatal("missing admin_users.last_login_at")
+	}
+	createdAtColumn, ok := adminColumns["created_at"]
+	if !ok {
+		t.Fatal("missing admin_users.created_at")
+	}
+	if !strings.EqualFold(createdAtColumn.DefaultValue, "CURRENT_TIMESTAMP") {
+		t.Fatalf("want created_at default CURRENT_TIMESTAMP got %q", createdAtColumn.DefaultValue)
+	}
+	updatedAtColumn, ok := adminColumns["updated_at"]
+	if !ok {
+		t.Fatal("missing admin_users.updated_at")
+	}
+	if !strings.EqualFold(updatedAtColumn.DefaultValue, "CURRENT_TIMESTAMP") {
+		t.Fatalf("want updated_at default CURRENT_TIMESTAMP got %q", updatedAtColumn.DefaultValue)
+	}
+}
+
 func TestMigratorBackfillsPublishedDigestStateFromLegacyRemoteURL(t *testing.T) {
 	tempDir := t.TempDir()
 	db := openSQLiteDB(t, filepath.Join(tempDir, "runtime.db"))

@@ -44,6 +44,12 @@ type Config struct {
 		Channel     string `yaml:"channel"`
 		OutputDir   string `yaml:"output_dir"`
 	} `yaml:"publish"`
+	Admin struct {
+		SessionSecret string `yaml:"session_secret"`
+	} `yaml:"admin"`
+	Security struct {
+		SecretKey string `yaml:"secret_key"`
+	} `yaml:"security"`
 }
 
 // Load 加载 YAML 与环境变量，并应用最小默认值。
@@ -131,6 +137,12 @@ func loadFromYAML(cfg *Config) error {
 	if fromFile.Publish.OutputDir != "" {
 		cfg.Publish.OutputDir = fromFile.Publish.OutputDir
 	}
+	if fromFile.Admin.SessionSecret != "" {
+		cfg.Admin.SessionSecret = fromFile.Admin.SessionSecret
+	}
+	if fromFile.Security.SecretKey != "" {
+		cfg.Security.SecretKey = fromFile.Security.SecretKey
+	}
 
 	return nil
 }
@@ -199,6 +211,12 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if value := os.Getenv("APP_PUBLISH_OUTPUT_DIR"); value != "" {
 		cfg.Publish.OutputDir = value
+	}
+	if value := os.Getenv("APP_ADMIN_SESSION_SECRET"); value != "" {
+		cfg.Admin.SessionSecret = value
+	}
+	if value := os.Getenv("APP_SECRET_KEY"); value != "" {
+		cfg.Security.SecretKey = value
 	}
 
 	return nil

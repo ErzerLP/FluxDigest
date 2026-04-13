@@ -25,3 +25,11 @@ publish:
   halo_base_url: https://blog.local
   halo_token: change-me
   output_dir: data/output
+admin:
+  # 后台管理会话签名密钥（session）。
+  # 建议使用高强度随机值，不要使用示例值。
+  session_secret: change-me
+security:
+  # 通用安全签名/加密密钥。
+  # 建议使用高强度随机值，不要使用示例值。
+  secret_key: change-me

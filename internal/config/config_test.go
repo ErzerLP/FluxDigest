@@ -20,6 +20,22 @@ func TestLoadReadsEnvValues(t *testing.T) {
 	}
 }
 
+func TestLoadReadsAdminSecurityEnvValues(t *testing.T) {
+	t.Setenv("APP_ADMIN_SESSION_SECRET", "admin-session-secret")
+	t.Setenv("APP_SECRET_KEY", "security-secret-key")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Admin.SessionSecret != "admin-session-secret" {
+		t.Fatalf("want admin-session-secret got %q", cfg.Admin.SessionSecret)
+	}
+	if cfg.Security.SecretKey != "security-secret-key" {
+		t.Fatalf("want security-secret-key got %q", cfg.Security.SecretKey)
+	}
+}
+
 func TestLoadDefaultsPortTo8080(t *testing.T) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -175,5 +191,33 @@ func TestLoadHaloYAMLCanBeOverriddenByEnv(t *testing.T) {
 	}
 	if cfg.Publish.HaloToken != "env-token" {
 		t.Fatalf("want env halo token got %q", cfg.Publish.HaloToken)
+	}
+}
+
+func TestLoadAdminSecurityYAMLCanBeOverriddenByEnv(t *testing.T) {
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "configs")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	yaml := "admin:\n  session_secret: yaml-admin-secret\nsecurity:\n  secret_key: yaml-security-key\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(tempDir)
+	t.Setenv("APP_ADMIN_SESSION_SECRET", "env-admin-secret")
+	t.Setenv("APP_SECRET_KEY", "env-security-key")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Admin.SessionSecret != "env-admin-secret" {
+		t.Fatalf("want env-admin-secret got %q", cfg.Admin.SessionSecret)
+	}
+	if cfg.Security.SecretKey != "env-security-key" {
+		t.Fatalf("want env-security-key got %q", cfg.Security.SecretKey)
 	}
 }
