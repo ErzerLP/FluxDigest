@@ -271,6 +271,7 @@ generate_credentials() {
   export HALO_ADMIN_USERNAME="${HALO_ADMIN_USERNAME:-admin}"
   export HALO_ADMIN_PASSWORD="${HALO_ADMIN_PASSWORD:-$(random_token 20)}"
   export HALO_ADMIN_EMAIL="${HALO_ADMIN_EMAIL:-admin@fluxdigest.local}"
+  export HALO_SITE_TITLE="${HALO_SITE_TITLE:-FluxDigest}"
   export HALO_PAT_NAME="${HALO_PAT_NAME:-FluxDigest Publisher}"
   export HALO_EXTERNAL_URL="${HALO_EXTERNAL_URL:-http://127.0.0.1:${HALO_HTTP_PORT}}"
 
@@ -299,7 +300,7 @@ preservable_env_key() {
     POSTGRES_ROOT_USER|POSTGRES_ROOT_PASSWORD|POSTGRES_DEFAULT_DB|\
     FLUXDIGEST_DB_NAME|FLUXDIGEST_DB_USER|FLUXDIGEST_DB_PASSWORD|\
     MINIFLUX_DB_NAME|MINIFLUX_DB_USER|MINIFLUX_DB_PASSWORD|MINIFLUX_ADMIN_USERNAME|MINIFLUX_ADMIN_PASSWORD|MINIFLUX_API_KEY_DESCRIPTION|\
-    HALO_DB_NAME|HALO_DB_USER|HALO_DB_PASSWORD|HALO_ADMIN_USERNAME|HALO_ADMIN_PASSWORD|HALO_ADMIN_EMAIL|HALO_PAT_NAME|HALO_EXTERNAL_URL)
+    HALO_DB_NAME|HALO_DB_USER|HALO_DB_PASSWORD|HALO_ADMIN_USERNAME|HALO_ADMIN_PASSWORD|HALO_ADMIN_EMAIL|HALO_SITE_TITLE|HALO_PAT_NAME|HALO_EXTERNAL_URL)
       return 0
       ;;
     *)
@@ -484,8 +485,11 @@ start_selected_services() {
     wait_for_http_ok "http://127.0.0.1:${MINIFLUX_HTTP_PORT}/healthz" 60 2 || fail "Miniflux 健康检查失败"
     export MINIFLUX_BASE_URL="http://127.0.0.1:${MINIFLUX_HTTP_PORT}"
     export APP_MINIFLUX_BASE_URL="http://miniflux:8080"
-    export APP_MINIFLUX_AUTH_TOKEN
-    APP_MINIFLUX_AUTH_TOKEN="$(bootstrap_miniflux)"
+    local miniflux_token
+    if ! miniflux_token="$(bootstrap_miniflux)"; then
+      fail "Miniflux bootstrap 失败"
+    fi
+    export APP_MINIFLUX_AUTH_TOKEN="${miniflux_token}"
     render_stack_files
   fi
 
@@ -496,8 +500,11 @@ start_selected_services() {
     export HALO_BASE_URL="http://127.0.0.1:${HALO_HTTP_PORT}"
     export APP_PUBLISH_CHANNEL="halo"
     export APP_PUBLISH_HALO_BASE_URL="http://halo:8090"
-    export APP_PUBLISH_HALO_TOKEN
-    APP_PUBLISH_HALO_TOKEN="$(bootstrap_halo)"
+    local halo_token
+    if ! halo_token="$(bootstrap_halo)"; then
+      fail "Halo bootstrap 失败"
+    fi
+    export APP_PUBLISH_HALO_TOKEN="${halo_token}"
     render_stack_files
   fi
 

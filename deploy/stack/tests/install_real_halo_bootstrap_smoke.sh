@@ -27,10 +27,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/apis/uc.api.security.halo.run/v1alpha1/personalaccesstokens":
             body = json.dumps({
-                "metadata": {"name": "fluxdigest-pat"},
+                "metadata": {
+                    "name": "fluxdigest-pat",
+                    "annotations": {
+                        "security.halo.run/access-token": "install_halo_access_token",
+                    },
+                },
                 "spec": {
                     "name": "FluxDigest Publisher",
-                    "tokenId": "install_halo_token",
+                    "tokenId": "install_halo_token_id",
                     "username": "halo-admin",
                     "scopes": ["*"],
                     "roles": ["superadmin"]
@@ -45,7 +50,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_GET(self):
-        if self.path.startswith("/apis/api.console.halo.run/v1alpha1/posts") and self.headers.get("Authorization") == "Bearer install_halo_token":
+        if self.path.startswith("/apis/api.console.halo.run/v1alpha1/posts") and self.headers.get("Authorization") == "Bearer install_halo_access_token":
             body = json.dumps({"items": []}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -75,6 +80,6 @@ export HALO_ADMIN_PASSWORD="halo-secret"
 export HALO_PAT_NAME="FluxDigest Publisher"
 
 token="$(bootstrap_halo)"
-[[ "${token}" == "install_halo_token" ]]
+[[ "${token}" == "install_halo_access_token" ]]
 
 echo "install real halo bootstrap smoke passed"

@@ -5,6 +5,129 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
+preferred_python_cmd() {
+  if command -v python >/dev/null 2>&1 && python --version >/dev/null 2>&1; then
+    printf '%s\n' "python"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1 && python3 --version >/dev/null 2>&1; then
+    printf '%s\n' "python3"
+    return 0
+  fi
+  return 1
+}
+
+halo_access_token_from_response() {
+  local payload="${1:?}"
+  local python_cmd
+  if python_cmd="$(preferred_python_cmd)"; then
+    HALO_PAT_PAYLOAD="${payload}" "${python_cmd}" - <<'PY'
+import json
+import os
+import sys
+
+payload = os.environ.get("HALO_PAT_PAYLOAD", "")
+
+try:
+    data = json.loads(payload)
+except Exception:
+    sys.exit(1)
+
+token = (
+    data.get("metadata", {})
+    .get("annotations", {})
+    .get("security.halo.run/access-token", "")
+)
+if token:
+    print(token)
+    sys.exit(0)
+
+sys.exit(1)
+PY
+    return $?
+  fi
+
+  local token
+  token="$(
+    printf '%s' "${payload}" |
+      tr -d '\r\n' |
+      sed -n 's/.*"security\.halo\.run\/access-token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+      head -n 1
+  )"
+  [[ -n "${token}" ]] || return 1
+  printf '%s\n' "${token}"
+}
+
+ensure_halo_initialized() {
+  local base="${HALO_BASE_URL%/}"
+  local tmp_dir cookies_file setup_html csrf response status body site_title
+  site_title="${HALO_SITE_TITLE:-FluxDigest}"
+  tmp_dir="$(mktemp -d)"
+  cookies_file="${tmp_dir}/cookies.txt"
+  setup_html="${tmp_dir}/setup.html"
+
+  response="$(
+    curl -sS \
+      -c "${cookies_file}" \
+      -o "${setup_html}" \
+      -w '%{http_code}' \
+      "${base}/system/setup"
+  )"
+  status="${response}"
+
+  case "${status}" in
+    302|303|307|308)
+      rm -rf "${tmp_dir}"
+      return 0
+      ;;
+    401|404)
+      rm -rf "${tmp_dir}"
+      return 0
+      ;;
+    200)
+      if ! grep -q 'action="/system/setup"' "${setup_html}"; then
+        rm -rf "${tmp_dir}"
+        return 0
+      fi
+      [[ -n "${HALO_ADMIN_EMAIL:-}" ]] || fail "HALO_ADMIN_EMAIL is required"
+      [[ -n "${HALO_EXTERNAL_URL:-}" ]] || fail "HALO_EXTERNAL_URL is required"
+      ;;
+    *)
+      fail "获取 Halo setup 页面失败: status=${status}"
+      ;;
+  esac
+
+  csrf="$(
+    sed -n 's/.*name="_csrf" value="\([^"]*\)".*/\1/p' "${setup_html}" |
+      head -n 1
+  )"
+  [[ -n "${csrf}" ]] || fail "无法从 Halo setup 页面提取 _csrf"
+
+  response="$(
+    curl -sS \
+      -b "${cookies_file}" \
+      -c "${cookies_file}" \
+      -H 'Content-Type: application/x-www-form-urlencoded' \
+      -X POST \
+      -w $'\n%{http_code}' \
+      "${base}/system/setup" \
+      --data-urlencode "_csrf=${csrf}" \
+      --data-urlencode "language=zh-CN" \
+      --data-urlencode "externalUrl=${HALO_EXTERNAL_URL}" \
+      --data-urlencode "siteTitle=${site_title}" \
+      --data-urlencode "username=${HALO_ADMIN_USERNAME}" \
+      --data-urlencode "email=${HALO_ADMIN_EMAIL}" \
+      --data-urlencode "password=${HALO_ADMIN_PASSWORD}"
+  )"
+  body="${response%$'\n'*}"
+  status="${response##*$'\n'}"
+  if [[ "${status}" != "204" ]]; then
+    fail "初始化 Halo 失败: status=${status:-unknown} body=${body:-empty}"
+  fi
+
+  rm -rf "${tmp_dir}"
+}
+
 halo_pat_payload() {
   cat <<EOF
 {
@@ -70,9 +193,11 @@ bootstrap_halo() {
   [[ -n "${HALO_ADMIN_PASSWORD:-}" ]] || fail "HALO_ADMIN_PASSWORD is required"
   [[ -n "${HALO_PAT_NAME:-}" ]] || fail "HALO_PAT_NAME is required"
 
+  ensure_halo_initialized
+
   local response token
   response="$(create_halo_pat "$(halo_pat_payload)")"
-  token="$(json_string_field "${response}" "tokenId")"
+  token="$(halo_access_token_from_response "${response}")"
 
   curl -fsS -H "Authorization: Bearer ${token}" "${HALO_BASE_URL%/}/apis/api.console.halo.run/v1alpha1/posts?page=1&size=1" >/dev/null
   printf '%s\n' "${token}"
