@@ -59,6 +59,13 @@ create_halo_pat() {
 
 bootstrap_halo() {
   [[ -n "${HALO_BASE_URL:-}" ]] || fail "HALO_BASE_URL is required"
+
+  local existing_token="${APP_PUBLISH_HALO_TOKEN:-}"
+  if [[ -n "${existing_token}" ]] && curl -fsS -H "Authorization: Bearer ${existing_token}" "${HALO_BASE_URL%/}/apis/api.console.halo.run/v1alpha1/posts?page=1&size=1" >/dev/null; then
+    printf '%s\n' "${existing_token}"
+    return 0
+  fi
+
   [[ -n "${HALO_ADMIN_USERNAME:-}" ]] || fail "HALO_ADMIN_USERNAME is required"
   [[ -n "${HALO_ADMIN_PASSWORD:-}" ]] || fail "HALO_ADMIN_PASSWORD is required"
   [[ -n "${HALO_PAT_NAME:-}" ]] || fail "HALO_PAT_NAME is required"
