@@ -1,59 +1,135 @@
-﻿# FluxDigest
+# FluxDigest
 
-FluxDigest 是面向个人自托管的 RSS 智能处理入口：
-Miniflux ⟶ FluxDigest 消费聚合内容、调用 LLM 处理、生成每日 digest，再通过发布器输送到 Halo 或 Markdown。
-FluxDigest 提供 API 与 WebUI 供运维/开发使用，但**不负责 RSS 订阅源管理**——这部分始终由 Miniflux 后台完成。
+> 把 Miniflux 里的 RSS 文章自动翻译、分析、摘要，生成“每日汇总日报”，并发布到 Halo 或通过 API 提供给其他系统。
 
-## FluxDigest 是什么 / 核心能力
-FluxDigest 的核心职能是把 Miniflux 已抓取的文章，通过 AI 进行翻译、分析、摘要与每日汇总，并把成果交由发布器输出。目前默认发布目标是 Halo，也可以导出为 Markdown 文件或通过 API 供其他系统消费。
+## 这是干嘛的
 
-主要能力：
-- LLM 翻译、分析、摘要与每日报告生成，支持主模型 + fallback chain，流程中可配置超时与重试策略。
-- Dashboard / 配置 WebUI 与 OpenAPI 管理端点，便于在运行时调整 Miniflux、LLM、发布通道等参数。
-- 多进程结构（API / Worker / Scheduler）+ systemd 脚本方便分离部署，Worker 负责文章处理、Scheduler 负责定时任务。
+FluxDigest 是一个面向个人自托管场景的 RSS 智能处理平台：
 
-## 组件职责与边界
-- Miniflux：管理 RSS 订阅源、抓取、分类，并提供已聚合文章给 FluxDigest。
-- FluxDigest：消费 Miniflux 产出的文章，负责翻译/分析/摘要、调度每日 digest 并交付发布器；WebUI/API 仅用于配置与运维，未承担订阅管理。
-- Halo：FluxDigest 当前默认推荐的发布目标，负责最终博客内容的渲染与呈现。
+- **Miniflux** 负责 RSS 订阅与抓取
+- **FluxDigest** 负责 AI 翻译、分析、摘要、日报聚合
+- **输出** 可以进入 Halo、Markdown 导出，或通过开放 API 被其他系统消费
 
-## 订阅管理说明
-所有订阅的添加、分组或更新必须在 Miniflux 后台完成；FluxDigest 只处理 Miniflux 已采集的内容，用于后续翻译、分析、汇总与发布。
+如果你已经在用 Miniflux，但不想每天自己读完所有订阅，FluxDigest 就是把“订阅流”变成“可读日报和单篇解读”的那层自动化。
 
-## 首次部署入门提示
-在正式进入文档之前，请先准备一台 Ubuntu 22.04/24.04 服务器、PostgreSQL 与 Redis （可由部署文档指引安装），并确保 Miniflux、LLM 服务与 Halo 可达。简单来说，先把基础依赖部署起来，再阅读下文推荐的文档按顺序执行。
+## 核心能力
 
-## 推荐阅读顺序（首次部署入口）
-1. [docs/deployment/full-stack-ubuntu.md](docs/deployment/full-stack-ubuntu.md)：从服务器准备到 PostgreSQL/Redis、Miniflux、Halo 与 FluxDigest 一步步覆盖，帮助你搭起完整环境。
-2. [docs/deployment/fluxdigest-systemd.md](docs/deployment/fluxdigest-systemd.md)：在完成依赖后，详读系统级部署与 systemd 管理，了解 env 文件、升级与回滚流程。
-3. [docs/deployment/integration-setup.md](docs/deployment/integration-setup.md)：最后调通 Miniflux、LLM、Halo 与 FluxDigest 的联动，并验证日报/发布是否正常。
-> 更多环境变量与配置细节请以 deploy/systemd/fluxdigest.env.example 与上述部署文档为准。
+- 单篇文章翻译、分析、摘要与结构化 dossier 产出
+- 自动聚合生成“每日汇总日报”
+- WebUI 在线配置 LLM、Miniflux、发布通道与提示词
+- 发布到 Halo，并通过 API 对外提供处理结果
 
-## 接口与集成
-- [开放接口总览](docs/api/open-api-guide.md)：以对外消费接口为主，管理/运维端点列于附录，不建议第三方直接把运维契约当公共依赖。
-- [OpenAPI 规范](api/openapi/openapi.yaml)：机器可读 schema、请求/响应与鉴权定义。
-- [联调与配置指南](docs/deployment/integration-setup.md)：联调入口（同上文档）。
+## 快速开始
 
-## 开发 Smoke 与正式部署边界
-- Smoke / 本地验证：deployments/compose/docker-compose.yml 仅提供 mock Miniflux/LLM 的基础依赖，用于开发、Smoke 测试或 CI 快速回归。
-- 正式环境：请基于真实 Miniflux、真实 LLM、真实 Halo，并通过 deploy/scripts/deploy-systemd.sh 等脚本交由 systemd 管理 FluxDigest API/Worker/Scheduler。
-> Compose 场景只是验证逻辑，不适合作为生产部署基础。
+### 1) 完整环境快速开始（推荐）
 
-## 默认管理员与安全建议
-FluxDigest 初次部署时默认管理员用户名/密码均为 FluxDigest（详见 internal/service/admin_user_service.go 默认用户逻辑）。当前版本会把该账户标记为 `must_change_password=true`，但尚未提供完整的密码修改 UI/API，因此上线前应限制 WebUI 暴露范围，并在 `deploy/systemd/fluxdigest.env.example` 中设置高强度的 `APP_ADMIN_SESSION_SECRET` 与 `APP_SECRET_KEY` 等安全密钥。
+适合第一次从 0 部署完整环境的用户。
+这条路径会带你完成 **PostgreSQL + Redis + Miniflux + Halo + FluxDigest** 的完整搭建。
 
-## 关键配置项概览
-- APP_MINIFLUX_BASE_URL / APP_MINIFLUX_AUTH_TOKEN：指向 Miniflux 后台地址和 API Token。
-- APP_LLM_BASE_URL / APP_LLM_API_KEY / APP_LLM_MODEL / APP_LLM_TIMEOUT_MS：外部 LLM 服务的入口、身份与超时控制。
-- APP_PUBLISH_HALO_BASE_URL / APP_PUBLISH_HALO_TOKEN / APP_PUBLISH_CHANNEL：Halo 发布通道配置（推荐显式设置为 halo），包含服务地址与 PAT。
-- APP_ADMIN_SESSION_SECRET：FluxDigest WebUI 管理会话签名密钥。
-- APP_SECRET_KEY：通用安全签名与加密密钥。
-> 以上配置示例可在 deploy/systemd/fluxdigest.env.example 查阅；完整配置清单请参照部署文档与该 env 文件。
+- 入口文档：[`docs/deployment/full-stack-ubuntu.md`](docs/deployment/full-stack-ubuntu.md)
+- 适用系统：Ubuntu 22.04 / 24.04 x86_64
+- 这是当前最快的完整环境落地路径
 
-## 快速访问入口
-- FluxDigest WebUI：http://<host>:18088/
-- Miniflux 示例入口：http://<host>:28082/
-- Halo 示例入口：http://<host>:8090/
+### 2) FluxDigest 本体一键部署（已有依赖时）
 
-## 总结
-本 README 作为首次部署用户的入口页，先理解各组件职责、默认凭据与关键配置，再按推荐顺序进入详细部署、systemd 以及联调文档。
+如果你已经准备好 PostgreSQL、Redis、Miniflux 和 Halo，可以直接使用现有 systemd 部署脚本：
+
+```bash
+sudo ./deploy/scripts/deploy-systemd.sh --app-root /opt/fluxdigest
+```
+
+这条脚本会负责：
+
+- 构建 Go 二进制与 WebUI
+- 安装 release 到目标目录
+- 切换 `current` 软链
+- 安装 / 重启 `rss-api`、`rss-worker`、`rss-scheduler`
+- 执行健康检查
+
+进一步的升级与回滚说明见：[`docs/deployment/fluxdigest-systemd.md`](docs/deployment/fluxdigest-systemd.md)
+
+### 3) 本地 smoke / 开发验证
+
+如果你只是想先验证主流程或本地开发调试，可以运行：
+
+```powershell
+./scripts/smoke-compose.ps1
+```
+
+它适合开发验证，不是生产部署入口。
+
+## 部署完成后先看这里
+
+| 入口 | 默认地址 | 用途 |
+| --- | --- | --- |
+| FluxDigest WebUI / API | `http://<host>:18088/` | 配置 LLM、Miniflux、发布通道、提示词，查看任务状态 |
+| Miniflux 后台 | `http://<host>:28082/` | 添加和管理 RSS 订阅源 |
+| Halo 后台 | `http://<host>:8090/` | 查看和管理最终发布内容 |
+| 开放接口文档 | [`docs/api/open-api-guide.md`](docs/api/open-api-guide.md) | 查看人工可读接口总览 |
+| OpenAPI | [`api/openapi/openapi.yaml`](api/openapi/openapi.yaml) | 查看机器可读接口契约 |
+
+## 最常见的使用流程
+
+1. 在 **Miniflux 后台** 添加 RSS 订阅源
+2. 在 **FluxDigest WebUI** 配置 LLM、Miniflux、Halo / 发布通道
+3. 手动触发或等待定时日报生成
+4. 在 **Halo** 或 **开放 API** 中查看单篇解读和每日汇总结果
+
+> 注意：RSS 订阅源管理始终在 Miniflux 中完成；FluxDigest 不负责订阅管理，只处理 Miniflux 已抓取的内容。
+
+## 文档导航
+
+- 完整环境部署：[`docs/deployment/full-stack-ubuntu.md`](docs/deployment/full-stack-ubuntu.md)
+- systemd 部署 / 升级 / 回滚：[`docs/deployment/fluxdigest-systemd.md`](docs/deployment/fluxdigest-systemd.md)
+- 联调与配置：[`docs/deployment/integration-setup.md`](docs/deployment/integration-setup.md)
+- 开放接口总览：[`docs/api/open-api-guide.md`](docs/api/open-api-guide.md)
+- OpenAPI：[`api/openapi/openapi.yaml`](api/openapi/openapi.yaml)
+
+## 开发者入口
+
+### 本地开发
+
+```bash
+make run-api
+make run-worker
+make run-scheduler
+```
+
+前端开发：
+
+```bash
+npm --prefix web ci
+npm --prefix web run dev
+```
+
+### 测试命令
+
+```bash
+go test ./...
+npm --prefix web test -- --run
+```
+
+### 运行结构
+
+- `rss-api`：API、WebUI 静态资源托管、管理接口
+- `rss-worker`：文章处理、日报生成、发布执行
+- `rss-scheduler`：定时触发任务
+
+### 目录结构（简版）
+
+```text
+.
+├─ api/openapi/           # OpenAPI 契约
+├─ cmd/                   # 三个进程入口
+├─ configs/               # 示例配置与默认 prompts
+├─ deploy/                # systemd 部署脚本与模板
+├─ docs/                  # 部署、接口与其他说明文档
+├─ internal/              # 应用实现
+└─ web/                   # React WebUI
+```
+
+### 扩展参考
+
+- 发布渠道扩展：`internal/adapter/publisher/`
+- LLM 接入：`internal/adapter/llm/`
+- 运行时 profile：`internal/domain/profile/`
