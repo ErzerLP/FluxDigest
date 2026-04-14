@@ -289,6 +289,52 @@ generate_credentials() {
   log_info "Credentials and environment variables generated"
 }
 
+preservable_env_key() {
+  case "${1:-}" in
+    http_proxy|https_proxy|HTTP_PROXY|HTTPS_PROXY|GOPROXY|GOSUMDB|DOCKER_CONFIGURE_DAEMON_PROXY|DOCKER_SYSTEMD_DROPIN_DIR|POSTGRES_IMAGE|REDIS_IMAGE|MINIFLUX_IMAGE|HALO_IMAGE|\
+    APP_HTTP_PORT|APP_DATABASE_NAME|APP_DATABASE_USER|APP_DATABASE_PASSWORD|APP_DATABASE_DSN|APP_REDIS_ADDR|APP_JOB_API_KEY|APP_JOB_QUEUE|APP_WORKER_CONCURRENCY|\
+    APP_ADMIN_SESSION_SECRET|APP_SECRET_KEY|APP_ADMIN_BOOTSTRAP_USERNAME|APP_ADMIN_BOOTSTRAP_PASSWORD|APP_MINIFLUX_BASE_URL|APP_MINIFLUX_AUTH_TOKEN|\
+    APP_LLM_BASE_URL|APP_LLM_API_KEY|APP_LLM_MODEL|APP_LLM_FALLBACK_MODELS|APP_LLM_TIMEOUT_MS|\
+    APP_PUBLISH_CHANNEL|APP_PUBLISH_HALO_BASE_URL|APP_PUBLISH_HALO_TOKEN|APP_PUBLISH_OUTPUT_DIR|\
+    POSTGRES_ROOT_USER|POSTGRES_ROOT_PASSWORD|POSTGRES_DEFAULT_DB|\
+    FLUXDIGEST_DB_NAME|FLUXDIGEST_DB_USER|FLUXDIGEST_DB_PASSWORD|\
+    MINIFLUX_DB_NAME|MINIFLUX_DB_USER|MINIFLUX_DB_PASSWORD|MINIFLUX_ADMIN_USERNAME|MINIFLUX_ADMIN_PASSWORD|MINIFLUX_API_KEY_DESCRIPTION|\
+    HALO_DB_NAME|HALO_DB_USER|HALO_DB_PASSWORD|HALO_ADMIN_USERNAME|HALO_ADMIN_PASSWORD|HALO_ADMIN_EMAIL|HALO_PAT_NAME|HALO_EXTERNAL_URL)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+load_existing_env_values() {
+  local existing_env="${STACK_DIR}/.env"
+  [[ -f "${existing_env}" ]] || return 0
+
+  local loaded=0
+  local line key value
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    [[ -n "${line}" ]] || continue
+    [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+    [[ "${line}" == *=* ]] || continue
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="$(trim_spaces "${key}")"
+    preservable_env_key "${key}" || continue
+    if [[ -z "${!key+x}" ]]; then
+      export "${key}=${value}"
+      loaded=1
+    fi
+  done < "${existing_env}"
+
+  if [[ "${loaded}" -eq 1 ]]; then
+    log_info "Loaded existing stack env defaults from ${existing_env}"
+  fi
+}
+
 escape_systemd_env_value() {
   printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
@@ -566,6 +612,7 @@ main() {
   ensure_linux
   ensure_required_commands
   prepare_stack_dir
+  load_existing_env_values
   generate_credentials
   render_stack_files
   configure_docker_daemon_proxy_if_needed
