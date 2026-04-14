@@ -104,6 +104,11 @@ random_token() {
   openssl rand -hex "${length}" | awk -v max="${hex_len}" '{print substr($0,1,max)}'
 }
 
+random_base64_token() {
+  local bytes="${1:-24}"
+  openssl rand -base64 "${bytes}" | tr -d '\r\n'
+}
+
 json_string_field() {
   local payload="${1:?}"
   local field="${2:?}"

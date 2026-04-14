@@ -35,6 +35,12 @@ if [[ "${1:-}" == "rand" && "${2:-}" == "-hex" ]]; then
   awk -v n="${len}" 'BEGIN { for (i = 0; i < n * 2; i++) printf "a"; printf "\n" }'
   exit 0
 fi
+if [[ "${1:-}" == "rand" && "${2:-}" == "-base64" ]]; then
+  bytes="${3:-24}"
+  chars=$(( ((bytes + 2) / 3) * 4 ))
+  awk -v n="${chars}" 'BEGIN { for (i = 0; i < n; i++) printf "A"; printf "\n" }'
+  exit 0
+fi
 echo "mock-openssl" >&2
 exit 1
 EOF
@@ -66,12 +72,18 @@ bootstrap_halo() { :; }
 STACK_DIR="$(cd "${WORK_DIR}/${STACK_DIR_REL}" && pwd -P)"
 
 summary_file="${STACK_DIR}/install-summary.txt"
+env_file="${STACK_DIR}/.env"
 [[ -f "${summary_file}" ]] || fail "install-summary.txt 未生成"
+[[ -f "${env_file}" ]] || fail ".env 未生成"
 grep -q "Install Profile: fluxdigest-only" "${summary_file}" || fail "summary 缺少 profile"
 grep -q "FluxDigest WebUI / API: http://<host>:18088" "${summary_file}" || fail "summary 缺少 FluxDigest URL"
 grep -qE '^- \.env: /' "${summary_file}" || fail "summary 的 .env 路径不是绝对路径"
 grep -qE '^- docker-compose.yml: /' "${summary_file}" || fail "summary 的 docker-compose.yml 路径不是绝对路径"
 grep -qE '^- install-summary.txt: /' "${summary_file}" || fail "summary 的 install-summary.txt 路径不是绝对路径"
+
+app_secret_key="$(sed -n 's/^APP_SECRET_KEY=//p' "${env_file}" | head -n 1)"
+[[ -n "${app_secret_key}" ]] || fail "APP_SECRET_KEY 未写入 .env"
+[[ "${#app_secret_key}" -eq 32 ]] || fail "APP_SECRET_KEY 长度应为 32 字节，实际为 ${#app_secret_key}"
 
 grep -Eq 'docker compose .*up -d postgres redis' "${MOCK_DOCKER_LOG}" || fail "mock docker 日志缺少基础服务 up 命令"
 grep -Eq 'docker compose .*up -d fluxdigest-api fluxdigest-worker fluxdigest-scheduler' "${MOCK_DOCKER_LOG}" || fail "mock docker 日志缺少 FluxDigest 服务 up 命令"

@@ -240,7 +240,7 @@ generate_credentials() {
   export APP_WORKER_CONCURRENCY="${APP_WORKER_CONCURRENCY:-6}"
 
   export APP_ADMIN_SESSION_SECRET="${APP_ADMIN_SESSION_SECRET:-$(random_token 32)}"
-  export APP_SECRET_KEY="${APP_SECRET_KEY:-$(random_token 32)}"
+  export APP_SECRET_KEY="${APP_SECRET_KEY:-$(random_base64_token 24)}"
   export APP_ADMIN_BOOTSTRAP_USERNAME="${APP_ADMIN_BOOTSTRAP_USERNAME:-fluxdigest-admin}"
   export APP_ADMIN_BOOTSTRAP_PASSWORD="${APP_ADMIN_BOOTSTRAP_PASSWORD:-$(random_token 20)}"
 

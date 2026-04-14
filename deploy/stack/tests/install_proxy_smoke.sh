@@ -45,6 +45,12 @@ if [[ "${1:-}" == "rand" && "${2:-}" == "-hex" ]]; then
   awk -v n="${len}" 'BEGIN { for (i = 0; i < n * 2; i++) printf "b"; printf "\n" }'
   exit 0
 fi
+if [[ "${1:-}" == "rand" && "${2:-}" == "-base64" ]]; then
+  bytes="${3:-24}"
+  chars=$(( ((bytes + 2) / 3) * 4 ))
+  awk -v n="${chars}" 'BEGIN { for (i = 0; i < n; i++) printf "B"; printf "\n" }'
+  exit 0
+fi
 echo "mock-openssl" >&2
 exit 1
 EOF
