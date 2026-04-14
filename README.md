@@ -1,286 +1,54 @@
-# FluxDigest
-
-FluxDigest 是一个基于 Go 的 RSS 智能处理平台：从 Miniflux 拉取内容，使用 LLM 做翻译/分析，总结成每日日报，并通过发布器输出到外部渠道或本地文件。
-
-它同时提供 API + WebUI，支持运行时配置管理，便于后续扩展更多模型、发布渠道和集成接口。
-
-## 1) 项目介绍
-
-### FluxDigest 是什么
-
-- 面向个人/小团队的 RSS 内容处理与日报发布平台
-- 主流程：`Miniflux -> AI 处理 -> 日报聚合 -> 发布`
-- 采用 `rss-api`、`rss-worker`、`rss-scheduler` 三进程拆分，便于独立扩缩/部署
-
-### 核心能力
-
-- Miniflux 文章抓取与入库
-- 基于 OpenAI-compatible 接口的翻译、分析、摘要生成
-- 每日汇总日报（默认按 Asia/Shanghai 调度）
-- 多发布通道（当前内置 `halo` 与 `markdown_export`）
-- API 查询与任务触发
-- WebUI 管理（当前已完整接入 LLM 配置页，其余配置页为占位壳层）
-
-### 适用场景
-
-- 用 Miniflux 做订阅聚合，希望自动产出中文日报
-- 需要把 AI 处理结果沉淀到 DB，并通过 API 对外提供
-- 需要可持续扩展的接口/发布器生态（新增适配器而非重写主流程）
-
-## 2) 系统架构 / 核心组件
-
-```text
-Miniflux --> rss-worker --> LLM
-                   |         |
-                   v         v
-               PostgreSQL   Prompts
-                   |
-                   v
-               Publisher ----> Halo / Markdown 文件
-
-rss-scheduler --> Asynq(Redis) --> rss-worker
-rss-api -------> DB + Asynq + WebUI(静态资源)
-```
-
-核心组件：
-
-- `rss-api`：HTTP API、OpenAPI 对应接口、管理端接口、静态 WebUI 托管
-- `rss-worker`：任务消费、文章处理、日报生成、发布执行
-- `rss-scheduler`：定时触发日报任务
-- `Miniflux`：RSS 聚合源
-- `LLM`：翻译/分析/日报规划（支持主模型 + fallback model chain）
-- `Publisher`：发布适配层（halo / markdown_export）
-
-## 3) 主要功能清单
-
-- 健康检查与指标：`/healthz`、`/metrics`
-- 文章查询：`/api/v1/articles`
-- Dossier 查询：`/api/v1/dossiers`、`/api/v1/dossiers/{id}`
-- 最新日报查询：`/api/v1/digests/latest`
-- Profile 查询：`/api/v1/profiles/{profileType}/active`
-- 管理接口：
-  - `/api/v1/admin/status`
-  - `/api/v1/admin/configs`
-  - `/api/v1/admin/configs/llm`（更新 LLM）
-  - `/api/v1/admin/test/llm`（连通性测试）
-  - `/api/v1/admin/jobs`
-- 任务触发（需 `X-API-Key`）：
-  - `POST /api/v1/jobs/daily-digest`
-  - `POST /api/v1/jobs/article-reprocess`
-
-## 4) 快速开始（本地开发）
-
-### 4.1 准备依赖
-
-- Go `1.24+`
-- Node.js `22+`
-- PostgreSQL
-- Redis
-
-### 4.2 配置
-
-```bash
-cp configs/config.example.yaml configs/config.yaml
-```
-
-或直接使用环境变量（推荐，优先级高于 YAML）。
-
-### 4.3 启动基础依赖（可选：用 compose 只拉基础服务）
-
-```bash
-docker compose -f deployments/compose/docker-compose.yml up -d postgres redis
-```
-
-### 4.4 启动后端三进程
-
-```bash
-# API
-make run-api
-
-# Worker
-make run-worker
-
-# Scheduler
-make run-scheduler
-```
-
-### 4.5 启动 WebUI（开发模式）
-
-```bash
-npm --prefix web ci
-npm --prefix web run dev
-```
-
-默认通过 Vite 代理到 `http://127.0.0.1:8080`。
-
-### 4.6 一键 smoke（Windows PowerShell）
-
-```powershell
-./scripts/smoke-compose.ps1
-```
-
-## 5) 配置说明（重点）
-
-配置读取顺序：`默认值 -> configs/config.yaml -> APP_* 环境变量覆盖`
-
-关键环境变量：
-
-- 基础
-  - `APP_HTTP_PORT`
-  - `APP_DATABASE_DSN`
-  - `APP_REDIS_ADDR`
-  - `APP_JOB_API_KEY`
-  - `APP_JOB_QUEUE`
-  - `APP_WORKER_CONCURRENCY`
-- Miniflux
-  - `APP_MINIFLUX_BASE_URL`
-  - `APP_MINIFLUX_AUTH_TOKEN`
-- LLM
-  - `APP_LLM_BASE_URL`
-  - `APP_LLM_API_KEY`
-  - `APP_LLM_MODEL`
-  - `APP_LLM_FALLBACK_MODELS`（逗号分隔）
-  - `APP_LLM_TIMEOUT_MS`
-- 发布
-  - `APP_PUBLISH_CHANNEL`（`halo` / `markdown` / `markdown_export`）
-  - `APP_PUBLISH_HALO_BASE_URL`
-  - `APP_PUBLISH_HALO_TOKEN`
-  - `APP_PUBLISH_OUTPUT_DIR`
-- WebUI 静态资源托管
-  - `APP_STATIC_DIR`
-
-参考：`configs/config.example.yaml`、`deploy/systemd/fluxdigest.env.example`。
-
-### 5.1 Halo 官方发布器说明
-
-- `channel=halo`：走 Halo 官方 Console API
-- 建议迁移时**显式设置** `APP_PUBLISH_CHANNEL=halo`，不要依赖空值自动选择，避免被遗留的 `APP_PUBLISH_OUTPUT_DIR` / 旧发布配置误导
-- 需要配置：
-  - `APP_PUBLISH_HALO_BASE_URL`，例如 `http://127.0.0.1:8090`
-  - `APP_PUBLISH_HALO_TOKEN`，即 Halo Personal Access Token
-- 当前实现链路：
-  - `POST /apis/api.console.halo.run/v1alpha1/posts`
-  - `PUT /apis/api.console.halo.run/v1alpha1/posts/{name}/publish`
-- `RemoteID` 保存 Halo `metadata.name`
-- `RemoteURL` 保存 Halo `status.permalink`
-- 当前策略：
-  - `metadata.name` 使用内部唯一值 `fluxdigest-<unixnano>`
-  - `spec.slug` 使用 ASCII 化后的日报别名，例如 `daily-digest-20260413-070000`
-
-## 6) 部署教程
-
-### 6.1 普通开发 / 手动运行
-
-适合本地或临时环境：
-
-```bash
-# 方式 A：直接运行源码（开发期最常用）
-make run-api
-make run-worker
-make run-scheduler
-
-# 方式 B：先编译，再运行产物（文件名按平台变化）
-make build
-./rss-api
-./rss-worker
-./rss-scheduler
-```
-
-### 6.2 systemd 正式部署
-
-使用脚本：`deploy/scripts/deploy-systemd.sh`
-
-默认行为：
-
-1. 构建 Go + Web 产物（可 `--skip-build` 跳过）
-2. 安装到 `${APP_ROOT}/releases/<release_id>`
-3. 切换 `${APP_ROOT}/current` 软链
-4. 渲染并安装三个 service unit
-5. `systemctl daemon-reload && enable --now && restart`
-6. 健康检查（默认 `http://127.0.0.1:${APP_HTTP_PORT}/healthz`）
-
-示例：
-
-```bash
-sudo ./deploy/scripts/deploy-systemd.sh --app-root /opt/fluxdigest
-```
-
-### 6.3 升级脚本
-
-`deploy/scripts/upgrade-systemd.sh` 是标准升级入口，本质透传到 `deploy-systemd.sh`。
-
-```bash
-sudo ./deploy/scripts/upgrade-systemd.sh
-sudo ./deploy/scripts/upgrade-systemd.sh --skip-build --release-retention 7
-```
-
-### 6.4 回滚脚本
-
-使用 `deploy/scripts/rollback-systemd.sh`：
-
-- 不带参数：自动回滚到上一个可用 release
-- `--release-id <id>`：回滚到指定 release
-
-```bash
-sudo ./deploy/scripts/rollback-systemd.sh
-sudo ./deploy/scripts/rollback-systemd.sh --release-id 20260413093000
-```
-
-### 6.5 release 保留/自动清理
-
-- 部署脚本默认 `RELEASE_RETENTION=5`
-- 仅保留最近 N 个数字命名 release（`YYYYMMDDHHMMSS`）
-- 自动跳过当前 `current` 指向版本
-- `RELEASE_RETENTION=0` 可关闭自动清理
-
-## 7) WebUI 用途说明
-
-WebUI 路由位于 `web/src/app/router/index.tsx`，当前包含：
-
-- Dashboard：系统概览、集成状态、最近任务摘要
-- LLM Config：可读取/更新 LLM 配置，支持在线连通性测试
-- Jobs：查看任务记录
-- Miniflux / Prompts / Publish：目前是占位壳层页面（用于后续接入配置能力）
-
-生产环境中，API 可通过 `APP_STATIC_DIR` 直接托管前端构建产物。
-
-## 8) API / OpenAPI 与扩展能力
-
-- OpenAPI 文件：`api/openapi/openapi.yaml`
-- API 前缀：`/api/v1`
-- 管理与任务触发接口已按契约暴露
-
-扩展能力建议：
-
-- 新发布渠道：实现 `internal/adapter/publisher.Publisher` 接口并在 `buildPublisher` 中注册
-- 新模型接入：复用 `internal/adapter/llm` 工厂与 runtime profile
-- 新运行时配置：沿用 profile 版本化机制（`internal/domain/profile` + repository/service）
-
-## 9) 项目目录结构（简版）
-
-```text
-.
-├─ api/openapi/                # OpenAPI 契约
-├─ cmd/
-│  ├─ rss-api/                 # API 入口
-│  ├─ rss-worker/              # Worker 入口
-│  └─ rss-scheduler/           # Scheduler 入口
-├─ configs/
-│  ├─ config.example.yaml
-│  └─ prompts/                 # 默认提示词模板
-├─ deploy/
-│  ├─ scripts/                 # systemd deploy / upgrade / rollback
-│  └─ systemd/                 # unit 模板与 env 示例
-├─ deployments/
-│  ├─ compose/
-│  └─ docker/
-├─ internal/
-│  ├─ adapter/                 # Miniflux/LLM/Publisher 适配
-│  ├─ app/                     # API/Worker/Scheduler 组装
-│  ├─ repository/              # PostgreSQL 持久化
-│  ├─ service/                 # 业务服务
-│  ├─ workflow/                # 工作流
-│  └─ task/asynq/              # 队列任务定义
-├─ migrations/                 # DB migration
-└─ web/                        # React + Vite WebUI
-```
+﻿# FluxDigest
+
+FluxDigest 是面向个人自托管的 RSS 智能处理入口：
+Miniflux ⟶ FluxDigest 消费聚合内容、调用 LLM 处理、生成每日 digest，再通过发布器输送到 Halo 或 Markdown。
+FluxDigest 提供 API 与 WebUI 供运维/开发使用，但**不负责 RSS 订阅源管理**——这部分始终由 Miniflux 后台完成。
+
+## FluxDigest 是什么 / 核心能力
+FluxDigest 的核心职能是把 Miniflux 已抓取的文章，通过 AI 进行翻译、分析、摘要与每日汇总，并把成果交由发布器输出。目前默认发布目标是 Halo，也可以导出为 Markdown 文件或通过 API 供其他系统消费。
+
+主要能力：
+- LLM 翻译、分析、摘要与每日报告生成，支持主模型 + fallback chain，流程中可配置超时与重试策略。
+- Dashboard / 配置 WebUI 与 OpenAPI 管理端点，便于在运行时调整 Miniflux、LLM、发布通道等参数。
+- 多进程结构（API / Worker / Scheduler）+ systemd 脚本方便分离部署，Worker 负责文章处理、Scheduler 负责定时任务。
+
+## 组件职责与边界
+- Miniflux：管理 RSS 订阅源、抓取、分类，并提供已聚合文章给 FluxDigest。
+- FluxDigest：消费 Miniflux 产出的文章，负责翻译/分析/摘要、调度每日 digest 并交付发布器；WebUI/API 仅用于配置与运维，未承担订阅管理。
+- Halo：FluxDigest 当前默认推荐的发布目标，负责最终博客内容的渲染与呈现。
+
+## 订阅管理说明
+所有订阅的添加、分组或更新必须在 Miniflux 后台完成；FluxDigest 只处理 Miniflux 已采集的内容，用于后续翻译、分析、汇总与发布。
+
+## 首次部署入门提示
+在正式进入文档之前，请先准备一台 Ubuntu 22.04/24.04 服务器、PostgreSQL 与 Redis （可由部署文档指引安装），并确保 Miniflux、LLM 服务与 Halo 可达。简单来说，先把基础依赖部署起来，再阅读下文推荐的文档按顺序执行。
+
+## 推荐阅读顺序（首次部署入口）
+1. [docs/deployment/full-stack-ubuntu.md](docs/deployment/full-stack-ubuntu.md)：从服务器准备到 PostgreSQL/Redis、Miniflux、Halo 与 FluxDigest 一步步覆盖，帮助你搭起完整环境。
+2. [docs/deployment/fluxdigest-systemd.md](docs/deployment/fluxdigest-systemd.md)：在完成依赖后，详读系统级部署与 systemd 管理，了解 env 文件、升级与回滚流程。
+3. [docs/deployment/integration-setup.md](docs/deployment/integration-setup.md)：最后调通 Miniflux、LLM、Halo 与 FluxDigest 的联动，并验证日报/发布是否正常。
+> 更多环境变量与配置细节请以 deploy/systemd/fluxdigest.env.example 与上述部署文档为准。
+
+## 开发 Smoke 与正式部署边界
+- Smoke / 本地验证：deployments/compose/docker-compose.yml 仅提供 mock Miniflux/LLM 的基础依赖，用于开发、Smoke 测试或 CI 快速回归。
+- 正式环境：请基于真实 Miniflux、真实 LLM、真实 Halo，并通过 deploy/scripts/deploy-systemd.sh 等脚本交由 systemd 管理 FluxDigest API/Worker/Scheduler。
+> Compose 场景只是验证逻辑，不适合作为生产部署基础。
+
+## 默认管理员与安全建议
+FluxDigest 初次部署时默认管理员用户名/密码均为 FluxDigest（详见 internal/service/admin_user_service.go 默认用户逻辑），首次登录后务必立即修改密码，并在 deploy/systemd/fluxdigest.env.example 中设置新的 APP_ADMIN_SESSION_SECRET 与 APP_SECRET_KEY 等安全密钥。
+
+## 关键配置项概览
+- APP_MINIFLUX_BASE_URL / APP_MINIFLUX_AUTH_TOKEN：指向 Miniflux 后台地址和 API Token。
+- APP_LLM_BASE_URL / APP_LLM_API_KEY / APP_LLM_MODEL / APP_LLM_TIMEOUT_MS：外部 LLM 服务的入口、身份与超时控制。
+- APP_PUBLISH_HALO_BASE_URL / APP_PUBLISH_HALO_TOKEN / APP_PUBLISH_CHANNEL：Halo 发布通道配置（推荐显式设置为 halo），包含服务地址与 PAT。
+- APP_ADMIN_SESSION_SECRET：FluxDigest WebUI 管理会话签名密钥。
+- APP_SECRET_KEY：通用安全签名与加密密钥。
+> 以上配置示例可在 deploy/systemd/fluxdigest.env.example 查阅；完整配置清单请参照部署文档与该 env 文件。
+
+## 快速访问入口
+- FluxDigest WebUI：http://<host>:18088/
+- Miniflux 示例入口：http://<host>:28082/
+- Halo 示例入口：http://<host>:8090/
+
+## 总结
+本 README 作为首次部署用户的入口页，先理解各组件职责、默认凭据与关键配置，再按推荐顺序进入详细部署、systemd 以及联调文档。
