@@ -61,27 +61,25 @@ collect_service_entries() {
 }
 
 profile_has_service() {
-  local profile="${1:-${STACK_PROFILE:-fluxdigest-only}}"
+  local profile="${1:-${STACK_PROFILE:-full}}"
   local service="${2:?}"
-  local extra_list="${STACK_PROFILE_SERVICES:-}"
   local candidates=()
 
-  while IFS= read -r entry; do
-    candidates+=("$entry")
-  done < <(collect_service_entries "$extra_list")
-
   case "$profile" in
+    full)
+      candidates+=(postgres redis fluxdigest-api fluxdigest-worker fluxdigest-scheduler miniflux halo)
+      ;;
     fluxdigest-only)
-      candidates+=(postgres redis fluxdigest-api)
+      candidates+=(postgres redis fluxdigest-api fluxdigest-worker fluxdigest-scheduler)
       ;;
     fluxdigest-miniflux)
-      candidates+=(postgres redis fluxdigest-api miniflux)
+      candidates+=(postgres redis fluxdigest-api fluxdigest-worker fluxdigest-scheduler miniflux)
       ;;
     fluxdigest-halo)
-      candidates+=(postgres redis fluxdigest-api halo)
+      candidates+=(postgres redis fluxdigest-api fluxdigest-worker fluxdigest-scheduler halo)
       ;;
     fluxdigest-full)
-      candidates+=(postgres redis fluxdigest-api miniflux halo)
+      candidates+=(postgres redis fluxdigest-api fluxdigest-worker fluxdigest-scheduler miniflux halo)
       ;;
     *)
       while IFS= read -r entry; do
@@ -101,19 +99,22 @@ profile_has_service() {
 
 random_token() {
   local length="${1:-24}"
-  local python_cmd=""
-  if command -v python >/dev/null 2>&1; then
-    python_cmd=python
-  elif command -v python3 >/dev/null 2>&1; then
-    python_cmd=python3
-  else
-    fail "无法生成随机 token：缺少 python3/python"
-  fi
+  local hex_len
+  hex_len=$((length * 2))
+  openssl rand -hex "${length}" | awk -v max="${hex_len}" '{print substr($0,1,max)}'
+}
 
-  "$python_cmd" <<'PY' "$length"
-import secrets
-import sys
-size = int(sys.argv[1])
-print(secrets.token_urlsafe(size))
-PY
+json_string_field() {
+  local payload="${1:?}"
+  local field="${2:?}"
+  local value
+  value="$(
+    printf '%s' "${payload}" |
+      tr -d '\r\n' |
+      sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" |
+      head -n 1
+  )"
+
+  [[ -n "${value}" ]] || fail "无法从 JSON 中提取字段: ${field}"
+  printf '%s\n' "${value}"
 }
