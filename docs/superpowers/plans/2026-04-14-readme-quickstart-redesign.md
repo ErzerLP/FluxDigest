@@ -78,7 +78,7 @@ FluxDigest 是一个面向个人自托管场景的 RSS 智能处理平台：
 
 ### 1) 完整环境快速开始（推荐）
 
-适合第一次部署完整环境的用户。  
+适合第一次部署完整环境的用户。
 这条路径会带你完成 **PostgreSQL + Redis + Miniflux + Halo + FluxDigest** 的完整搭建：
 
 - 入口文档：[`docs/deployment/full-stack-ubuntu.md`](docs/deployment/full-stack-ubuntu.md)
