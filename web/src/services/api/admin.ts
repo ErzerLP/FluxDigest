@@ -8,6 +8,9 @@ import type {
   ProfileVersion,
   RunJobResponse,
   UpdateLLMConfigInput,
+  UpdateMinifluxConfigInput,
+  UpdatePromptConfigInput,
+  UpdatePublishConfigInput,
 } from '../../types/admin';
 
 const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
@@ -59,11 +62,6 @@ async function parseResponse<T>(response: Response): Promise<T> {
   }
 
   return (await response.text()) as T;
-}
-
-function getAdminRequestTimeoutMS() {
-  const runtimeTimeout = (globalThis as adminRuntimeGlobals).__ADMIN_REQUEST_TIMEOUT_MS__;
-  return normalizeAdminRequestTimeoutMS(runtimeTimeout);
 }
 
 function normalizeAdminRequestTimeoutMS(timeoutMS?: number) {
@@ -165,10 +163,47 @@ export function updateLLMConfig(input: UpdateLLMConfigInput) {
 export function testLLMConfig(input: LLMTestDraft) {
   const timeoutMS = normalizeAdminRequestTimeoutMS(input.timeout_ms);
 
-  return requestAdmin<ConnectivityTestResult>('/test/llm', {
-    method: 'POST',
+  return requestAdmin<ConnectivityTestResult>(
+    '/test/llm',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+    timeoutMS,
+  );
+}
+
+export function updateMinifluxConfig(input: UpdateMinifluxConfigInput) {
+  return requestAdmin<ProfileVersion>('/configs/miniflux', {
+    method: 'PUT',
     body: JSON.stringify(input),
-  }, timeoutMS);
+  });
+}
+
+export function testMinifluxConfig() {
+  return requestAdmin<ConnectivityTestResult>('/test/miniflux', {
+    method: 'POST',
+  });
+}
+
+export function updatePublishConfig(input: UpdatePublishConfigInput) {
+  return requestAdmin<ProfileVersion>('/configs/publish', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
+}
+
+export function testPublishConfig() {
+  return requestAdmin<ConnectivityTestResult>('/test/publish', {
+    method: 'POST',
+  });
+}
+
+export function updatePromptConfig(input: UpdatePromptConfigInput) {
+  return requestAdmin<ProfileVersion>('/configs/prompts', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
 }
 
 export function getJobRuns(limit = 20) {

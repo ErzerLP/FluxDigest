@@ -1,6 +1,7 @@
 export type SecretMode = 'keep' | 'replace' | 'clear';
 
 export type RecordValue = Record<string, unknown>;
+export type PublishProvider = 'halo' | 'markdown_export';
 
 export interface SecretView {
   is_set?: boolean;
@@ -22,7 +23,7 @@ export interface MinifluxConfigView {
 }
 
 export interface PublishConfigView {
-  provider?: string;
+  provider?: PublishProvider;
   halo_base_url?: string;
   halo_token?: SecretView;
   output_dir?: string;
@@ -88,7 +89,7 @@ export interface UpdateMinifluxConfigInput {
 }
 
 export interface UpdatePublishConfigInput {
-  provider?: string;
+  provider?: PublishProvider;
   halo_base_url?: string;
   halo_token?: SecretInput;
   output_dir?: string;

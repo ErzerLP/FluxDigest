@@ -446,9 +446,15 @@ select {
 .job-row-subtitle,
 .detail-value,
 .detail-json,
-.empty-state {
+.empty-state,
+.helper-list {
   color: var(--text-secondary);
   line-height: 1.65;
+}
+
+.helper-list {
+  margin: 0;
+  padding-left: 1.1rem;
 }
 
 .empty-state {
@@ -560,6 +566,11 @@ select {
   outline: none;
   border-color: var(--border-strong);
   box-shadow: 0 0 0 3px rgba(69, 214, 255, 0.12);
+}
+
+.console-textarea {
+  min-height: 10rem;
+  resize: vertical;
 }
 
 .form-fieldset {
@@ -734,3 +745,4 @@ select {
     animation-duration: 0ms !important;
   }
 }
+
