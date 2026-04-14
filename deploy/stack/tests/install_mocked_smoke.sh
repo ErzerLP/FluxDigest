@@ -46,6 +46,8 @@ export MOCK_DOCKER_LOG
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/../install.sh"
 
+[[ "${STACK_DIR}" == "/opt/fluxdigest-stack" ]] || fail "source install.sh 后默认 STACK_DIR 不正确: ${STACK_DIR}"
+
 # 覆写高耦合步骤，避免依赖真实宿主环境
 ensure_linux() { :; }
 wait_for_http_ok() { return 0; }

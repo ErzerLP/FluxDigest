@@ -4,6 +4,8 @@ set -euo pipefail
 
 INSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK_SOURCE_ROOT="$(cd "${INSTALL_SCRIPT_DIR}/../.." && pwd)"
+STACK_PROFILE="${STACK_PROFILE:-full}"
+STACK_DIR="${STACK_DIR:-/opt/fluxdigest-stack}"
 
 source "${INSTALL_SCRIPT_DIR}/scripts/common.sh"
 source "${INSTALL_SCRIPT_DIR}/scripts/render.sh"
@@ -19,8 +21,6 @@ if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/bootstrap_halo.sh" ]]; then
   source "${INSTALL_SCRIPT_DIR}/scripts/bootstrap_halo.sh"
 fi
 
-STACK_PROFILE="${STACK_PROFILE:-full}"
-STACK_DIR="${STACK_DIR:-/opt/fluxdigest-stack}"
 STACK_FORCE=0
 STACK_SHOW_HELP=0
 
