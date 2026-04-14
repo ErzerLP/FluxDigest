@@ -140,7 +140,17 @@ test('miniflux config page can trigger connectivity test with saved config', asy
 test('miniflux config page can open miniflux console in new tab', async () => {
   const openSpy = vi.fn();
   const previousOpen = globalThis.open;
+  const previousLocation = globalThis.location;
   vi.stubGlobal('open', openSpy);
+  vi.stubGlobal('location', {
+    ...previousLocation,
+    href: 'http://10.0.0.95:18088/configs/miniflux',
+    origin: 'http://10.0.0.95:18088',
+    protocol: 'http:',
+    host: '10.0.0.95:18088',
+    hostname: '10.0.0.95',
+    port: '18088',
+  });
 
   fetchMock.mockImplementation(async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -184,11 +194,12 @@ test('miniflux config page can open miniflux console in new tab', async () => {
     await userEvent.click(await screen.findByRole('button', { name: '打开 Miniflux 后台' }));
 
     expect(openSpy).toHaveBeenCalledWith(
-      'http://127.0.0.1:28082',
+      'http://10.0.0.95:28082',
       '_blank',
       'noopener,noreferrer',
     );
   } finally {
+    vi.stubGlobal('location', previousLocation);
     vi.stubGlobal('open', previousOpen ?? undefined);
   }
 });

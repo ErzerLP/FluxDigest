@@ -33,6 +33,38 @@ function valueOrDash(value?: string) {
   return value?.trim() ? value : '—';
 }
 
+function isLoopbackHost(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  return (
+    normalized === 'localhost' ||
+    normalized === '0.0.0.0' ||
+    normalized === '::1' ||
+    normalized.startsWith('127.')
+  );
+}
+
+function resolveMinifluxConsoleURL(baseURL?: string) {
+  const trimmed = baseURL?.trim() ?? '';
+  if (!trimmed) {
+    return '';
+  }
+
+  try {
+    const resolved = new URL(trimmed);
+    const currentHostname = window.location.hostname.trim().toLowerCase();
+    if (isLoopbackHost(resolved.hostname) && currentHostname && !isLoopbackHost(currentHostname)) {
+      resolved.hostname = window.location.hostname;
+    }
+    const normalized = resolved.toString();
+    if (!trimmed.endsWith('/') && resolved.pathname === '/' && !resolved.search && !resolved.hash) {
+      return normalized.slice(0, -1);
+    }
+    return normalized;
+  } catch {
+    return trimmed;
+  }
+}
+
 export function MinifluxConfigPage() {
   const configQuery = useAdminConfigs();
   const statusQuery = useAdminStatus();
@@ -44,7 +76,7 @@ export function MinifluxConfigPage() {
   const currentConfig = configQuery.data?.miniflux;
   const configReady = configQuery.isSuccess;
   const integration = statusQuery.data?.integrations?.miniflux;
-  const minifluxConsoleURL = currentConfig?.base_url?.trim() ?? '';
+  const minifluxConsoleURL = resolveMinifluxConsoleURL(currentConfig?.base_url);
 
   const { register, handleSubmit, reset } = useForm<MinifluxConfigFormValues>({
     defaultValues: {
@@ -112,18 +144,18 @@ export function MinifluxConfigPage() {
           title="Miniflux"
           subtitle="管理 Miniflux Reader 接入、抓取窗口与已保存配置的连通性测试。"
           actions={
-          <div className="button-cluster">
-            <Button
-              onClick={() =>
-                window.open(minifluxConsoleURL, '_blank', 'noopener,noreferrer')
-              }
-              disabled={!configReady || !minifluxConsoleURL}
-            >
-              打开 Miniflux 后台
-            </Button>
-            <Button
-              onClick={() => testMutation.mutate()}
-              loading={testMutation.isPending}
+            <div className="button-cluster">
+              <Button
+                onClick={() =>
+                  window.open(minifluxConsoleURL, '_blank', 'noopener,noreferrer')
+                }
+                disabled={!configReady || !minifluxConsoleURL}
+              >
+                打开 Miniflux 后台
+              </Button>
+              <Button
+                onClick={() => testMutation.mutate()}
+                loading={testMutation.isPending}
                 disabled={!configReady}
               >
                 测试连接
