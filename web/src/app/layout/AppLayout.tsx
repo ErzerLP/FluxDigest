@@ -1,5 +1,9 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { Alert, Button } from 'antd';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
+import { useAdminLogout } from '../../services/mutations/admin';
+import { useAdminCurrentUser } from '../../services/queries/admin';
 import type { AppNavigationItem } from '../router';
 
 type AppLayoutProps = {
@@ -8,8 +12,23 @@ type AppLayoutProps = {
 
 export function AppLayout({ navigation }: AppLayoutProps) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const currentUserQuery = useAdminCurrentUser();
+  const logoutMutation = useAdminLogout();
+  const [logoutErrorMessage, setLogoutErrorMessage] = useState<string>();
   const currentItem =
     navigation.find((item) => location.pathname === item.path) ?? navigation[0];
+  const username = currentUserQuery.data?.username?.trim() || 'admin';
+
+  async function handleLogout() {
+    setLogoutErrorMessage(undefined);
+    try {
+      await logoutMutation.mutateAsync();
+      navigate('/login', { replace: true });
+    } catch (error) {
+      setLogoutErrorMessage(error instanceof Error ? error.message : '退出登录失败，请稍后重试');
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -48,12 +67,35 @@ export function AppLayout({ navigation }: AppLayoutProps) {
             <h2>{currentItem.description}</h2>
           </div>
           <div className="topbar-meta">
+            <span className="meta-chip meta-chip-subtle">Admin / {username}</span>
+            {currentUserQuery.data?.must_change_password ? (
+              <span className="meta-chip meta-chip-warning">Default password</span>
+            ) : null}
             <span className="meta-chip">Graphite / Cyan</span>
             <span className="meta-chip meta-chip-subtle">MVP shell</span>
+            <Button
+              type="default"
+              className="topbar-logout"
+              loading={logoutMutation.isPending}
+              onClick={() => {
+                void handleLogout();
+              }}
+            >
+              退出登录
+            </Button>
           </div>
         </header>
 
         <main className="content-shell">
+          {logoutErrorMessage ? (
+            <Alert
+              type="error"
+              showIcon
+              message="退出登录失败"
+              description={logoutErrorMessage}
+              style={{ marginBottom: '1rem' }}
+            />
+          ) : null}
           <Outlet />
         </main>
       </div>

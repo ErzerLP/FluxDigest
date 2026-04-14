@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import {
+  getAdminCurrentUser,
   getAdminConfigs,
   getAdminStatus,
   getJobRunDetail,
@@ -8,11 +9,21 @@ import {
 } from '../api/admin';
 
 export const adminQueryKeys = {
+  currentUser: ['admin', 'auth', 'me'] as const,
   status: ['admin', 'status'] as const,
   configs: ['admin', 'configs'] as const,
   jobs: (limit = 20) => ['admin', 'jobs', limit] as const,
   jobDetail: (jobId?: string) => ['admin', 'jobs', jobId ?? 'idle'] as const,
 };
+
+export function useAdminCurrentUser() {
+  return useQuery({
+    queryKey: adminQueryKeys.currentUser,
+    queryFn: getAdminCurrentUser,
+    retry: false,
+    refetchOnWindowFocus: true,
+  });
+}
 
 export function useAdminStatus() {
   return useQuery({

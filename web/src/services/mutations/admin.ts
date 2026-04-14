@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import {
+  loginAdmin,
+  logoutAdmin,
   runDailyDigest,
   testLLMConfig,
   testMinifluxConfig,
@@ -14,6 +16,7 @@ import { adminQueryKeys } from '../queries/admin';
 
 async function invalidateAdminConfigViews(queryClient: ReturnType<typeof useQueryClient>) {
   await Promise.all([
+    queryClient.invalidateQueries({ queryKey: adminQueryKeys.currentUser }),
     queryClient.invalidateQueries({ queryKey: adminQueryKeys.configs }),
     queryClient.invalidateQueries({ queryKey: adminQueryKeys.status }),
   ]);
@@ -21,11 +24,48 @@ async function invalidateAdminConfigViews(queryClient: ReturnType<typeof useQuer
 
 async function invalidateAdminStatusViews(queryClient: ReturnType<typeof useQueryClient>) {
   await Promise.all([
+    queryClient.invalidateQueries({ queryKey: adminQueryKeys.currentUser }),
     queryClient.invalidateQueries({ queryKey: adminQueryKeys.status }),
     queryClient.invalidateQueries({ queryKey: adminQueryKeys.jobs() }),
     queryClient.invalidateQueries({ queryKey: adminQueryKeys.jobs(5) }),
     queryClient.invalidateQueries({ queryKey: adminQueryKeys.jobs(50) }),
   ]);
+}
+
+function clearAdminConsoleViews(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.removeQueries({ queryKey: adminQueryKeys.currentUser });
+  queryClient.removeQueries({ queryKey: adminQueryKeys.status });
+  queryClient.removeQueries({ queryKey: adminQueryKeys.configs });
+  queryClient.removeQueries({ queryKey: adminQueryKeys.jobs() });
+  queryClient.removeQueries({ queryKey: adminQueryKeys.jobs(5) });
+  queryClient.removeQueries({ queryKey: adminQueryKeys.jobs(50) });
+}
+
+export function useAdminLogin() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: loginAdmin,
+    onSuccess: async (user) => {
+      queryClient.setQueryData(adminQueryKeys.currentUser, user);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: adminQueryKeys.status }),
+        queryClient.invalidateQueries({ queryKey: adminQueryKeys.configs }),
+        queryClient.invalidateQueries({ queryKey: adminQueryKeys.jobs() }),
+      ]);
+    },
+  });
+}
+
+export function useAdminLogout() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: logoutAdmin,
+    onSuccess: async () => {
+      clearAdminConsoleViews(queryClient);
+    },
+  });
 }
 
 export function useSaveLLMConfig() {

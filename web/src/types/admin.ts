@@ -44,6 +44,12 @@ export interface AdminConfigSnapshot {
   prompts?: PromptConfigView;
 }
 
+export interface AdminCurrentUser {
+  user_id?: string;
+  username?: string;
+  must_change_password?: boolean;
+}
+
 export interface IntegrationState {
   configured?: boolean;
   last_test_status?: string;
@@ -108,6 +114,11 @@ export interface LLMTestDraft {
   model?: string;
   api_key?: string;
   timeout_ms?: number;
+}
+
+export interface AdminLoginInput {
+  username: string;
+  password: string;
 }
 
 export interface ConnectivityTestResult {

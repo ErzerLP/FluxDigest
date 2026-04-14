@@ -1,9 +1,11 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import { RequireAdminSession } from '../auth/RequireAdminSession';
 import { LLMConfigPage } from '../../pages/configs/llm/LLMConfigPage';
 import { MinifluxConfigPage } from '../../pages/configs/miniflux/MinifluxConfigPage';
 import { PromptConfigPage } from '../../pages/configs/prompts/PromptConfigPage';
 import { PublishConfigPage } from '../../pages/configs/publish/PublishConfigPage';
+import { AdminLoginPage } from '../../pages/auth/AdminLoginPage';
 import { DashboardPage } from '../../pages/dashboard/DashboardPage';
 import { JobsPage } from '../../pages/jobs/JobsPage';
 import { AppLayout } from '../layout/AppLayout';
@@ -26,15 +28,18 @@ export const appNavigation: AppNavigationItem[] = [
 export function AppRouter() {
   return (
     <Routes>
-      <Route path="/" element={<AppLayout navigation={appNavigation} />}>
-        <Route index element={<Navigate replace to="/dashboard" />} />
-        <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="configs/llm" element={<LLMConfigPage />} />
-        <Route path="configs/miniflux" element={<MinifluxConfigPage />} />
-        <Route path="configs/prompts" element={<PromptConfigPage />} />
-        <Route path="configs/publish" element={<PublishConfigPage />} />
-        <Route path="jobs" element={<JobsPage />} />
-        <Route path="*" element={<Navigate replace to="/dashboard" />} />
+      <Route path="/login" element={<AdminLoginPage />} />
+      <Route element={<RequireAdminSession />}>
+        <Route path="/" element={<AppLayout navigation={appNavigation} />}>
+          <Route index element={<Navigate replace to="/dashboard" />} />
+          <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="configs/llm" element={<LLMConfigPage />} />
+          <Route path="configs/miniflux" element={<MinifluxConfigPage />} />
+          <Route path="configs/prompts" element={<PromptConfigPage />} />
+          <Route path="configs/publish" element={<PublishConfigPage />} />
+          <Route path="jobs" element={<JobsPage />} />
+          <Route path="*" element={<Navigate replace to="/dashboard" />} />
+        </Route>
       </Route>
     </Routes>
   );

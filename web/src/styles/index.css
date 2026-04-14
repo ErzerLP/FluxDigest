@@ -187,6 +187,44 @@ select {
   box-shadow: 0 0 0 0.35rem rgba(56, 211, 159, 0.12);
 }
 
+.auth-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 1.5rem;
+}
+
+.auth-card {
+  width: min(100%, 32rem);
+  display: grid;
+  gap: 1.2rem;
+  padding: 1.7rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(180deg, rgba(19, 30, 46, 0.94), rgba(10, 18, 29, 0.96)),
+    var(--bg-panel);
+  box-shadow: var(--shadow-lg);
+}
+
+.auth-card-compact {
+  width: min(100%, 28rem);
+}
+
+.auth-brand {
+  margin: 0;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.auth-footnote {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+}
+
 .app-main {
   display: flex;
   flex-direction: column;
@@ -231,6 +269,18 @@ select {
   border-color: var(--border-subtle);
   background: rgba(143, 167, 196, 0.08);
   color: var(--text-secondary);
+}
+
+.meta-chip-warning {
+  border-color: rgba(255, 190, 92, 0.28);
+  background: rgba(255, 190, 92, 0.14);
+  color: #ffe1a1;
+}
+
+.topbar-logout {
+  border-color: var(--border-subtle) !important;
+  background: rgba(143, 167, 196, 0.08) !important;
+  color: var(--text-primary) !important;
 }
 
 .content-shell {

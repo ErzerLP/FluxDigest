@@ -1,5 +1,7 @@
 import type {
+  AdminCurrentUser,
   AdminConfigSnapshot,
+  AdminLoginInput,
   AdminStatus,
   ConnectivityTestResult,
   JobRunDetail,
@@ -15,6 +17,7 @@ import type {
 
 const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
 const adminBaseURL = `${apiBaseURL}/admin`;
+const adminAuthBaseURL = `${apiBaseURL}/admin/auth`;
 const defaultAdminRequestTimeoutMS = 30000;
 const maxAdminRequestTimeoutMS = 2_147_483_647;
 const adminRequestTimeoutMessage = '请求超时，请检查代理、网络或服务地址后重试。';
@@ -84,7 +87,11 @@ function resolveAdminRequestTimeoutMS(timeoutMS?: number) {
   return defaultAdminRequestTimeoutMS;
 }
 
-async function requestAdmin<T>(path: string, init?: RequestInit, timeoutMS?: number): Promise<T> {
+export function isAdminUnauthorizedError(error: unknown) {
+  return error instanceof AdminApiError && error.status === 401;
+}
+
+async function requestJSON<T>(url: string, init?: RequestInit, timeoutMS?: number): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('Accept', 'application/json');
 
@@ -105,9 +112,10 @@ async function requestAdmin<T>(path: string, init?: RequestInit, timeoutMS?: num
   let response: Response;
   try {
     response = (await Promise.race([
-      fetch(`${adminBaseURL}${path}`, {
+      fetch(url, {
         ...init,
         headers,
+        credentials: 'include',
         signal: controller.signal,
       }),
       timeoutPromise,
@@ -143,6 +151,27 @@ async function requestAdmin<T>(path: string, init?: RequestInit, timeoutMS?: num
   }
 
   return parseResponse<T>(response);
+}
+
+async function requestAdmin<T>(path: string, init?: RequestInit, timeoutMS?: number): Promise<T> {
+  return requestJSON<T>(`${adminBaseURL}${path}`, init, timeoutMS);
+}
+
+export function getAdminCurrentUser() {
+  return requestJSON<AdminCurrentUser>(`${adminAuthBaseURL}/me`);
+}
+
+export function loginAdmin(input: AdminLoginInput) {
+  return requestJSON<AdminCurrentUser>(`${adminAuthBaseURL}/login`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function logoutAdmin() {
+  return requestJSON<void>(`${adminAuthBaseURL}/logout`, {
+    method: 'POST',
+  });
 }
 
 export function getAdminStatus() {
