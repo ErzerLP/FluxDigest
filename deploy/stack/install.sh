@@ -474,10 +474,6 @@ start_compose_services() {
     up -d "${services[@]}"
 }
 
-bootstrap_halo() {
-  log_info "Halo bootstrap placeholder (will be implemented in Task 5)"
-}
-
 start_selected_services() {
   log_info "Starting base services: postgres redis"
   start_compose_services postgres redis
