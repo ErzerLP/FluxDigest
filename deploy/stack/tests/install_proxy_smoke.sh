@@ -21,6 +21,9 @@ cat > "${MOCK_BIN}/docker" <<'EOF'
 set -euo pipefail
 log_file="${MOCK_DOCKER_LOG:?}"
 printf 'docker %s\n' "$*" >> "${log_file}"
+if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
+  exit 1
+fi
 exit 0
 EOF
 chmod +x "${MOCK_BIN}/docker"

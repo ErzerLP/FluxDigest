@@ -386,6 +386,10 @@ prepull_external_images() {
   local image
   while IFS= read -r image; do
     [[ -n "${image}" ]] || continue
+    if docker image inspect "${image}" >/dev/null 2>&1; then
+      log_info "Using cached image: ${image}"
+      continue
+    fi
     log_info "Pulling image: ${image}"
     if ! docker pull "${image}"; then
       fail "外部镜像拉取失败: ${image}。请检查 Docker daemon 网络/代理配置，或通过环境变量覆盖镜像地址。"
