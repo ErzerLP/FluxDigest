@@ -36,6 +36,11 @@ services:
     build:
       context: {{STACK_SOURCE_ROOT}}
       dockerfile: {{STACK_SOURCE_ROOT}}/deployments/docker/api.Dockerfile
+      args:
+        http_proxy: ${http_proxy}
+        https_proxy: ${https_proxy}
+        HTTP_PROXY: ${HTTP_PROXY}
+        HTTPS_PROXY: ${HTTPS_PROXY}
     image: fluxdigest/api:latest
     restart: unless-stopped
     env_file:
@@ -52,6 +57,11 @@ services:
     build:
       context: {{STACK_SOURCE_ROOT}}
       dockerfile: {{STACK_SOURCE_ROOT}}/deployments/docker/worker.Dockerfile
+      args:
+        http_proxy: ${http_proxy}
+        https_proxy: ${https_proxy}
+        HTTP_PROXY: ${HTTP_PROXY}
+        HTTPS_PROXY: ${HTTPS_PROXY}
     image: fluxdigest/worker:latest
     restart: unless-stopped
     env_file:
@@ -68,6 +78,11 @@ services:
     build:
       context: {{STACK_SOURCE_ROOT}}
       dockerfile: {{STACK_SOURCE_ROOT}}/deployments/docker/scheduler.Dockerfile
+      args:
+        http_proxy: ${http_proxy}
+        https_proxy: ${https_proxy}
+        HTTP_PROXY: ${HTTP_PROXY}
+        HTTPS_PROXY: ${HTTPS_PROXY}
     image: fluxdigest/scheduler:latest
     restart: unless-stopped
     env_file:

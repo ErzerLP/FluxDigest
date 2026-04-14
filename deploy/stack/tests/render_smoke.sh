@@ -18,6 +18,10 @@ export STACK_HALO_DATA_DIR="${STACK_DATA_ROOT}/halo"
 export STACK_FLUXDIGEST_DATA_DIR="${STACK_DATA_ROOT}/fluxdigest"
 export STACK_FLUXDIGEST_OUTPUT_DIR="${STACK_FLUXDIGEST_DATA_DIR}/output"
 export STACK_LOG_DIR="${STACK_DIR}/logs"
+export http_proxy="http://127.0.0.1:7890"
+export https_proxy="http://127.0.0.1:7890"
+export HTTP_PROXY="http://127.0.0.1:7890"
+export HTTPS_PROXY="http://127.0.0.1:7890"
 
 export STACK_PROFILE="fluxdigest-only"
 export APP_HTTP_PORT="18088"
@@ -75,6 +79,7 @@ grep -q "APP_HTTP_PORT=18088" "${STACK_DIR}/.env" || fail "APP_HTTP_PORT 未写�
 grep -q "APP_DATABASE_DSN" "${STACK_DIR}/.env" || fail "APP_DATABASE_DSN 未写入"
 grep -q "APP_ADMIN_BOOTSTRAP_USERNAME=smoke-admin" "${STACK_DIR}/.env" || fail "管理员账号未写入"
 grep -q "APP_JOB_API_KEY=job-api-key" "${STACK_DIR}/.env" || fail "APP_JOB_API_KEY 未写入"
+grep -q "http_proxy=http://127.0.0.1:7890" "${STACK_DIR}/.env" || fail "http_proxy 未写入"
 
 saved_stack_services="${STACK_PROFILE_SERVICES:-}"
 STACK_PROFILE_SERVICES="miniflux, halo"
@@ -93,6 +98,7 @@ fi
 
 [[ -f "${STACK_DIR}/docker-compose.yml" ]] || fail "缺少 docker-compose.yml"
 grep -q "fluxdigest-api" "${STACK_DIR}/docker-compose.yml" || fail "fluxdigest-api 服务未出现在 compose"
+grep -q "HTTP_PROXY: \${HTTP_PROXY}" "${STACK_DIR}/docker-compose.yml" || fail "compose 未透传构建代理"
 if grep -Eiq "miniflux:" "${STACK_DIR}/docker-compose.yml"; then
   fail "fluxdigest-only profile 不应包含 miniflux 服务定义"
 fi

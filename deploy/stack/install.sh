@@ -219,6 +219,11 @@ EOF
 }
 
 generate_credentials() {
+  export http_proxy="${http_proxy:-${HTTP_PROXY:-}}"
+  export https_proxy="${https_proxy:-${HTTPS_PROXY:-}}"
+  export HTTP_PROXY="${HTTP_PROXY:-${http_proxy}}"
+  export HTTPS_PROXY="${HTTPS_PROXY:-${https_proxy}}"
+
   export APP_HTTP_PORT="${FLUXDIGEST_HTTP_PORT}"
   export APP_REDIS_ADDR="redis:6379"
   export APP_JOB_API_KEY="${APP_JOB_API_KEY:-$(random_token 24)}"
