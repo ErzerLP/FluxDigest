@@ -223,6 +223,8 @@ generate_credentials() {
   export https_proxy="${https_proxy:-${HTTPS_PROXY:-}}"
   export HTTP_PROXY="${HTTP_PROXY:-${http_proxy}}"
   export HTTPS_PROXY="${HTTPS_PROXY:-${https_proxy}}"
+  export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
+  export GOSUMDB="${GOSUMDB:-sum.golang.google.cn}"
 
   export APP_HTTP_PORT="${FLUXDIGEST_HTTP_PORT}"
   export APP_REDIS_ADDR="redis:6379"

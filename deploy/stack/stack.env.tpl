@@ -15,6 +15,8 @@ http_proxy={{http_proxy}}
 https_proxy={{https_proxy}}
 HTTP_PROXY={{HTTP_PROXY}}
 HTTPS_PROXY={{HTTPS_PROXY}}
+GOPROXY={{GOPROXY}}
+GOSUMDB={{GOSUMDB}}
 
 # FluxDigest HTTP
 APP_HTTP_PORT={{APP_HTTP_PORT}}
