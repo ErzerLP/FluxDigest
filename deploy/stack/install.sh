@@ -29,6 +29,7 @@ readonly MINIFLUX_HTTP_PORT=28082
 readonly HALO_HTTP_PORT=28090
 readonly POSTGRES_HOST_PORT=35432
 readonly REDIS_HOST_PORT=36379
+readonly DEFAULT_DOCKER_SYSTEMD_DROPIN_DIR="/etc/systemd/system/docker.service.d"
 
 usage() {
   cat <<'EOF'
@@ -165,7 +166,7 @@ setup_profile_service_blocks() {
     export STACK_MINIFLUX_SERVICE_BLOCK
     STACK_MINIFLUX_SERVICE_BLOCK=$(cat <<'EOF'
   miniflux:
-    image: miniflux/miniflux:latest
+    image: ${MINIFLUX_IMAGE}
     restart: unless-stopped
     env_file:
       - .env
@@ -190,7 +191,7 @@ EOF
     export STACK_HALO_SERVICE_BLOCK
     STACK_HALO_SERVICE_BLOCK=$(cat <<'EOF'
   halo:
-    image: registry.fit2cloud.com/halo/halo:2.23
+    image: ${HALO_IMAGE}
     restart: unless-stopped
     env_file:
       - .env
@@ -225,6 +226,12 @@ generate_credentials() {
   export HTTPS_PROXY="${HTTPS_PROXY:-${https_proxy}}"
   export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
   export GOSUMDB="${GOSUMDB:-sum.golang.google.cn}"
+  export DOCKER_CONFIGURE_DAEMON_PROXY="${DOCKER_CONFIGURE_DAEMON_PROXY:-auto}"
+  export DOCKER_SYSTEMD_DROPIN_DIR="${DOCKER_SYSTEMD_DROPIN_DIR:-${DEFAULT_DOCKER_SYSTEMD_DROPIN_DIR}}"
+  export POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:17}"
+  export REDIS_IMAGE="${REDIS_IMAGE:-redis:7}"
+  export MINIFLUX_IMAGE="${MINIFLUX_IMAGE:-miniflux/miniflux:latest}"
+  export HALO_IMAGE="${HALO_IMAGE:-registry.fit2cloud.com/halo/halo:2.23}"
 
   export APP_HTTP_PORT="${FLUXDIGEST_HTTP_PORT}"
   export APP_REDIS_ADDR="redis:6379"
@@ -280,6 +287,110 @@ generate_credentials() {
 
   setup_profile_service_blocks
   log_info "Credentials and environment variables generated"
+}
+
+escape_systemd_env_value() {
+  printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+configure_docker_daemon_proxy_if_needed() {
+  local mode="${DOCKER_CONFIGURE_DAEMON_PROXY:-auto}"
+  case "${mode}" in
+    auto|force|skip) ;;
+    *) fail "DOCKER_CONFIGURE_DAEMON_PROXY 仅支持 auto | force | skip，当前: ${mode}" ;;
+  esac
+
+  if [[ "${mode}" == "skip" ]]; then
+    log_info "Skipping Docker daemon proxy configuration by request"
+    return 0
+  fi
+
+  local docker_http_proxy="${DOCKER_HTTP_PROXY:-${HTTP_PROXY:-${http_proxy:-}}}"
+  local docker_https_proxy="${DOCKER_HTTPS_PROXY:-${HTTPS_PROXY:-${https_proxy:-${docker_http_proxy}}}}"
+  local docker_no_proxy="${DOCKER_NO_PROXY:-${NO_PROXY:-${no_proxy:-localhost,127.0.0.1,::1}}}"
+
+  if [[ -z "${docker_http_proxy}" && -z "${docker_https_proxy}" ]]; then
+    log_info "No HTTP(S) proxy detected; skipping Docker daemon proxy configuration"
+    return 0
+  fi
+
+  [[ -n "${docker_http_proxy}" ]] || docker_http_proxy="${docker_https_proxy}"
+  [[ -n "${docker_https_proxy}" ]] || docker_https_proxy="${docker_http_proxy}"
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    if [[ "${mode}" == "force" ]]; then
+      fail "需要 systemctl 来配置 Docker daemon 代理，但当前系统不可用"
+    fi
+    log_warn "systemctl 不可用，跳过 Docker daemon 代理配置"
+    return 0
+  fi
+
+  local dropin_dir="${DOCKER_SYSTEMD_DROPIN_DIR:-${DEFAULT_DOCKER_SYSTEMD_DROPIN_DIR}}"
+  local dropin_file="${dropin_dir}/http-proxy.conf"
+  local tmp_file="${dropin_file}.tmp.$$"
+  local escaped_http escaped_https escaped_no_proxy
+  escaped_http="$(escape_systemd_env_value "${docker_http_proxy}")"
+  escaped_https="$(escape_systemd_env_value "${docker_https_proxy}")"
+  escaped_no_proxy="$(escape_systemd_env_value "${docker_no_proxy}")"
+
+  mkdir -p "${dropin_dir}"
+  cat > "${tmp_file}" <<EOF
+[Service]
+Environment="HTTP_PROXY=${escaped_http}"
+Environment="HTTPS_PROXY=${escaped_https}"
+Environment="NO_PROXY=${escaped_no_proxy}"
+Environment="http_proxy=${escaped_http}"
+Environment="https_proxy=${escaped_https}"
+Environment="no_proxy=${escaped_no_proxy}"
+EOF
+
+  local changed=1
+  if [[ -f "${dropin_file}" ]] && cmp -s "${tmp_file}" "${dropin_file}"; then
+    changed=0
+    rm -f "${tmp_file}"
+    log_info "Docker daemon proxy drop-in already up to date: ${dropin_file}"
+  else
+    mv "${tmp_file}" "${dropin_file}"
+    log_info "Docker daemon proxy drop-in written: ${dropin_file}"
+  fi
+
+  if [[ "${changed}" -eq 1 ]]; then
+    systemctl daemon-reload
+    systemctl restart docker
+
+    local attempt
+    for attempt in $(seq 1 20); do
+      if docker info >/dev/null 2>&1; then
+        log_info "Docker daemon restarted and is ready"
+        return 0
+      fi
+      sleep 1
+    done
+    fail "Docker daemon restart completed but docker info did not recover in time"
+  fi
+}
+
+required_external_images() {
+  printf '%s\n' "${POSTGRES_IMAGE}" "${REDIS_IMAGE}"
+  if profile_has_service "${STACK_PROFILE}" "miniflux"; then
+    printf '%s\n' "${MINIFLUX_IMAGE}"
+  fi
+  if profile_has_service "${STACK_PROFILE}" "halo"; then
+    printf '%s\n' "${HALO_IMAGE}"
+  fi
+}
+
+prepull_external_images() {
+  log_info "Pre-pulling external images"
+
+  local image
+  while IFS= read -r image; do
+    [[ -n "${image}" ]] || continue
+    log_info "Pulling image: ${image}"
+    if ! docker pull "${image}"; then
+      fail "外部镜像拉取失败: ${image}。请检查 Docker daemon 网络/代理配置，或通过环境变量覆盖镜像地址。"
+    fi
+  done < <(required_external_images)
 }
 
 build_fluxdigest_images() {
@@ -404,6 +515,12 @@ write_install_summary() {
     printf -- '- Host: <host>\n'
     printf -- '- Port: %s\n' "${REDIS_HOST_PORT}"
 
+    printf '\nImages\n'
+    printf -- '- PostgreSQL: %s\n' "${POSTGRES_IMAGE}"
+    printf -- '- Redis: %s\n' "${REDIS_IMAGE}"
+    printf -- '- Miniflux: %s\n' "$(if profile_has_service "${STACK_PROFILE}" "miniflux"; then printf '%s' "${MINIFLUX_IMAGE}"; else printf 'Not installed in this profile'; fi)"
+    printf -- '- Halo: %s\n' "$(if profile_has_service "${STACK_PROFILE}" "halo"; then printf '%s' "${HALO_IMAGE}"; else printf 'Not installed in this profile'; fi)"
+
     printf '\nImportant Files\n'
     printf -- '- .env: %s\n' "${STACK_DIR}/.env"
     printf -- '- docker-compose.yml: %s\n' "${STACK_DIR}/docker-compose.yml"
@@ -447,6 +564,8 @@ main() {
   prepare_stack_dir
   generate_credentials
   render_stack_files
+  configure_docker_daemon_proxy_if_needed
+  prepull_external_images
   build_fluxdigest_images
   start_selected_services
   write_install_summary

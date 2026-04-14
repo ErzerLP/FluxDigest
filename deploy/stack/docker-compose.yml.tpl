@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17
+    image: ${POSTGRES_IMAGE}
     restart: unless-stopped
     env_file:
       - .env
@@ -20,7 +20,7 @@ services:
       retries: 12
 
   redis:
-    image: redis:7
+    image: ${REDIS_IMAGE}
     restart: unless-stopped
     ports:
       - "36379:6379"

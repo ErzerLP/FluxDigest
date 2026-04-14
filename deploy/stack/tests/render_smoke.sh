@@ -24,6 +24,10 @@ export HTTP_PROXY="http://127.0.0.1:7890"
 export HTTPS_PROXY="http://127.0.0.1:7890"
 export GOPROXY="https://goproxy.cn,direct"
 export GOSUMDB="sum.golang.google.cn"
+export POSTGRES_IMAGE="postgres:17"
+export REDIS_IMAGE="redis:7"
+export MINIFLUX_IMAGE="miniflux/miniflux:latest"
+export HALO_IMAGE="registry.fit2cloud.com/halo/halo:2.23"
 
 export STACK_PROFILE="fluxdigest-only"
 export APP_HTTP_PORT="18088"
@@ -83,6 +87,8 @@ grep -q "APP_ADMIN_BOOTSTRAP_USERNAME=smoke-admin" "${STACK_DIR}/.env" || fail "
 grep -q "APP_JOB_API_KEY=job-api-key" "${STACK_DIR}/.env" || fail "APP_JOB_API_KEY 未写入"
 grep -q "http_proxy=http://127.0.0.1:7890" "${STACK_DIR}/.env" || fail "http_proxy 未写入"
 grep -q "GOPROXY=https://goproxy.cn,direct" "${STACK_DIR}/.env" || fail "GOPROXY 未写入"
+grep -q "POSTGRES_IMAGE=postgres:17" "${STACK_DIR}/.env" || fail "POSTGRES_IMAGE 未写入"
+grep -q "MINIFLUX_IMAGE=miniflux/miniflux:latest" "${STACK_DIR}/.env" || fail "MINIFLUX_IMAGE 未写入"
 
 saved_stack_services="${STACK_PROFILE_SERVICES:-}"
 STACK_PROFILE_SERVICES="miniflux, halo"
@@ -103,6 +109,8 @@ fi
 grep -q "fluxdigest-api" "${STACK_DIR}/docker-compose.yml" || fail "fluxdigest-api 服务未出现在 compose"
 grep -q "HTTP_PROXY: \${HTTP_PROXY}" "${STACK_DIR}/docker-compose.yml" || fail "compose 未透传构建代理"
 grep -q "GOPROXY: \${GOPROXY}" "${STACK_DIR}/docker-compose.yml" || fail "compose 未透传 Go 代理"
+grep -q "image: \${POSTGRES_IMAGE}" "${STACK_DIR}/docker-compose.yml" || fail "compose 未参数化 postgres 镜像"
+grep -q "image: \${REDIS_IMAGE}" "${STACK_DIR}/docker-compose.yml" || fail "compose 未参数化 redis 镜像"
 if grep -Eiq "miniflux:" "${STACK_DIR}/docker-compose.yml"; then
   fail "fluxdigest-only profile 不应包含 miniflux 服务定义"
 fi
