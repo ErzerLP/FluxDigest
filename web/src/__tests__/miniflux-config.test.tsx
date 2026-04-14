@@ -136,3 +136,59 @@ test('miniflux config page can trigger connectivity test with saved config', asy
   expect(postSpy).toHaveBeenCalledTimes(1);
   expect(await screen.findByText('miniflux connected')).toBeInTheDocument();
 });
+
+test('miniflux config page can open miniflux console in new tab', async () => {
+  const openSpy = vi.fn();
+  const previousOpen = globalThis.open;
+  vi.stubGlobal('open', openSpy);
+
+  fetchMock.mockImplementation(async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET');
+
+    if (url.endsWith('/api/v1/admin/configs') && method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          miniflux: {
+            base_url: 'http://127.0.0.1:28082',
+            fetch_limit: 100,
+            lookback_hours: 24,
+            api_token: { is_set: true, masked_value: 'mini****' },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (url.endsWith('/api/v1/admin/status') && method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          integrations: {
+            miniflux: {
+              configured: true,
+              last_test_status: 'configured',
+            },
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    return new Response('not found', { status: 404 });
+  });
+
+  try {
+    renderPage(<MinifluxConfigPage />);
+
+    await userEvent.click(await screen.findByRole('button', { name: '打开 Miniflux 后台' }));
+
+    expect(openSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:28082',
+      '_blank',
+      'noopener,noreferrer',
+    );
+  } finally {
+    vi.stubGlobal('open', previousOpen ?? undefined);
+  }
+});

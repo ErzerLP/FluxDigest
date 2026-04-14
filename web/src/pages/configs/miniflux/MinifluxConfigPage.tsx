@@ -44,6 +44,7 @@ export function MinifluxConfigPage() {
   const currentConfig = configQuery.data?.miniflux;
   const configReady = configQuery.isSuccess;
   const integration = statusQuery.data?.integrations?.miniflux;
+  const minifluxConsoleURL = currentConfig?.base_url?.trim() ?? '';
 
   const { register, handleSubmit, reset } = useForm<MinifluxConfigFormValues>({
     defaultValues: {
@@ -111,10 +112,18 @@ export function MinifluxConfigPage() {
           title="Miniflux"
           subtitle="管理 Miniflux Reader 接入、抓取窗口与已保存配置的连通性测试。"
           actions={
-            <div className="button-cluster">
-              <Button
-                onClick={() => testMutation.mutate()}
-                loading={testMutation.isPending}
+          <div className="button-cluster">
+            <Button
+              onClick={() =>
+                window.open(minifluxConsoleURL, '_blank', 'noopener,noreferrer')
+              }
+              disabled={!configReady || !minifluxConsoleURL}
+            >
+              打开 Miniflux 后台
+            </Button>
+            <Button
+              onClick={() => testMutation.mutate()}
+              loading={testMutation.isPending}
                 disabled={!configReady}
               >
                 测试连接
