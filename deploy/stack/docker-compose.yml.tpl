@@ -36,6 +36,7 @@ services:
     build:
       context: {{STACK_SOURCE_ROOT}}
       dockerfile: {{STACK_SOURCE_ROOT}}/deployments/docker/api.Dockerfile
+      network: host
       args:
         http_proxy: ${http_proxy}
         https_proxy: ${https_proxy}
@@ -57,6 +58,7 @@ services:
     build:
       context: {{STACK_SOURCE_ROOT}}
       dockerfile: {{STACK_SOURCE_ROOT}}/deployments/docker/worker.Dockerfile
+      network: host
       args:
         http_proxy: ${http_proxy}
         https_proxy: ${https_proxy}
@@ -78,6 +80,7 @@ services:
     build:
       context: {{STACK_SOURCE_ROOT}}
       dockerfile: {{STACK_SOURCE_ROOT}}/deployments/docker/scheduler.Dockerfile
+      network: host
       args:
         http_proxy: ${http_proxy}
         https_proxy: ${https_proxy}
