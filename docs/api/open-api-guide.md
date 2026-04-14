@@ -17,7 +17,7 @@
 ## API 基础约定
 
 - **Base URL**：请将下文路径拼接到你的 FluxDigest API 服务地址，例如 `http://127.0.0.1:8080`
-- **返回格式**：除 `/metrics` 外，其余接口均返回 JSON
+- **返回格式**：成功响应通常为 JSON，但部分错误响应可能没有响应体，最终以 `api/openapi/openapi.yaml` 为准
 - **鉴权方式**：当前公开接口中，`POST /api/v1/jobs/daily-digest` 需要在请求头中传入 `X-API-Key`
 - **时间格式**：日期字段通常使用 RFC 3339 的 `date` / `date-time` 形式
 - **事实来源**：若本文档与 `api/openapi/openapi.yaml` 出现差异，以 OpenAPI 与实际实现为准
@@ -27,7 +27,7 @@
 ### 健康检查
 - **接口**：`GET /healthz`
 - **用途**：确认 API 进程是否存活
-- **返回概览**：返回简单的健康状态对象，例如 `status=ok`
+- **返回概览**：返回简单的健康状态对象，例如 `{"status":"ok"}`
 - **适用场景**：反向代理探活、systemd / 容器健康检查、外部监控
 
 ### 指标导出
@@ -77,20 +77,20 @@
 
 ## 附录 A：管理与运维接口
 
-> 以下接口主要面向 FluxDigest WebUI、部署联调与日常维护，不建议普通第三方内容消费方把这些写接口当作公共集成协议依赖。
+> 以下接口主要面向 FluxDigest WebUI、部署联调与日常维护，不建议普通第三方内容消费方把这些管理接口作为公共集成协议依赖。
 
 ### 管理状态与配置读取
-- `GET /api/v1/admin/status`：读取 Dashboard 状态、集成连通性摘要、最近运行概况
+- `GET /api/v1/admin/status`：读取系统/运行时/集成状态概览（字段以 OpenAPI 为准）
 - `GET /api/v1/admin/configs`：读取当前 LLM、Miniflux、Publish、Prompt 配置快照
 
 ### 配置写入接口
 - `PUT /api/v1/admin/configs/llm`：更新 LLM 基础配置
 - `PUT /api/v1/admin/configs/miniflux`：更新 Miniflux 基础配置
-- `PUT /api/v1/admin/configs/publish`：更新发布器配置（当前重点是 Halo / Markdown Export）
+- `PUT /api/v1/admin/configs/publish`：更新发布器配置（字段以 OpenAPI 为准）
 - `PUT /api/v1/admin/configs/prompts`：更新 translation / analysis / dossier / digest 提示词配置
 
 ### 联调与任务接口
-- `POST /api/v1/admin/test/llm`：测试当前草稿 LLM 配置是否能完成连通性检查
+- `POST /api/v1/admin/test/llm`：测试 LLM 连通性
 - `GET /api/v1/admin/jobs`：查询最近的任务执行记录，支持 `limit`
 - `POST /api/v1/jobs/daily-digest`：手动触发一次日报任务；该接口需要 `X-API-Key`
 
@@ -100,7 +100,7 @@
 - **400**：请求体、query 参数或时间格式不合法
 - **401**：`POST /api/v1/jobs/daily-digest` 的 `X-API-Key` 无效
 - **500**：内部处理失败，例如配置更新失败、连通性测试失败、任务入队失败
-- **503**：当前环境未配置对应 reader / updater / tester / trigger
+- **503**：依赖未配置或相关服务不可用，导致请求无法正常处理
 
 ### 相关资源
 - **机器可读 OpenAPI**：`api/openapi/openapi.yaml`
