@@ -240,6 +240,96 @@ func TestAdminConfigServiceUpdateMinifluxAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestAdminConfigServiceUpdateLLMKeepPersistsDefaultSecretFromSeedProfile(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeLLM: {
+			ProfileType: profile.TypeLLM,
+			Name:        "default-llm",
+			Version:     1,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"","model":"","api_key":"","timeout_ms":30000}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.Security.SecretKey = adminConfigTestSecretKey
+	defaults.LLM.APIKey = "env-llm-secret"
+	svc := service.NewAdminConfigService(repo, newAdminConfigTestCipher(t), defaults)
+
+	if _, err := svc.UpdateLLM(context.Background(), service.UpdateLLMConfigInput{
+		BaseURL: "https://proxy.local/v1",
+		Model:   "MiniMax-M2.7",
+		APIKey:  service.SecretInput{Mode: service.SecretModeKeep},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := decodePayload(t, repo.created[0].PayloadJSON)
+	if decryptValue(t, payload["api_key"].(string)) != "env-llm-secret" {
+		t.Fatalf("want env llm secret persisted got %+v", payload)
+	}
+}
+
+func TestAdminConfigServiceUpdateMinifluxKeepPersistsDefaultSecretFromSeedProfile(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeMiniflux: {
+			ProfileType: profile.TypeMiniflux,
+			Name:        "default-miniflux",
+			Version:     1,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"base_url":"","api_token":"","fetch_limit":100,"lookback_hours":24}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.Security.SecretKey = adminConfigTestSecretKey
+	defaults.Miniflux.AuthToken = "env-miniflux-secret"
+	svc := service.NewAdminConfigService(repo, newAdminConfigTestCipher(t), defaults)
+
+	if _, err := svc.UpdateMiniflux(context.Background(), service.UpdateMinifluxConfigInput{
+		BaseURL:       "https://miniflux.local",
+		FetchLimit:    100,
+		LookbackHours: 48,
+		APIToken:      service.SecretInput{Mode: service.SecretModeKeep},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := decodePayload(t, repo.created[0].PayloadJSON)
+	if decryptValue(t, payload["api_token"].(string)) != "env-miniflux-secret" {
+		t.Fatalf("want env miniflux secret persisted got %+v", payload)
+	}
+}
+
+func TestAdminConfigServiceUpdatePublishKeepPersistsDefaultSecretFromSeedProfile(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypePublish: {
+			ProfileType: profile.TypePublish,
+			Name:        "default-publish",
+			Version:     1,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"provider":"halo","halo_base_url":"","halo_token":"","output_dir":""}`),
+		},
+	}}
+	defaults := &config.Config{}
+	defaults.Security.SecretKey = adminConfigTestSecretKey
+	defaults.Publish.Channel = "halo"
+	defaults.Publish.HaloToken = "env-halo-secret"
+	svc := service.NewAdminConfigService(repo, newAdminConfigTestCipher(t), defaults)
+
+	if _, err := svc.UpdatePublish(context.Background(), service.UpdatePublishConfigInput{
+		Provider:    "halo",
+		HaloBaseURL: "https://halo.local",
+		HaloToken:   service.SecretInput{Mode: service.SecretModeKeep},
+		OutputDir:   "/tmp/publish",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := decodePayload(t, repo.created[0].PayloadJSON)
+	if decryptValue(t, payload["halo_token"].(string)) != "env-halo-secret" {
+		t.Fatalf("want env halo secret persisted got %+v", payload)
+	}
+}
+
 func TestAdminConfigServiceSnapshotFallsBackToDefaultsForMinifluxAndMarkdownExport(t *testing.T) {
 	repo := &profileRepoStub{active: map[string]profile.Version{
 		profile.TypePublish: {

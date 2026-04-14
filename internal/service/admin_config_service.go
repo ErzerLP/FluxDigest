@@ -243,7 +243,7 @@ func (s *AdminConfigService) UpdateLLM(ctx context.Context, input UpdateLLMConfi
 	payload["model"] = input.Model
 	payload["timeout_ms"] = resolveLLMTimeoutMS(currentPayload, input.TimeoutMS)
 
-	if err := s.applySecret(payload, currentPayload, "api_key", nil, input.APIKey); err != nil {
+	if err := s.applySecret(payload, currentPayload, "api_key", nil, input.APIKey, s.defaultLLMAPIKey()); err != nil {
 		return profile.Version{}, err
 	}
 
@@ -261,7 +261,7 @@ func (s *AdminConfigService) UpdateMiniflux(ctx context.Context, input UpdateMin
 	payload["fetch_limit"] = resolvePositiveInt(currentPayload, "fetch_limit", input.FetchLimit)
 	payload["lookback_hours"] = resolvePositiveInt(currentPayload, "lookback_hours", input.LookbackHours)
 
-	if err := s.applySecret(payload, currentPayload, "api_token", nil, input.APIToken); err != nil {
+	if err := s.applySecret(payload, currentPayload, "api_token", nil, input.APIToken, s.defaultMinifluxAPIToken()); err != nil {
 		return profile.Version{}, err
 	}
 
@@ -287,7 +287,7 @@ func (s *AdminConfigService) UpdatePublish(ctx context.Context, input UpdatePubl
 	payload["halo_base_url"] = input.HaloBaseURL
 	payload["output_dir"] = input.OutputDir
 
-	if err := s.applySecret(payload, currentPayload, "halo_token", []string{"auth_token"}, input.HaloToken); err != nil {
+	if err := s.applySecret(payload, currentPayload, "halo_token", []string{"auth_token"}, input.HaloToken, s.defaultPublishHaloToken()); err != nil {
 		return profile.Version{}, err
 	}
 
@@ -383,7 +383,7 @@ func maskSecret(value string) SecretView {
 	return SecretView{IsSet: true, MaskedValue: value[:4] + "****"}
 }
 
-func (s *AdminConfigService) applySecret(payload map[string]any, current map[string]any, key string, legacyKeys []string, input SecretInput) error {
+func (s *AdminConfigService) applySecret(payload map[string]any, current map[string]any, key string, legacyKeys []string, input SecretInput, fallback string) error {
 	switch input.Mode {
 	case SecretModeReplace:
 		if input.Value == "" {
@@ -401,12 +401,21 @@ func (s *AdminConfigService) applySecret(payload map[string]any, current map[str
 		payload[key] = ""
 	default:
 		existing := firstString(current, append([]string{key}, legacyKeys...)...)
-		if existing != "" {
+		switch {
+		case existing != "":
 			normalized, err := s.normalizeStoredSecret(existing)
 			if err != nil {
 				return err
 			}
 			payload[key] = normalized
+		case strings.TrimSpace(fallback) != "":
+			normalized, err := s.normalizeStoredSecret(strings.TrimSpace(fallback))
+			if err != nil {
+				return err
+			}
+			payload[key] = normalized
+		default:
+			delete(payload, key)
 		}
 	}
 	return nil
