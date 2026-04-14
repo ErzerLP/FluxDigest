@@ -45,7 +45,9 @@ type Config struct {
 		OutputDir   string `yaml:"output_dir"`
 	} `yaml:"publish"`
 	Admin struct {
-		SessionSecret string `yaml:"session_secret"`
+		SessionSecret     string `yaml:"session_secret"`
+		BootstrapUsername string `yaml:"bootstrap_username"`
+		BootstrapPassword string `yaml:"bootstrap_password"`
 	} `yaml:"admin"`
 	Security struct {
 		SecretKey string `yaml:"secret_key"`
@@ -140,6 +142,12 @@ func loadFromYAML(cfg *Config) error {
 	if fromFile.Admin.SessionSecret != "" {
 		cfg.Admin.SessionSecret = fromFile.Admin.SessionSecret
 	}
+	if fromFile.Admin.BootstrapUsername != "" {
+		cfg.Admin.BootstrapUsername = fromFile.Admin.BootstrapUsername
+	}
+	if fromFile.Admin.BootstrapPassword != "" {
+		cfg.Admin.BootstrapPassword = fromFile.Admin.BootstrapPassword
+	}
 	if fromFile.Security.SecretKey != "" {
 		cfg.Security.SecretKey = fromFile.Security.SecretKey
 	}
@@ -214,6 +222,12 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if value := os.Getenv("APP_ADMIN_SESSION_SECRET"); value != "" {
 		cfg.Admin.SessionSecret = value
+	}
+	if value := os.Getenv("APP_ADMIN_BOOTSTRAP_USERNAME"); value != "" {
+		cfg.Admin.BootstrapUsername = value
+	}
+	if value := os.Getenv("APP_ADMIN_BOOTSTRAP_PASSWORD"); value != "" {
+		cfg.Admin.BootstrapPassword = value
 	}
 	if value := os.Getenv("APP_SECRET_KEY"); value != "" {
 		cfg.Security.SecretKey = value

@@ -36,6 +36,22 @@ func TestLoadReadsAdminSecurityEnvValues(t *testing.T) {
 	}
 }
 
+func TestLoadReadsAdminBootstrapEnvValues(t *testing.T) {
+	t.Setenv("APP_ADMIN_BOOTSTRAP_USERNAME", "bootstrap-user")
+	t.Setenv("APP_ADMIN_BOOTSTRAP_PASSWORD", "bootstrap-pass")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Admin.BootstrapUsername != "bootstrap-user" {
+		t.Fatalf("want bootstrap-user got %q", cfg.Admin.BootstrapUsername)
+	}
+	if cfg.Admin.BootstrapPassword != "bootstrap-pass" {
+		t.Fatalf("want bootstrap-pass got %q", cfg.Admin.BootstrapPassword)
+	}
+}
+
 func TestLoadDefaultsPortTo8080(t *testing.T) {
 	cfg, err := config.Load()
 	if err != nil {

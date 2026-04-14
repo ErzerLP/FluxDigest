@@ -115,7 +115,7 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 		return nil, nil, err
 	}
 
-	if err := ensureRuntimeState(ctx, db); err != nil {
+	if err := ensureRuntimeState(ctx, db, cfg); err != nil {
 		_ = closer.Close()
 		return nil, nil, err
 	}
@@ -207,7 +207,7 @@ func connectPostgres(ctx context.Context, dsn string) (*gorm.DB, dbCloser, error
 	return db, sqlDB, nil
 }
 
-func ensureRuntimeState(ctx context.Context, db *gorm.DB) error {
+func ensureRuntimeState(ctx context.Context, db *gorm.DB, cfg *config.Config) error {
 	if db == nil {
 		return errors.New("database is required")
 	}
@@ -225,7 +225,13 @@ func ensureRuntimeState(ctx context.Context, db *gorm.DB) error {
 	bootstrap := service.NewRuntimeBootstrapService(
 		postgresrepo.NewMigrator(sqlDB, migrationsDir),
 		service.NewProfileService(postgresrepo.NewProfileRepository(db)),
-		service.NewAdminUserService(postgresrepo.NewAdminUserRepository(db)),
+		service.NewAdminUserService(
+			postgresrepo.NewAdminUserRepository(db),
+			service.AdminBootstrapConfig{
+				Username: cfg.Admin.BootstrapUsername,
+				Password: cfg.Admin.BootstrapPassword,
+			},
+		),
 	)
 
 	return bootstrap.Ensure(ctx)
