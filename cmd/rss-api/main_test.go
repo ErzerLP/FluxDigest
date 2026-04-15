@@ -4,27 +4,62 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
+	"github.com/hibiken/asynq"
+
+	llmadapter "rss-platform/internal/adapter/llm"
 	"rss-platform/internal/config"
 	"rss-platform/internal/repository/postgres/models"
+	"rss-platform/internal/service"
 	"rss-platform/internal/telemetry"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
+type hangingChatModelStub struct{}
+
+func (hangingChatModelStub) Generate(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (hangingChatModelStub) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return nil, errors.New("stream not implemented in test stub")
+}
+
 type queueStub struct {
-	dates []string
+	dates             []string
+	dailyDigestForces []bool
+	articleIDs        []string
+	articleForces     []bool
 }
 
 func (s *queueStub) EnqueueDailyDigest(_ context.Context, digestDate string) error {
 	s.dates = append(s.dates, digestDate)
+	return nil
+}
+
+func (s *queueStub) EnqueueDailyDigestWithOptions(_ context.Context, digestDate string, opts service.DailyDigestTriggerOptions) error {
+	s.dates = append(s.dates, digestDate)
+	s.dailyDigestForces = append(s.dailyDigestForces, opts.Force)
+	return nil
+}
+
+func (s *queueStub) EnqueueArticleReprocess(_ context.Context, articleID string, force bool) error {
+	s.articleIDs = append(s.articleIDs, articleID)
+	s.articleForces = append(s.articleForces, force)
 	return nil
 }
 
@@ -49,7 +84,7 @@ func TestBuildAPIRouterRequiresDatabaseDSN(t *testing.T) {
 	cfg.Job.APIKey = "secret"
 	cfg.Job.Queue = "default"
 
-	_, _, err := buildAPIRouter(context.Background(), cfg, &queueStub{}, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+	_, _, err := buildAPIRouter(context.Background(), cfg, &queueStub{}, &queueStub{}, func(context.Context, string) (*gorm.DB, dbCloser, error) {
 		return newAPITestDB(t), closeStub{}, nil
 	}, telemetry.NewMetrics())
 	if err == nil {
@@ -69,7 +104,7 @@ func TestBuildAPIRouterConnectsPostgresAndSharesMetrics(t *testing.T) {
 	gotDSN := ""
 	db := newAPITestDB(t)
 
-	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, func(_ context.Context, dsn string) (*gorm.DB, dbCloser, error) {
+	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, queue, func(_ context.Context, dsn string) (*gorm.DB, dbCloser, error) {
 		called++
 		gotDSN = dsn
 		return db, closeStub{}, nil
@@ -112,6 +147,95 @@ func TestBuildAPIRouterConnectsPostgresAndSharesMetrics(t *testing.T) {
 	}
 }
 
+func TestBuildAPIRouterDailyDigestForceUsesQueueOptions(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Database.DSN = "postgres://rss:rss@postgres:5432/rss?sslmode=disable"
+	cfg.Job.APIKey = "secret"
+	cfg.Job.Queue = "default"
+
+	queue := &queueStub{}
+	db := newAPITestDB(t)
+	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, queue, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+		return db, closeStub{}, nil
+	}, telemetry.NewMetrics())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = closer.Close() }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/daily-digest", bytes.NewBufferString(`{"trigger_at":"2026-04-10T07:00:00+08:00","force":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "secret")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(queue.dailyDigestForces) != 1 || !queue.dailyDigestForces[0] {
+		t.Fatalf("want force=true got %#v", queue.dailyDigestForces)
+	}
+}
+
+func TestBuildAPIRouterArticleReprocessEnqueuesTask(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Database.DSN = "postgres://rss:rss@postgres:5432/rss?sslmode=disable"
+	cfg.Job.APIKey = "secret"
+	cfg.Job.Queue = "default"
+
+	queue := &queueStub{}
+	db := newAPITestDB(t)
+	router, closer, err := buildAPIRouter(context.Background(), cfg, queue, queue, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+		return db, closeStub{}, nil
+	}, telemetry.NewMetrics())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = closer.Close() }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/article-reprocess", bytes.NewBufferString(`{"article_id":"art-1","force":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "secret")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(queue.articleIDs) != 1 || queue.articleIDs[0] != "art-1" {
+		t.Fatalf("want article id art-1 got %#v", queue.articleIDs)
+	}
+	if len(queue.articleForces) != 1 || !queue.articleForces[0] {
+		t.Fatalf("want force=true got %#v", queue.articleForces)
+	}
+}
+
+func TestMapDailyDigestEnqueueErrorMapsTaskIDConflictWhenNotForce(t *testing.T) {
+	got := mapDailyDigestEnqueueError(asynq.ErrTaskIDConflict, false)
+	if !errors.Is(got, service.ErrDailyDigestAlreadyQueued) {
+		t.Fatalf("want ErrDailyDigestAlreadyQueued got %v", got)
+	}
+}
+
+func TestMapDailyDigestEnqueueErrorMapsTaskIDConflictWhenForce(t *testing.T) {
+	got := mapDailyDigestEnqueueError(asynq.ErrTaskIDConflict, true)
+	if !errors.Is(got, service.ErrDailyDigestAlreadyQueued) {
+		t.Fatalf("want ErrDailyDigestAlreadyQueued got %v", got)
+	}
+}
+
+func TestMapArticleReprocessEnqueueErrorMapsTaskIDConflictWhenNotForce(t *testing.T) {
+	got := mapArticleReprocessEnqueueError(asynq.ErrTaskIDConflict, false)
+	if !errors.Is(got, service.ErrArticleReprocessAlreadyQueued) {
+		t.Fatalf("want ErrArticleReprocessAlreadyQueued got %v", got)
+	}
+}
+
+func TestMapArticleReprocessEnqueueErrorMapsTaskIDConflictWhenForce(t *testing.T) {
+	got := mapArticleReprocessEnqueueError(asynq.ErrTaskIDConflict, true)
+	if !errors.Is(got, service.ErrArticleReprocessAlreadyQueued) {
+		t.Fatalf("want ErrArticleReprocessAlreadyQueued got %v", got)
+	}
+}
+
 func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Database.DSN = "postgres://rss:rss@postgres:5432/rss?sslmode=disable"
@@ -119,7 +243,7 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	cfg.Job.Queue = "default"
 
 	db := newAPITestDB(t)
-	router, closer, err := buildAPIRouter(context.Background(), cfg, &queueStub{}, func(context.Context, string) (*gorm.DB, dbCloser, error) {
+	router, closer, err := buildAPIRouter(context.Background(), cfg, &queueStub{}, &queueStub{}, func(context.Context, string) (*gorm.DB, dbCloser, error) {
 		return db, closeStub{}, nil
 	}, telemetry.NewMetrics())
 	if err != nil {
@@ -180,6 +304,85 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	).Error; err != nil {
 		t.Fatalf("create digest: %v", err)
 	}
+	if err := db.WithContext(ctx).Exec(
+		`INSERT INTO article_dossiers (
+			id, article_id, processing_id, digest_date, version, is_active,
+			title_translated, summary_polished, core_summary, key_points_json,
+			topic_category, importance_score, recommendation_reason, reading_value,
+			priority_level, content_polished_markdown, analysis_longform_markdown,
+			background_context, impact_analysis, debate_points_json, target_audience,
+			publish_suggestion, suggestion_reason, suggested_channels_json, suggested_tags_json,
+			suggested_categories_json, translation_prompt_version, analysis_prompt_version,
+			dossier_prompt_version, llm_profile_version, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"dos-1",
+		"art-1",
+		"proc-1",
+		time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC),
+		1,
+		true,
+		"模型新闻",
+		"润色摘要",
+		"这是核心观点",
+		`["要点一"]`,
+		"AI",
+		0.8,
+		"值得跟进",
+		"高",
+		"high",
+		"## 正文",
+		"## 分析",
+		"",
+		"",
+		`[]`,
+		"",
+		"suggested",
+		"",
+		`["halo"]`,
+		`["ai"]`,
+		`["tech"]`,
+		6,
+		6,
+		6,
+		4,
+		time.Date(2026, 4, 11, 8, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 11, 8, 0, 0, 0, time.UTC),
+	).Error; err != nil {
+		t.Fatalf("create dossier: %v", err)
+	}
+	if err := db.WithContext(ctx).Exec(
+		`INSERT INTO article_publish_states (
+			id, dossier_id, state, approved_by, decision_note, publish_channel,
+			remote_id, remote_url, error_message, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"pub-1",
+		"dos-1",
+		"suggested",
+		"",
+		"",
+		"halo",
+		"",
+		"https://example.com/posts/1",
+		"",
+		time.Date(2026, 4, 11, 8, 30, 0, 0, time.UTC),
+	).Error; err != nil {
+		t.Fatalf("create publish state: %v", err)
+	}
+	if err := db.WithContext(ctx).Exec(
+		`INSERT INTO daily_digest_items (
+			id, digest_id, dossier_id, section_name, importance_bucket, position, is_featured, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"item-1",
+		"digest-1",
+		"dos-1",
+		"重点速览",
+		"featured",
+		1,
+		true,
+		time.Date(2026, 4, 11, 8, 0, 0, 0, time.UTC),
+	).Error; err != nil {
+		t.Fatalf("create digest item: %v", err)
+	}
 
 	articlesReq := httptest.NewRequest(http.MethodGet, "/api/v1/articles", nil)
 	articlesRec := httptest.NewRecorder()
@@ -221,8 +424,32 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	if digestBody["publish_state"] != "published" {
 		t.Fatalf("want publish_state published got %#v", digestBody["publish_state"])
 	}
+	items, ok := digestBody["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("want digest items got %#v", digestBody["items"])
+	}
 
-	profileReq := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/ai/active", nil)
+	dossiersReq := httptest.NewRequest(http.MethodGet, "/api/v1/dossiers", nil)
+	dossiersRec := httptest.NewRecorder()
+	router.ServeHTTP(dossiersRec, dossiersReq)
+	if dossiersRec.Code != http.StatusOK {
+		t.Fatalf("want dossiers 200 got %d body=%s", dossiersRec.Code, dossiersRec.Body.String())
+	}
+
+	var dossiersBody struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(dossiersRec.Body.Bytes(), &dossiersBody); err != nil {
+		t.Fatalf("unmarshal dossiers: %v", err)
+	}
+	if len(dossiersBody.Items) != 1 {
+		t.Fatalf("want 1 dossier got %d", len(dossiersBody.Items))
+	}
+	if dossiersBody.Items[0]["title_translated"] != "模型新闻" {
+		t.Fatalf("want dossier title 模型新闻 got %#v", dossiersBody.Items[0]["title_translated"])
+	}
+
+	profileReq := httptest.NewRequest(http.MethodGet, "/api/v1/profiles/llm/active", nil)
 	profileRec := httptest.NewRecorder()
 	router.ServeHTTP(profileRec, profileReq)
 	if profileRec.Code != http.StatusOK {
@@ -233,7 +460,221 @@ func TestBuildAPIRouterExposesRuntimeDataFromDatabase(t *testing.T) {
 	if err := json.Unmarshal(profileRec.Body.Bytes(), &profileBody); err != nil {
 		t.Fatalf("unmarshal profile: %v", err)
 	}
-	if profileBody["name"] != "default-ai" {
-		t.Fatalf("want default-ai got %#v", profileBody["name"])
+	if profileBody["name"] != "default-llm" {
+		t.Fatalf("want default-llm got %#v", profileBody["name"])
+	}
+}
+
+func TestAdminLLMConnectivityCheckerUsesInternalTimeout(t *testing.T) {
+	t.Parallel()
+
+	checker := adminLLMConnectivityChecker{
+		timeout: 20 * time.Millisecond,
+		newChatModel: func(context.Context, llmadapter.FactoryConfig) (model.BaseChatModel, error) {
+			return hangingChatModelStub{}, nil
+		},
+	}
+
+	parentCtx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	startedAt := time.Now()
+	latency, err := checker.Check(parentCtx, service.LLMTestDraft{
+		BaseURL: "https://llm.local/v1",
+		Model:   "gpt-4.1-mini",
+		APIKey:  "token",
+	})
+	elapsed := time.Since(startedAt)
+
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("want timeout error got %v", err)
+	}
+	if elapsed >= 120*time.Millisecond {
+		t.Fatalf("want checker to stop early, elapsed=%s latency=%s", elapsed, latency)
+	}
+	if latency <= 0 {
+		t.Fatalf("want positive latency got %s", latency)
+	}
+}
+
+func TestAdminLLMConnectivityCheckerPrefersDraftTimeoutMS(t *testing.T) {
+	t.Parallel()
+
+	var gotTimeout time.Duration
+	checker := adminLLMConnectivityChecker{
+		timeout: 5 * time.Second,
+		newChatModel: func(ctx context.Context, _ llmadapter.FactoryConfig) (model.BaseChatModel, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("expected deadline on check context")
+			}
+			gotTimeout = time.Until(deadline)
+			return nil, errors.New("skip generate")
+		},
+	}
+
+	_, _ = checker.Check(context.Background(), service.LLMTestDraft{
+		BaseURL:   "https://llm.local/v1",
+		Model:     "gpt-4.1-mini",
+		APIKey:    "token",
+		TimeoutMS: 42000,
+	})
+
+	if gotTimeout < 41*time.Second || gotTimeout > 43*time.Second {
+		t.Fatalf("want timeout around 42s got %s", gotTimeout)
+	}
+}
+
+func TestAdminLLMConnectivityCheckerUsesDefaultTimeoutWhenDraftMissing(t *testing.T) {
+	t.Parallel()
+
+	var gotTimeout time.Duration
+	checker := adminLLMConnectivityChecker{
+		newChatModel: func(ctx context.Context, _ llmadapter.FactoryConfig) (model.BaseChatModel, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("expected deadline on check context")
+			}
+			gotTimeout = time.Until(deadline)
+			return nil, errors.New("skip generate")
+		},
+	}
+
+	_, _ = checker.Check(context.Background(), service.LLMTestDraft{
+		BaseURL: "https://llm.local/v1",
+		Model:   "gpt-4.1-mini",
+		APIKey:  "token",
+	})
+
+	if gotTimeout < 29*time.Second || gotTimeout > 31*time.Second {
+		t.Fatalf("want timeout around 30s got %s", gotTimeout)
+	}
+}
+
+func TestResolveAdminLLMCheckTimeoutCapsOversizedDraftTimeoutMS(t *testing.T) {
+	t.Parallel()
+
+	got := resolveAdminLLMCheckTimeout(0, 3_000_000_000)
+
+	if got != 2_147_483_647*time.Millisecond {
+		t.Fatalf("want capped timeout got %s", got)
+	}
+}
+
+func TestNewAdminSecretCipherTrimsSecretKeyWhitespace(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	cfg.Security.SecretKey = " 0123456789abcdef0123456789abcdef "
+
+	cipher, err := newAdminSecretCipher(cfg)
+	if err != nil {
+		t.Fatalf("want trimmed secret key accepted, got %v", err)
+	}
+	if cipher == nil {
+		t.Fatal("want cipher created")
+	}
+}
+
+type adminRuntimeConfigReaderStub struct {
+	miniflux service.MinifluxRuntimeConfig
+	publish  service.PublishRuntimeConfig
+	err      error
+}
+
+func (s adminRuntimeConfigReaderStub) Miniflux(_ context.Context) (service.MinifluxRuntimeConfig, error) {
+	if s.err != nil {
+		return service.MinifluxRuntimeConfig{}, s.err
+	}
+	return s.miniflux, nil
+}
+
+func (s adminRuntimeConfigReaderStub) Publish(_ context.Context) (service.PublishRuntimeConfig, error) {
+	if s.err != nil {
+		return service.PublishRuntimeConfig{}, s.err
+	}
+	return s.publish, nil
+}
+
+func TestAdminPublishConnectivityCheckerUsesRuntimeConfigMarkdownExportSemantics(t *testing.T) {
+	outputDir := t.TempDir() + "/digests"
+	checker := newAdminPublishConnectivityChecker(adminRuntimeConfigReaderStub{
+		publish: service.PublishRuntimeConfig{
+			Provider:  "markdown_export",
+			OutputDir: outputDir,
+		},
+	})
+
+	latency, err := checker.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if latency < 0 {
+		t.Fatalf("want non-negative latency got %s", latency)
+	}
+	if _, err := os.Stat(outputDir); err != nil {
+		t.Fatalf("want output dir created, got %v", err)
+	}
+}
+
+func TestAdminMinifluxConnectivityCheckerUsesRuntimeConfig(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if r.Header.Get("X-Auth-Token") != "runtime-token" {
+			t.Fatalf("want runtime token header got %q", r.Header.Get("X-Auth-Token"))
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"entries":[]}`)
+	}))
+	defer server.Close()
+
+	checker := newAdminMinifluxConnectivityChecker(adminRuntimeConfigReaderStub{
+		miniflux: service.MinifluxRuntimeConfig{
+			BaseURL:   server.URL,
+			AuthToken: "runtime-token",
+		},
+	})
+
+	_, err := checker.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if gotPath != "/v1/entries" {
+		t.Fatalf("want /v1/entries got %q", gotPath)
+	}
+}
+
+func TestAdminPublishConnectivityCheckerUsesBasicAuthorizationWhenConfigured(t *testing.T) {
+	wantAuth := "Basic YWRtaW46aGFsby1zZWNyZXQ="
+	var gotPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("want basic authorization got %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"items":[]}`)
+	}))
+	defer server.Close()
+
+	checker := newAdminPublishConnectivityChecker(adminRuntimeConfigReaderStub{
+		publish: service.PublishRuntimeConfig{
+			Provider:    "halo",
+			HaloBaseURL: server.URL,
+			HaloToken:   "basic:YWRtaW46aGFsby1zZWNyZXQ=",
+		},
+	})
+
+	_, err := checker.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if gotPath != "/apis/api.console.halo.run/v1alpha1/posts?page=1&size=1" {
+		t.Fatalf("want halo posts path got %q", gotPath)
 	}
 }

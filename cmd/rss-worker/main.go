@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -11,20 +12,18 @@ import (
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/hibiken/asynq"
-	"gorm.io/gorm"
 
 	promptassets "rss-platform/configs/prompts"
 	llmadapter "rss-platform/internal/adapter/llm"
 	"rss-platform/internal/adapter/miniflux"
 	adapterpublisher "rss-platform/internal/adapter/publisher"
-	"rss-platform/internal/adapter/publisher/holo"
+	"rss-platform/internal/adapter/publisher/halo"
 	"rss-platform/internal/adapter/publisher/markdown_export"
 	"rss-platform/internal/agent/digest_planning"
 	appworker "rss-platform/internal/app/worker"
 	"rss-platform/internal/config"
-	"rss-platform/internal/domain/article"
 	domaindigest "rss-platform/internal/domain/digest"
-	"rss-platform/internal/domain/processing"
+	"rss-platform/internal/domain/dossier"
 	"rss-platform/internal/render"
 	"rss-platform/internal/repository/postgres"
 	"rss-platform/internal/service"
@@ -35,6 +34,9 @@ import (
 const (
 	translationPromptFile = "translation.tmpl"
 	analysisPromptFile    = "analysis.tmpl"
+	dossierPromptFile     = "dossier.tmpl"
+	digestPromptFile      = "digest.tmpl"
+	maxChatGenerateTry    = 3
 )
 
 func main() {
@@ -48,25 +50,19 @@ func main() {
 	if cfg.Database.DSN == "" {
 		log.Fatal("APP_DATABASE_DSN is required")
 	}
-	if cfg.Miniflux.BaseURL == "" {
-		log.Fatal("APP_MINIFLUX_BASE_URL is required")
-	}
-	if cfg.Miniflux.AuthToken == "" {
-		log.Fatal("APP_MINIFLUX_AUTH_TOKEN is required")
-	}
-	if cfg.LLM.Model == "" {
-		log.Fatal("APP_LLM_MODEL is required")
-	}
 
-	runtimeSvc, dbCloser, err := buildRuntimeService(context.Background(), cfg)
+	runtimeEnv, dbCloser, err := newRuntimeEnvironment(cfg)
 	if err != nil {
-		log.Fatalf("build runtime service: %v", err)
+		log.Fatalf("build runtime environment: %v", err)
 	}
 	defer func() {
 		if err := dbCloser(); err != nil {
 			log.Printf("close postgres: %v", err)
 		}
 	}()
+	runtimeExecutor := refreshingRuntimeExecutor{
+		builder: runtimeEnv,
+	}
 
 	server := appworker.NewServer(asynq.RedisClientOpt{Addr: cfg.Redis.Addr}, appworker.ServerConfig{
 		Concurrency: cfg.Worker.Concurrency,
@@ -74,16 +70,27 @@ func main() {
 			cfg.Job.Queue: 1,
 		},
 	})
-	mux := appworker.NewServeMux(nil, asynqtask.NewDailyDigestHandler(func(ctx context.Context, digestDate string) error {
-		now := time.Now().In(shanghaiLocation())
-		result, err := runtimeSvc.Run(ctx, digestDate, now)
-		if err != nil {
-			return err
-		}
+	mux := appworker.NewServeMux(
+		nil,
+		asynqtask.NewDailyDigestHandler(func(ctx context.Context, payload asynqtask.DailyDigestPayload) error {
+			now := time.Now().In(shanghaiLocation())
+			result, err := runtimeExecutor.Run(ctx, payload.DigestDate, now, service.RunOptions{Force: payload.Force})
+			if err != nil {
+				return err
+			}
 
-		log.Printf("daily digest task consumed: date=%s url=%s", result.DigestDate, result.RemoteURL)
-		return nil
-	}))
+			log.Printf("daily digest task consumed: date=%s force=%t url=%s", result.DigestDate, payload.Force, result.RemoteURL)
+			return nil
+		}),
+		asynqtask.NewArticleReprocessHandler(func(ctx context.Context, payload asynqtask.ReprocessArticlePayload) error {
+			if err := runtimeExecutor.ReprocessArticle(ctx, payload.ArticleID, payload.Force); err != nil {
+				return err
+			}
+
+			log.Printf("article reprocess task consumed: article_id=%s force=%t", payload.ArticleID, payload.Force)
+			return nil
+		}),
+	)
 
 	log.Println("rss-worker started")
 	if err := server.Run(mux); err != nil {
@@ -91,7 +98,92 @@ func main() {
 	}
 }
 
-func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.DailyDigestRuntimeService, func() error, error) {
+type runtimeTaskUnit interface {
+	Run(ctx context.Context, digestDate string, now time.Time, opts ...service.RunOptions) (service.RunResult, error)
+	ReprocessArticle(ctx context.Context, articleID string, force bool) error
+}
+
+type runtimeTaskUnitBuilder interface {
+	Build(ctx context.Context) (runtimeTaskUnit, error)
+}
+
+type runtimeTaskUnitBuilderFunc func(ctx context.Context) (runtimeTaskUnit, error)
+
+func (fn runtimeTaskUnitBuilderFunc) Build(ctx context.Context) (runtimeTaskUnit, error) {
+	return fn(ctx)
+}
+
+// refreshingRuntimeExecutor 确保每次任务都按最新 runtime 配置重新组装执行单元。
+type refreshingRuntimeExecutor struct {
+	builder runtimeTaskUnitBuilder
+}
+
+func (e refreshingRuntimeExecutor) Run(
+	ctx context.Context,
+	digestDate string,
+	now time.Time,
+	opts ...service.RunOptions,
+) (service.RunResult, error) {
+	unit, err := e.build(ctx)
+	if err != nil {
+		return service.RunResult{}, err
+	}
+	return unit.Run(ctx, digestDate, now, opts...)
+}
+
+func (e refreshingRuntimeExecutor) ReprocessArticle(ctx context.Context, articleID string, force bool) error {
+	unit, err := e.build(ctx)
+	if err != nil {
+		return err
+	}
+	return unit.ReprocessArticle(ctx, articleID, force)
+}
+
+func (e refreshingRuntimeExecutor) build(ctx context.Context) (runtimeTaskUnit, error) {
+	if e.builder == nil {
+		return nil, errors.New("runtime task unit builder is required")
+	}
+	return e.builder.Build(ctx)
+}
+
+type runtimeTaskServices struct {
+	dailyDigest *service.DailyDigestRuntimeService
+	processing  *service.RuntimeProcessingRunner
+}
+
+func (u runtimeTaskServices) Run(
+	ctx context.Context,
+	digestDate string,
+	now time.Time,
+	opts ...service.RunOptions,
+) (service.RunResult, error) {
+	if u.dailyDigest == nil {
+		return service.RunResult{}, errors.New("daily digest runtime service is required")
+	}
+	return u.dailyDigest.Run(ctx, digestDate, now, opts...)
+}
+
+func (u runtimeTaskServices) ReprocessArticle(ctx context.Context, articleID string, force bool) error {
+	if u.processing == nil {
+		return errors.New("runtime processing runner is required")
+	}
+	return u.processing.ReprocessArticle(ctx, articleID, force)
+}
+
+type runtimeEnvironment struct {
+	runtimeConfigs      *service.RuntimeConfigService
+	articleRepo         *postgres.ArticleRepository
+	processingRepo      *postgres.ProcessingRepository
+	digestRepo          *postgres.DigestRepository
+	dossierRepo         *postgres.DossierRepository
+	publishStateRepo    *postgres.PublishStateRepository
+	translationTemplate string
+	analysisTemplate    string
+	dossierTemplate     string
+	digestTemplate      string
+}
+
+func newRuntimeEnvironment(cfg *config.Config) (*runtimeEnvironment, func() error, error) {
 	db, err := postgres.Open(cfg.Database.DSN)
 	if err != nil {
 		return nil, nil, err
@@ -102,166 +194,435 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 		return nil, nil, err
 	}
 
-	chatModel, err := llmadapter.NewChatModel(ctx, llmadapter.FactoryConfig{
-		BaseURL: cfg.LLM.BaseURL,
-		APIKey:  cfg.LLM.APIKey,
-		Model:   cfg.LLM.Model,
-	})
+	translationTemplate, analysisTemplate, dossierTemplate, digestTemplate, err := loadDefaultPromptTemplates()
 	if err != nil {
 		_ = sqlDB.Close()
 		return nil, nil, err
 	}
 
-	invoker := chatModelInvoker{chat: chatModel}
-	articleRepo := postgres.NewArticleRepository(db)
-	processingRepo := postgres.NewProcessingRepository(db)
-	digestRepo := postgres.NewDigestRepository(db)
-	minifluxClient := miniflux.NewClient(cfg.Miniflux.BaseURL, cfg.Miniflux.AuthToken)
-	translationTemplate, analysisTemplate, err := loadDefaultPromptTemplates()
+	return &runtimeEnvironment{
+		runtimeConfigs:      service.NewRuntimeConfigService(postgres.NewProfileRepository(db), cfg),
+		articleRepo:         postgres.NewArticleRepository(db),
+		processingRepo:      postgres.NewProcessingRepository(db),
+		digestRepo:          postgres.NewDigestRepository(db),
+		dossierRepo:         postgres.NewDossierRepository(db),
+		publishStateRepo:    postgres.NewPublishStateRepository(db),
+		translationTemplate: translationTemplate,
+		analysisTemplate:    analysisTemplate,
+		dossierTemplate:     dossierTemplate,
+		digestTemplate:      digestTemplate,
+	}, sqlDB.Close, nil
+}
+
+func (e *runtimeEnvironment) Build(ctx context.Context) (runtimeTaskUnit, error) {
+	if e == nil || e.runtimeConfigs == nil {
+		return nil, errors.New("runtime environment is required")
+	}
+
+	runtimeSnapshot, err := e.runtimeConfigs.Snapshot(ctx)
 	if err != nil {
-		_ = sqlDB.Close()
-		return nil, nil, err
+		return nil, err
+	}
+	if err := validateRuntimeSnapshot(runtimeSnapshot); err != nil {
+		return nil, err
 	}
 
-	publisher, err := buildPublisher(cfg)
+	invoker, err := buildChatModelInvoker(ctx, runtimeSnapshot.LLM, llmadapter.NewChatModel)
 	if err != nil {
-		_ = sqlDB.Close()
-		return nil, nil, err
+		return nil, err
+	}
+	minifluxClient := miniflux.NewClient(runtimeSnapshot.Miniflux.BaseURL, runtimeSnapshot.Miniflux.AuthToken)
+	translationTemplate := e.translationTemplate
+	analysisTemplate := e.analysisTemplate
+	dossierTemplate := e.dossierTemplate
+	digestTemplate := e.digestTemplate
+	if strings.TrimSpace(runtimeSnapshot.Prompts.TranslationPrompt) != "" {
+		translationTemplate = runtimeSnapshot.Prompts.TranslationPrompt
+	}
+	if strings.TrimSpace(runtimeSnapshot.Prompts.AnalysisPrompt) != "" {
+		analysisTemplate = runtimeSnapshot.Prompts.AnalysisPrompt
+	}
+	if strings.TrimSpace(runtimeSnapshot.Prompts.DossierPrompt) != "" {
+		dossierTemplate = runtimeSnapshot.Prompts.DossierPrompt
+	}
+	if strings.TrimSpace(runtimeSnapshot.Prompts.DigestPrompt) != "" {
+		digestTemplate = runtimeSnapshot.Prompts.DigestPrompt
 	}
 
-	processingSvc := service.NewProcessingService(llmadapter.NewArticleProcessorFromTemplateText(invoker, translationTemplate, analysisTemplate))
-	processingRunner := &runtimeProcessingRunner{
-		client:     minifluxClient,
-		articles:   articleRepo,
-		processing: processingSvc,
-		results:    processingRepo,
-	}
-	digestRunner := digestWorkflowRunner{
-		workflow: daily_digest_workflow.New(
-			digest_planning.New(digest_planning.NewOpenAIRunner(invoker)),
-			render.NewDigestRenderer(),
-		),
-	}
-
-	runtimeSvc := service.NewDailyDigestRuntimeService(
-		service.NewArticleIngestionService(minifluxClient, articleRepo),
-		processingRunner,
-		digestRunner,
-		digestRepo,
-		publisher,
-	)
-
-	return runtimeSvc, sqlDB.Close, nil
-}
-
-type chatModelInvoker struct {
-	chat einomodel.BaseChatModel
-}
-
-func (i chatModelInvoker) Generate(ctx context.Context, prompt string) (string, error) {
-	if i.chat == nil {
-		return "", errors.New("chat model is required")
-	}
-
-	message, err := i.chat.Generate(ctx, []*schema.Message{schema.UserMessage(prompt)})
-	if err != nil {
-		return "", err
-	}
-	if message == nil {
-		return "", errors.New("empty llm response")
-	}
-
-	return strings.TrimSpace(message.Content), nil
-}
-
-type runtimeProcessingRunner struct {
-	client     entryLister
-	articles   articleFinder
-	processing articleProcessor
-	results    processingStore
-}
-
-func (r *runtimeProcessingRunner) ProcessPending(ctx context.Context, windowStart, windowEnd time.Time) ([]domaindigest.CandidateArticle, error) {
-	entries, err := r.client.ListEntries(ctx, windowStart, windowEnd)
+	publisher, err := buildPublisherFromRuntimeConfig(runtimeSnapshot.Publish)
 	if err != nil {
 		return nil, err
 	}
 
-	candidates := make([]domaindigest.CandidateArticle, 0, len(entries))
-	seen := make(map[int64]struct{}, len(entries))
-	for _, entry := range entries {
-		if _, ok := seen[entry.ID]; ok {
-			continue
-		}
-		seen[entry.ID] = struct{}{}
-
-		source, err := r.articles.FindByMinifluxEntryID(ctx, entry.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		existing, err := r.results.GetLatestByArticleID(ctx, source.ID)
-		if err == nil {
-			candidates = append(candidates, candidateFromStoredProcessing(source, existing))
-			continue
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
-
-		processed, err := r.processing.ProcessArticle(ctx, source)
-		if err != nil {
-			return nil, err
-		}
-
-		if err := r.results.Save(ctx, postgres.ProcessedArticleRecord{
-			ArticleID:         source.ID,
-			TitleTranslated:   processed.Translation.TitleTranslated,
-			SummaryTranslated: processed.Translation.SummaryTranslated,
-			ContentTranslated: processed.Translation.ContentTranslated,
-			CoreSummary:       processed.Analysis.CoreSummary,
-			KeyPoints:         processed.Analysis.KeyPoints,
-			TopicCategory:     processed.Analysis.TopicCategory,
-			ImportanceScore:   processed.Analysis.ImportanceScore,
-		}); err != nil {
-			return nil, err
-		}
-
-		candidates = append(candidates, candidateFromProcessedArticle(source, processed))
+	processingSvc := service.NewProcessingService(llmadapter.NewArticleProcessorFromTemplateText(invoker, translationTemplate, analysisTemplate))
+	dossierSvc := service.NewDossierService(
+		dossierBuilderAdapter{builder: llmadapter.NewDossierBuilderFromTemplateText(invoker, dossierTemplate)},
+		e.dossierRepo,
+		e.publishStateRepo,
+	)
+	processingRunner := service.NewRuntimeProcessingRunner(
+		minifluxClient,
+		e.articleRepo,
+		processingSvc,
+		e.processingRepo,
+		dossierSvc,
+		service.RuntimePromptVersions{
+			Translation: runtimeSnapshot.Prompts.TranslationVersion,
+			Analysis:    runtimeSnapshot.Prompts.AnalysisVersion,
+			Dossier:     runtimeSnapshot.Prompts.DossierVersion,
+			LLM:         runtimeSnapshot.LLM.Version,
+		},
+	)
+	processingRunner.SetPublishPolicy(
+		runtimeSnapshot.Publish.ArticlePublishMode,
+		runtimeSnapshot.Publish.ArticleReviewMode,
+	)
+	digestRunner := digestWorkflowRunner{
+		workflow: daily_digest_workflow.New(
+			digest_planning.NewWithPrompt(digest_planning.NewOpenAIRunner(invoker), digestTemplate),
+			render.NewDigestRenderer(),
+		),
+		digestPromptVersion: runtimeSnapshot.Prompts.DigestVersion,
+		llmProfileVersion:   runtimeSnapshot.LLM.Version,
 	}
 
-	return candidates, nil
+	runtimeSvc := service.NewDailyDigestRuntimeService(
+		service.NewArticleIngestionService(minifluxClient, e.articleRepo),
+		processingRunner,
+		digestRunner,
+		e.digestRepo,
+		publisher,
+	)
+
+	return runtimeTaskServices{
+		dailyDigest: runtimeSvc,
+		processing:  processingRunner,
+	}, nil
+}
+
+func runtimeLLMFactoryConfig(cfg service.LLMRuntimeConfig) llmadapter.FactoryConfig {
+	factoryCfg := llmadapter.FactoryConfig{
+		BaseURL: cfg.BaseURL,
+		APIKey:  cfg.APIKey,
+		Model:   cfg.Model,
+	}
+	if cfg.TimeoutMS > 0 {
+		factoryCfg.Timeout = time.Duration(cfg.TimeoutMS) * time.Millisecond
+	}
+	return factoryCfg
+}
+
+func runtimeLLMFactoryConfigs(cfg service.LLMRuntimeConfig) []llmadapter.FactoryConfig {
+	models := normalizeLLMModelChain(cfg.Model, cfg.FallbackModels)
+	configs := make([]llmadapter.FactoryConfig, 0, len(models))
+	for _, modelName := range models {
+		cfg.Model = modelName
+		configs = append(configs, runtimeLLMFactoryConfig(cfg))
+	}
+	return configs
+}
+
+func normalizeLLMModelChain(primary string, fallbacks []string) []string {
+	items := append([]string{primary}, fallbacks...)
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+type chatModelFactory func(ctx context.Context, cfg llmadapter.FactoryConfig) (einomodel.BaseChatModel, error)
+
+func buildChatModelInvoker(ctx context.Context, cfg service.LLMRuntimeConfig, newChatModel chatModelFactory) (chatModelInvoker, error) {
+	if newChatModel == nil {
+		newChatModel = llmadapter.NewChatModel
+	}
+
+	factoryConfigs := runtimeLLMFactoryConfigs(cfg)
+	if len(factoryConfigs) == 0 {
+		return chatModelInvoker{}, errors.New("APP_LLM_MODEL is required")
+	}
+
+	models := make([]namedChatModel, 0, len(factoryConfigs))
+	for _, factoryCfg := range factoryConfigs {
+		chatModel, err := newChatModel(ctx, factoryCfg)
+		if err != nil {
+			return chatModelInvoker{}, err
+		}
+		models = append(models, namedChatModel{
+			name: factoryCfg.Model,
+			chat: chatModel,
+		})
+	}
+
+	return chatModelInvoker{models: models}, nil
+}
+
+type chatModelInvoker struct {
+	chat   einomodel.BaseChatModel
+	models []namedChatModel
+}
+
+type namedChatModel struct {
+	name string
+	chat einomodel.BaseChatModel
+}
+
+type dossierBuilderAdapter struct {
+	builder *llmadapter.DossierBuilder
+}
+
+func (a dossierBuilderAdapter) Build(ctx context.Context, input service.BuildDossierInput) (dossier.ArticleDossier, error) {
+	return a.builder.Build(ctx, llmadapter.DossierBuildInput{
+		Article:    input.Article,
+		Processing: input.Processing,
+	})
+}
+
+func (i chatModelInvoker) Generate(ctx context.Context, prompt string) (string, error) {
+	return i.generate(ctx, prompt, nil)
+}
+
+func (i chatModelInvoker) GenerateStructuredJSON(ctx context.Context, prompt string) (string, error) {
+	return i.generate(ctx, prompt, validateStructuredJSONObject)
+}
+
+func (i chatModelInvoker) generate(ctx context.Context, prompt string, validator func(string) error) (string, error) {
+	models := i.models
+	if len(models) == 0 && i.chat != nil {
+		models = []namedChatModel{{name: "default", chat: i.chat}}
+	}
+	if len(models) == 0 {
+		return "", errors.New("chat model is required")
+	}
+
+	var lastErr error
+	for idx, item := range models {
+		result, err := i.generateWithModel(ctx, item.chat, prompt, validator)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if idx == len(models)-1 || !shouldFallbackChatGenerateError(ctx, err) {
+			return "", err
+		}
+
+		log.Printf("chat model fallback activated: from=%s to=%s err=%v", item.name, models[idx+1].name, err)
+	}
+
+	return "", lastErr
+}
+
+func (i chatModelInvoker) generateWithModel(
+	ctx context.Context,
+	chat einomodel.BaseChatModel,
+	prompt string,
+	validator func(string) error,
+) (string, error) {
+	for attempt := 1; attempt <= maxChatGenerateTry; attempt++ {
+		message, err := chat.Generate(ctx, []*schema.Message{schema.UserMessage(prompt)})
+		if err != nil {
+			if attempt == maxChatGenerateTry || !shouldRetryChatGenerateError(ctx, err) {
+				return "", err
+			}
+			continue
+		}
+		if message == nil {
+			err = errors.New("empty llm response")
+			if attempt == maxChatGenerateTry || !shouldFallbackChatGenerateError(ctx, err) {
+				return "", err
+			}
+			continue
+		}
+
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			err = errors.New("empty llm response")
+			if attempt == maxChatGenerateTry || !shouldFallbackChatGenerateError(ctx, err) {
+				return "", err
+			}
+			continue
+		}
+		if validator != nil {
+			if err := validator(content); err != nil {
+				if attempt == maxChatGenerateTry || !shouldFallbackChatGenerateError(ctx, err) {
+					return "", err
+				}
+				continue
+			}
+		}
+
+		return content, nil
+	}
+
+	return "", errors.New("failed to create chat completion")
+}
+
+func shouldFallbackChatGenerateError(ctx context.Context, err error) bool {
+	if shouldRetryChatGenerateError(ctx, err) {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "empty llm response") ||
+		strings.Contains(text, "invalid structured json") ||
+		strings.Contains(text, "invalid character") ||
+		strings.Contains(text, "unexpected end of json input") ||
+		strings.Contains(text, "cannot unmarshal")
+}
+
+func shouldRetryChatGenerateError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	text := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"500 internal server error",
+		"status code: 500",
+		"502 bad gateway",
+		"status code: 502",
+		"503 service unavailable",
+		"status code: 503",
+		"504 gateway time-out",
+		"504 gateway timeout",
+		"status code: 504",
+		" 504",
+		"529",
+		"temporary",
+		"connection reset by peer",
+		"read: connection reset",
+		"i/o timeout",
+		"context deadline exceeded",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateStructuredJSONObject(raw string) error {
+	normalized := normalizeStructuredJSONObject(raw)
+	if !json.Valid([]byte(normalized)) {
+		return errors.New("invalid structured json")
+	}
+	return nil
+}
+
+func normalizeStructuredJSONObject(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	trimmed = strings.TrimSpace(trimmed)
+
+	start := strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start >= 0 && end >= start {
+		return trimmed[start : end+1]
+	}
+
+	return trimmed
 }
 
 type digestWorkflowRunner struct {
-	workflow *daily_digest_workflow.Workflow
+	workflow            *daily_digest_workflow.Workflow
+	digestPromptVersion int
+	llmProfileVersion   int
 }
 
 func (r digestWorkflowRunner) Generate(ctx context.Context, candidates []domaindigest.CandidateArticle) (daily_digest_workflow.Digest, error) {
-	return r.workflow.Run(ctx, candidates)
+	digest, err := r.workflow.Run(ctx, candidates)
+	if err != nil {
+		return daily_digest_workflow.Digest{}, err
+	}
+	digest.DigestPromptVersion = r.digestPromptVersion
+	digest.LLMProfileVersion = r.llmProfileVersion
+	return digest, nil
 }
 
 func buildPublisher(cfg *config.Config) (adapterpublisher.Publisher, error) {
-	channel := strings.ToLower(strings.TrimSpace(cfg.Publish.Channel))
-
-	switch {
-	case channel == "" && cfg.Publish.OutputDir != "":
-		return markdown_export.New(cfg.Publish.OutputDir), nil
-	case channel == "" && cfg.Publish.HoloEndpoint != "":
-		return holo.New(cfg.Publish.HoloEndpoint, cfg.Publish.HoloToken), nil
-	case channel == "" || channel == "markdown" || channel == "markdown_export":
-		if cfg.Publish.OutputDir == "" {
-			return nil, errors.New("APP_PUBLISH_OUTPUT_DIR is required for markdown publisher")
-		}
-		return markdown_export.New(cfg.Publish.OutputDir), nil
-	case channel == "holo":
-		if cfg.Publish.HoloEndpoint == "" {
-			return nil, errors.New("APP_PUBLISH_HOLO_ENDPOINT is required for holo publisher")
-		}
-		return holo.New(cfg.Publish.HoloEndpoint, cfg.Publish.HoloToken), nil
-	default:
-		return nil, fmt.Errorf("unsupported publish channel %q", cfg.Publish.Channel)
+	runtimeCfg := service.PublishRuntimeConfig{
+		Provider:    cfg.Publish.Channel,
+		HaloBaseURL: cfg.Publish.HaloBaseURL,
+		HaloToken:   cfg.Publish.HaloToken,
+		OutputDir:   cfg.Publish.OutputDir,
 	}
+	return buildPublisherFromRuntimeConfig(runtimeCfg)
+}
+
+func buildPublisherFromRuntimeConfig(cfg service.PublishRuntimeConfig) (adapterpublisher.Publisher, error) {
+	targetChannel := service.ResolvePublishProvider(cfg.Provider, cfg.HaloBaseURL, cfg.OutputDir)
+	switch targetChannel {
+	case "halo":
+		return buildHaloPublisher(cfg)
+	case "markdown_export":
+		return buildMarkdownPublisher(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported publish channel %q", strings.ToLower(strings.TrimSpace(cfg.Provider)))
+	}
+}
+
+func buildHaloPublisher(cfg service.PublishRuntimeConfig) (adapterpublisher.Publisher, error) {
+	baseURL := strings.TrimSpace(cfg.HaloBaseURL)
+	if baseURL == "" {
+		return nil, errors.New("APP_PUBLISH_HALO_BASE_URL is required for halo publisher")
+	}
+	token := strings.TrimSpace(cfg.HaloToken)
+	if token == "" {
+		return nil, errors.New("APP_PUBLISH_HALO_TOKEN is required for halo publisher")
+	}
+	return halo.New(baseURL, token), nil
+}
+
+func buildMarkdownPublisher(cfg service.PublishRuntimeConfig) (adapterpublisher.Publisher, error) {
+	outputDir := strings.TrimSpace(cfg.OutputDir)
+	if outputDir == "" {
+		return nil, errors.New("APP_PUBLISH_OUTPUT_DIR is required for markdown publisher")
+	}
+	return markdown_export.New(outputDir), nil
+}
+
+func validateRuntimeSnapshot(snapshot service.RuntimeSnapshot) error {
+	if strings.TrimSpace(snapshot.LLM.Model) == "" {
+		return errors.New("APP_LLM_MODEL is required")
+	}
+	if strings.TrimSpace(snapshot.Miniflux.BaseURL) == "" {
+		return errors.New("APP_MINIFLUX_BASE_URL is required")
+	}
+	if strings.TrimSpace(snapshot.Miniflux.AuthToken) == "" {
+		return errors.New("APP_MINIFLUX_AUTH_TOKEN is required")
+	}
+	return nil
+}
+
+func resolvePublishChannel(channel, haloBaseURL, outputDir string) string {
+	return service.ResolvePublishProvider(channel, haloBaseURL, outputDir)
+}
+
+func normalizePublishChannel(channel string) string {
+	return strings.ToLower(strings.TrimSpace(channel))
 }
 
 func shanghaiLocation() *time.Location {
@@ -273,59 +634,25 @@ func shanghaiLocation() *time.Location {
 	return time.FixedZone("CST", 8*3600)
 }
 
-func loadDefaultPromptTemplates() (string, string, error) {
+func loadDefaultPromptTemplates() (string, string, string, string, error) {
 	translationTemplate, err := promptassets.Read(translationPromptFile)
 	if err != nil {
-		return "", "", err
+		return "", "", "", "", err
 	}
 
 	analysisTemplate, err := promptassets.Read(analysisPromptFile)
 	if err != nil {
-		return "", "", err
+		return "", "", "", "", err
 	}
 
-	return translationTemplate, analysisTemplate, nil
-}
-
-type entryLister interface {
-	ListEntries(ctx context.Context, windowStart, windowEnd time.Time) ([]miniflux.Entry, error)
-}
-
-type articleFinder interface {
-	FindByMinifluxEntryID(ctx context.Context, minifluxEntryID int64) (article.SourceArticle, error)
-}
-
-type articleProcessor interface {
-	ProcessArticle(ctx context.Context, input article.SourceArticle) (processing.ProcessedArticle, error)
-}
-
-type processingStore interface {
-	GetLatestByArticleID(ctx context.Context, articleID string) (postgres.ProcessedArticleRecord, error)
-	Save(ctx context.Context, input postgres.ProcessedArticleRecord) error
-}
-
-func candidateFromStoredProcessing(source article.SourceArticle, record postgres.ProcessedArticleRecord) domaindigest.CandidateArticle {
-	title := record.TitleTranslated
-	if title == "" {
-		title = source.Title
+	dossierTemplate, err := promptassets.Read(dossierPromptFile)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	digestTemplate, err := promptassets.Read(digestPromptFile)
+	if err != nil {
+		return "", "", "", "", err
 	}
 
-	return domaindigest.CandidateArticle{
-		ID:          source.ID,
-		Title:       title,
-		CoreSummary: record.CoreSummary,
-	}
-}
-
-func candidateFromProcessedArticle(source article.SourceArticle, processed processing.ProcessedArticle) domaindigest.CandidateArticle {
-	title := processed.Translation.TitleTranslated
-	if title == "" {
-		title = source.Title
-	}
-
-	return domaindigest.CandidateArticle{
-		ID:          source.ID,
-		Title:       title,
-		CoreSummary: processed.Analysis.CoreSummary,
-	}
+	return translationTemplate, analysisTemplate, dossierTemplate, digestTemplate, nil
 }

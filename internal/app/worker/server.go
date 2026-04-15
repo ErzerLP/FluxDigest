@@ -26,13 +26,16 @@ func NewServer(redisOpt asynq.RedisConnOpt, cfg ServerConfig) *asynq.Server {
 }
 
 // NewServeMux 创建并注册可用任务 handler。
-func NewServeMux(articleHandler *asynqtask.ArticleProcessingHandler, dailyDigestHandler *asynqtask.DailyDigestHandler) *asynq.ServeMux {
+func NewServeMux(articleHandler *asynqtask.ArticleProcessingHandler, dailyDigestHandler *asynqtask.DailyDigestHandler, articleReprocessHandler *asynqtask.ArticleReprocessHandler) *asynq.ServeMux {
 	mux := asynq.NewServeMux()
 	if articleHandler != nil {
 		mux.Handle(asynqtask.TypeProcessArticle, articleHandler.Handler())
 	}
 	if dailyDigestHandler != nil {
 		mux.Handle(asynqtask.TypeDailyDigest, dailyDigestHandler.Handler())
+	}
+	if articleReprocessHandler != nil {
+		mux.Handle(asynqtask.TypeReprocessArticle, articleReprocessHandler.Handler())
 	}
 
 	return mux

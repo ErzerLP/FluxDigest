@@ -8,16 +8,26 @@ import (
 	"gorm.io/gorm"
 )
 
+// DigestItemView 表示日报引用条目。
+type DigestItemView struct {
+	DossierID        string `json:"dossier_id"`
+	SectionName      string `json:"section_name"`
+	ImportanceBucket string `json:"importance_bucket"`
+	Position         int    `json:"position"`
+	IsFeatured       bool   `json:"is_featured"`
+}
+
 // DigestView 表示最新日报查询结果。
 type DigestView struct {
-	DigestDate      string `json:"digest_date"`
-	Title           string `json:"title"`
-	Subtitle        string `json:"subtitle"`
-	ContentMarkdown string `json:"content_markdown"`
-	ContentHTML     string `json:"content_html"`
-	RemoteURL       string `json:"remote_url"`
-	PublishState    string `json:"publish_state"`
-	PublishError    string `json:"publish_error"`
+	DigestDate      string           `json:"digest_date"`
+	Title           string           `json:"title"`
+	Subtitle        string           `json:"subtitle"`
+	ContentMarkdown string           `json:"content_markdown"`
+	ContentHTML     string           `json:"content_html"`
+	RemoteURL       string           `json:"remote_url"`
+	PublishState    string           `json:"publish_state"`
+	PublishError    string           `json:"publish_error"`
+	Items           []DigestItemView `json:"items"`
 }
 
 // DigestQueryService 负责读取最新日报结果。
@@ -37,6 +47,7 @@ func (s *DigestQueryService) LatestDigest(ctx context.Context) (DigestView, erro
 	}
 
 	type digestQueryRow struct {
+		ID              string
 		DigestDate      string
 		Title           string
 		Subtitle        string
@@ -51,6 +62,7 @@ func (s *DigestQueryService) LatestDigest(ctx context.Context) (DigestView, erro
 	err := s.db.WithContext(ctx).
 		Table("daily_digests").
 		Select(
+			"id",
 			"CAST(digest_date AS TEXT) AS digest_date",
 			"title",
 			"subtitle",
@@ -75,6 +87,11 @@ func (s *DigestQueryService) LatestDigest(ctx context.Context) (DigestView, erro
 		digestDate = digestDate[:idx]
 	}
 
+	items, err := s.listDigestItems(ctx, row.ID)
+	if err != nil {
+		return DigestView{}, err
+	}
+
 	return DigestView{
 		DigestDate:      digestDate,
 		Title:           row.Title,
@@ -84,5 +101,44 @@ func (s *DigestQueryService) LatestDigest(ctx context.Context) (DigestView, erro
 		RemoteURL:       row.RemoteURL,
 		PublishState:    row.PublishState,
 		PublishError:    row.PublishError,
+		Items:           items,
 	}, nil
+}
+
+func (s *DigestQueryService) listDigestItems(ctx context.Context, digestID string) ([]DigestItemView, error) {
+	if strings.TrimSpace(digestID) == "" {
+		return []DigestItemView{}, nil
+	}
+
+	type digestItemRow struct {
+		DossierID        string
+		SectionName      string
+		ImportanceBucket string
+		Position         int
+		IsFeatured       bool
+	}
+
+	rows := []digestItemRow{}
+	if err := s.db.WithContext(ctx).
+		Table("daily_digest_items").
+		Select("dossier_id", "section_name", "importance_bucket", "position", "is_featured").
+		Where("digest_id = ?", digestID).
+		Order("position ASC").
+		Order("id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]DigestItemView, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, DigestItemView{
+			DossierID:        row.DossierID,
+			SectionName:      row.SectionName,
+			ImportanceBucket: row.ImportanceBucket,
+			Position:         row.Position,
+			IsFeatured:       row.IsFeatured,
+		})
+	}
+
+	return items, nil
 }

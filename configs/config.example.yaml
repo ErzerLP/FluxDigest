@@ -15,9 +15,21 @@ miniflux:
 llm:
   base_url: https://api.openai.com/v1
   api_key: change-me
-  model: gpt-4.1-mini
+  model: MiniMax-M2.7
+  fallback_models:
+    - mimo-v2-pro
+  timeout_ms: 30000
 publish:
-  holo_endpoint: https://blog.local/api/posts
-  holo_token: change-me
-  channel: markdown
+  # 建议显式设置 channel=halo，避免被 output_dir 配置误导到 markdown_export。
+  channel: halo
+  halo_base_url: https://blog.local
+  halo_token: change-me
   output_dir: data/output
+admin:
+  # 后台管理会话签名密钥（session）。
+  # 建议使用高强度随机值，不要使用示例值。
+  session_secret: change-me
+security:
+  # 通用安全签名/加密密钥。
+  # 建议使用高强度随机值，不要使用示例值。
+  secret_key: change-me

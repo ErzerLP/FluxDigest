@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"rss-platform/internal/repository/postgres/models"
 
@@ -12,15 +13,21 @@ import (
 
 // ProcessedArticleRecord 表示文章处理落库记录。
 type ProcessedArticleRecord struct {
-	ID                string
-	ArticleID         string
-	TitleTranslated   string
-	SummaryTranslated string
-	ContentTranslated string
-	CoreSummary       string
-	KeyPoints         []string
-	TopicCategory     string
-	ImportanceScore   float64
+	ID                       string
+	ArticleID                string
+	TitleTranslated          string
+	SummaryTranslated        string
+	ContentTranslated        string
+	CoreSummary              string
+	KeyPoints                []string
+	TopicCategory            string
+	ImportanceScore          float64
+	TranslationPromptVersion int
+	AnalysisPromptVersion    int
+	LLMProfileVersion        int
+	Status                   string
+	ErrorMessage             string
+	ProcessedAt              time.Time
 }
 
 // ProcessingRepository 负责保存文章处理结果。
@@ -35,26 +42,27 @@ func NewProcessingRepository(db *gorm.DB) *ProcessingRepository {
 
 // Save 持久化单篇文章的处理结果。
 func (r *ProcessingRepository) Save(ctx context.Context, input ProcessedArticleRecord) error {
-	keyPoints := input.KeyPoints
-	if keyPoints == nil {
-		keyPoints = []string{}
-	}
-
-	keyPointsJSON, err := json.Marshal(keyPoints)
+	keyPointsJSON, err := json.Marshal(defaultStringSlice(input.KeyPoints))
 	if err != nil {
 		return err
 	}
 
 	model := models.ArticleProcessingModel{
-		ID:                ensureProcessingID(input.ID),
-		ArticleID:         input.ArticleID,
-		TitleTranslated:   input.TitleTranslated,
-		SummaryTranslated: input.SummaryTranslated,
-		ContentTranslated: input.ContentTranslated,
-		CoreSummary:       input.CoreSummary,
-		KeyPointsJSON:     keyPointsJSON,
-		TopicCategory:     input.TopicCategory,
-		ImportanceScore:   input.ImportanceScore,
+		ID:                       ensureProcessingID(input.ID),
+		ArticleID:                input.ArticleID,
+		TitleTranslated:          input.TitleTranslated,
+		SummaryTranslated:        input.SummaryTranslated,
+		ContentTranslated:        input.ContentTranslated,
+		CoreSummary:              input.CoreSummary,
+		KeyPointsJSON:            keyPointsJSON,
+		TopicCategory:            input.TopicCategory,
+		ImportanceScore:          input.ImportanceScore,
+		TranslationPromptVersion: defaultPositiveInt(input.TranslationPromptVersion, 1),
+		AnalysisPromptVersion:    defaultPositiveInt(input.AnalysisPromptVersion, 1),
+		LLMProfileVersion:        defaultPositiveInt(input.LLMProfileVersion, 1),
+		Status:                   defaultString(input.Status, "completed"),
+		ErrorMessage:             input.ErrorMessage,
+		ProcessedAt:              defaultTime(input.ProcessedAt, time.Now()),
 	}
 
 	return r.db.WithContext(ctx).Create(&model).Error
@@ -77,15 +85,21 @@ func (r *ProcessingRepository) GetLatestByArticleID(ctx context.Context, article
 	}
 
 	return ProcessedArticleRecord{
-		ID:                model.ID,
-		ArticleID:         model.ArticleID,
-		TitleTranslated:   model.TitleTranslated,
-		SummaryTranslated: model.SummaryTranslated,
-		ContentTranslated: model.ContentTranslated,
-		CoreSummary:       model.CoreSummary,
-		KeyPoints:         keyPoints,
-		TopicCategory:     model.TopicCategory,
-		ImportanceScore:   model.ImportanceScore,
+		ID:                       model.ID,
+		ArticleID:                model.ArticleID,
+		TitleTranslated:          model.TitleTranslated,
+		SummaryTranslated:        model.SummaryTranslated,
+		ContentTranslated:        model.ContentTranslated,
+		CoreSummary:              model.CoreSummary,
+		KeyPoints:                keyPoints,
+		TopicCategory:            model.TopicCategory,
+		ImportanceScore:          model.ImportanceScore,
+		TranslationPromptVersion: model.TranslationPromptVersion,
+		AnalysisPromptVersion:    model.AnalysisPromptVersion,
+		LLMProfileVersion:        model.LLMProfileVersion,
+		Status:                   model.Status,
+		ErrorMessage:             model.ErrorMessage,
+		ProcessedAt:              model.ProcessedAt,
 	}, nil
 }
 
@@ -100,4 +114,32 @@ func ensureProcessingID(id string) string {
 	}
 
 	return orderedID.String()
+}
+
+func defaultStringSlice(input []string) []string {
+	if input == nil {
+		return []string{}
+	}
+	return input
+}
+
+func defaultPositiveInt(value int, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func defaultString(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func defaultTime(value time.Time, fallback time.Time) time.Time {
+	if value.IsZero() {
+		return fallback
+	}
+	return value
 }

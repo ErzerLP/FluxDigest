@@ -40,19 +40,34 @@ func TestProfileServiceSeedsDefaults(t *testing.T) {
 	if err := svc.SeedDefaults(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(repo.created) != 4 {
-		t.Fatalf("want 4 got %d", len(repo.created))
+	if len(repo.created) != 5 {
+		t.Fatalf("want 5 got %d", len(repo.created))
 	}
 
-	var aiPayload map[string]any
-	if err := json.Unmarshal(repo.created[0].PayloadJSON, &aiPayload); err != nil {
-		t.Fatalf("unmarshal ai payload: %v", err)
+	var llmPayload map[string]any
+	if err := json.Unmarshal(repo.created[0].PayloadJSON, &llmPayload); err != nil {
+		t.Fatalf("unmarshal llm payload: %v", err)
 	}
-	if aiPayload["translation_prompt_template"] != "configs/prompts/translation.tmpl" {
-		t.Fatalf("missing translation prompt template path in ai payload: %+v", aiPayload)
+	if llmPayload["model"] != "MiniMax-M2.7" {
+		t.Fatalf("missing default llm model in payload: %+v", llmPayload)
 	}
-	if aiPayload["analysis_prompt_template"] != "configs/prompts/analysis.tmpl" {
-		t.Fatalf("missing analysis prompt template path in ai payload: %+v", aiPayload)
+	fallbackModels, ok := llmPayload["fallback_models"].([]any)
+	if !ok || len(fallbackModels) != 1 || fallbackModels[0] != "mimo-v2-pro" {
+		t.Fatalf("missing default fallback models in payload: %+v", llmPayload)
+	}
+	if llmPayload["timeout_ms"] != float64(30000) {
+		t.Fatalf("missing default llm timeout in payload: %+v", llmPayload)
+	}
+
+	var publishPayload map[string]any
+	if err := json.Unmarshal(repo.created[3].PayloadJSON, &publishPayload); err != nil {
+		t.Fatalf("unmarshal publish payload: %v", err)
+	}
+	if publishPayload["provider"] != "halo" {
+		t.Fatalf("want default publish provider halo got %+v", publishPayload["provider"])
+	}
+	if _, ok := publishPayload["target_type"]; ok {
+		t.Fatalf("did not expect legacy target_type in payload: %+v", publishPayload)
 	}
 }
 
@@ -67,7 +82,33 @@ func TestProfileServiceSeedDefaultsIsIdempotentWhenActiveExists(t *testing.T) {
 		t.Fatalf("second seed: %v", err)
 	}
 
-	if len(repo.created) != 4 {
-		t.Fatalf("want 4 created records after two seed calls, got %d", len(repo.created))
+	if len(repo.created) != 5 {
+		t.Fatalf("want 5 created records after two seed calls, got %d", len(repo.created))
+	}
+}
+
+func TestProfileServiceSeedsPromptDefaultsIncludingDossierPrompt(t *testing.T) {
+	repo := &profileRepoStub{}
+	svc := service.NewProfileService(repo)
+
+	if err := svc.SeedDefaults(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var promptsPayload map[string]any
+	if err := json.Unmarshal(repo.created[2].PayloadJSON, &promptsPayload); err != nil {
+		t.Fatalf("unmarshal prompts payload: %v", err)
+	}
+	if promptsPayload["translation_prompt"] == "" {
+		t.Fatalf("translation prompt should not be empty: %+v", promptsPayload)
+	}
+	if promptsPayload["analysis_prompt"] == "" {
+		t.Fatalf("analysis prompt should not be empty: %+v", promptsPayload)
+	}
+	if promptsPayload["dossier_prompt"] == "" {
+		t.Fatalf("dossier prompt should not be empty: %+v", promptsPayload)
+	}
+	if promptsPayload["digest_prompt"] == "" {
+		t.Fatalf("digest prompt should not be empty: %+v", promptsPayload)
 	}
 }

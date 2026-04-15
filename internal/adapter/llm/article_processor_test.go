@@ -73,6 +73,21 @@ func TestArticleProcessorAnalyzePromptUsesUnifiedSchema(t *testing.T) {
 	}
 }
 
+func TestArticleProcessorAnalyzeNormalizesTenPointImportanceScore(t *testing.T) {
+	model := &chatModelStub{responses: []string{
+		`{"core_summary":"核心总结","key_points":["a"],"topic_category":"AI","importance_score":8}`,
+	}}
+	processor := llm.NewArticleProcessor(model, "configs/prompts/translation.tmpl", "configs/prompts/analysis.tmpl")
+
+	out, err := processor.Analyze(context.Background(), article.SourceArticle{Title: "Original", ContentText: "Hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ImportanceScore != 0.8 {
+		t.Fatalf("want 0.8 got %v", out.ImportanceScore)
+	}
+}
+
 func TestArticleProcessorAnalyzeRejectsInvalidAnalysisJSON(t *testing.T) {
 	tests := []struct {
 		name     string

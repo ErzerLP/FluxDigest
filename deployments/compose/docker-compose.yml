@@ -217,6 +217,7 @@ services:
       APP_REDIS_ADDR: redis:6379
       APP_JOB_API_KEY: dev-api-key
       APP_JOB_QUEUE: default
+      APP_STATIC_DIR: /app/web/dist
     ports:
       - "8080:8080"
     depends_on:

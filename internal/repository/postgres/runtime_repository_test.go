@@ -27,7 +27,7 @@ func newRuntimeTestDB(t *testing.T) *gorm.DB {
 
 func migrateRuntimeTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	if err := db.AutoMigrate(&models.ArticleProcessingModel{}, &models.DailyDigestModel{}); err != nil {
+	if err := db.AutoMigrate(&models.ArticleProcessingModel{}, &models.DailyDigestModel{}, &models.DailyDigestItemModel{}); err != nil {
 		t.Fatalf("auto migrate runtime tables: %v", err)
 	}
 }

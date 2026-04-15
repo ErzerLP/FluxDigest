@@ -205,6 +205,103 @@ INSERT INTO daily_digests (
 	}
 }
 
+func TestMigratorAppliesContentAssetFoundationMigration(t *testing.T) {
+	tempDir := t.TempDir()
+	db := openSQLiteDB(t, filepath.Join(tempDir, "runtime.db"))
+	migrator := NewMigrator(db, projectMigrationsDir(t))
+
+	if err := migrator.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate project files: %v", err)
+	}
+
+	dossierColumns := tableInfoByName(t, db, "article_dossiers")
+	if _, ok := dossierColumns["processing_id"]; !ok {
+		t.Fatal("missing article_dossiers.processing_id")
+	}
+	if _, ok := dossierColumns["content_polished_markdown"]; !ok {
+		t.Fatal("missing article_dossiers.content_polished_markdown")
+	}
+	if _, ok := dossierColumns["dossier_prompt_version"]; !ok {
+		t.Fatal("missing article_dossiers.dossier_prompt_version")
+	}
+
+	publishColumns := tableInfoByName(t, db, "article_publish_states")
+	if _, ok := publishColumns["dossier_id"]; !ok {
+		t.Fatal("missing article_publish_states.dossier_id")
+	}
+	if _, ok := publishColumns["remote_url"]; !ok {
+		t.Fatal("missing article_publish_states.remote_url")
+	}
+
+	itemColumns := tableInfoByName(t, db, "daily_digest_items")
+	if _, ok := itemColumns["digest_id"]; !ok {
+		t.Fatal("missing daily_digest_items.digest_id")
+	}
+	if _, ok := itemColumns["dossier_id"]; !ok {
+		t.Fatal("missing daily_digest_items.dossier_id")
+	}
+
+	processingColumns := tableInfoByName(t, db, "article_processings")
+	if _, ok := processingColumns["translation_prompt_version"]; !ok {
+		t.Fatal("missing article_processings.translation_prompt_version")
+	}
+	if _, ok := processingColumns["analysis_prompt_version"]; !ok {
+		t.Fatal("missing article_processings.analysis_prompt_version")
+	}
+	if _, ok := processingColumns["processed_at"]; !ok {
+		t.Fatal("missing article_processings.processed_at")
+	}
+
+	digestColumns := tableInfoByName(t, db, "daily_digests")
+	if _, ok := digestColumns["digest_prompt_version"]; !ok {
+		t.Fatal("missing daily_digests.digest_prompt_version")
+	}
+	if _, ok := digestColumns["llm_profile_version"]; !ok {
+		t.Fatal("missing daily_digests.llm_profile_version")
+	}
+}
+
+func TestMigratorAppliesAdminUsersMigration(t *testing.T) {
+	tempDir := t.TempDir()
+	db := openSQLiteDB(t, filepath.Join(tempDir, "runtime.db"))
+	migrator := NewMigrator(db, projectMigrationsDir(t))
+
+	if err := migrator.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate project files: %v", err)
+	}
+
+	adminColumns := tableInfoByName(t, db, "admin_users")
+	if _, ok := adminColumns["id"]; !ok {
+		t.Fatal("missing admin_users.id")
+	}
+	if _, ok := adminColumns["username"]; !ok {
+		t.Fatal("missing admin_users.username")
+	}
+	if _, ok := adminColumns["password_hash"]; !ok {
+		t.Fatal("missing admin_users.password_hash")
+	}
+	if _, ok := adminColumns["must_change_password"]; !ok {
+		t.Fatal("missing admin_users.must_change_password")
+	}
+	if _, ok := adminColumns["last_login_at"]; !ok {
+		t.Fatal("missing admin_users.last_login_at")
+	}
+	createdAtColumn, ok := adminColumns["created_at"]
+	if !ok {
+		t.Fatal("missing admin_users.created_at")
+	}
+	if !strings.EqualFold(createdAtColumn.DefaultValue, "CURRENT_TIMESTAMP") {
+		t.Fatalf("want created_at default CURRENT_TIMESTAMP got %q", createdAtColumn.DefaultValue)
+	}
+	updatedAtColumn, ok := adminColumns["updated_at"]
+	if !ok {
+		t.Fatal("missing admin_users.updated_at")
+	}
+	if !strings.EqualFold(updatedAtColumn.DefaultValue, "CURRENT_TIMESTAMP") {
+		t.Fatalf("want updated_at default CURRENT_TIMESTAMP got %q", updatedAtColumn.DefaultValue)
+	}
+}
+
 func TestMigratorBackfillsPublishedDigestStateFromLegacyRemoteURL(t *testing.T) {
 	tempDir := t.TempDir()
 	db := openSQLiteDB(t, filepath.Join(tempDir, "runtime.db"))
@@ -226,6 +323,19 @@ CREATE TABLE daily_digests (
   content_markdown TEXT NOT NULL,
   content_html TEXT NOT NULL,
   remote_url TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE article_processings (
+  id VARCHAR(36) PRIMARY KEY,
+  article_id VARCHAR(36) NOT NULL,
+  title_translated TEXT NOT NULL,
+  summary_translated TEXT NOT NULL,
+  content_translated TEXT NOT NULL,
+  core_summary TEXT NOT NULL,
+  key_points_json JSONB NOT NULL,
+  topic_category TEXT NOT NULL,
+  importance_score DOUBLE PRECISION NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

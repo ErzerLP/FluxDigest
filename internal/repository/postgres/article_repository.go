@@ -68,3 +68,23 @@ func (r *ArticleRepository) FindByMinifluxEntryID(ctx context.Context, minifluxE
 		Fingerprint:     m.Fingerprint,
 	}, nil
 }
+
+func (r *ArticleRepository) FindByID(ctx context.Context, articleID string) (article.SourceArticle, error) {
+	var m models.SourceArticleModel
+	if err := r.db.WithContext(ctx).Where("id = ?", articleID).First(&m).Error; err != nil {
+		return article.SourceArticle{}, err
+	}
+
+	return article.SourceArticle{
+		ID:              m.ID,
+		MinifluxEntryID: m.MinifluxEntryID,
+		FeedID:          m.FeedID,
+		FeedTitle:       m.FeedTitle,
+		Title:           m.Title,
+		Author:          m.Author,
+		URL:             m.URL,
+		ContentHTML:     m.ContentHTML,
+		ContentText:     m.ContentText,
+		Fingerprint:     m.Fingerprint,
+	}, nil
+}

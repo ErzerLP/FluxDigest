@@ -2,6 +2,9 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,12 +14,17 @@ import (
 )
 
 type routerConfig struct {
-	apiKey        string
-	articleReader handlers.ArticleReader
-	digestReader  handlers.DigestReader
-	profileReader handlers.ProfileReader
-	jobTrigger    handlers.JobTrigger
-	metrics       *telemetry.Metrics
+	apiKey                 string
+	articleReader          handlers.ArticleReader
+	dossierReader          handlers.DossierReader
+	digestReader           handlers.DigestReader
+	profileReader          handlers.ProfileReader
+	jobTrigger             handlers.JobTrigger
+	admin                  handlers.AdminDeps
+	adminAuth              handlers.AdminAuthDeps
+	adminSessionMiddleware gin.HandlerFunc
+	metrics                *telemetry.Metrics
+	staticDir              string
 }
 
 // Option 定义 router 组装选项。
@@ -43,6 +51,13 @@ func WithDigestReader(reader handlers.DigestReader) Option {
 	}
 }
 
+// WithDossierReader 注入 dossier 读取依赖。
+func WithDossierReader(reader handlers.DossierReader) Option {
+	return func(cfg *routerConfig) {
+		cfg.dossierReader = reader
+	}
+}
+
 // WithProfileReader 注入配置读取依赖。
 func WithProfileReader(reader handlers.ProfileReader) Option {
 	return func(cfg *routerConfig) {
@@ -57,10 +72,38 @@ func WithJobTrigger(trigger handlers.JobTrigger) Option {
 	}
 }
 
+// WithAdminDeps 注入 admin 路由依赖。
+func WithAdminDeps(deps handlers.AdminDeps) Option {
+	return func(cfg *routerConfig) {
+		cfg.admin = deps
+	}
+}
+
+// WithAdminAuthDeps 注入 admin auth 路由依赖。
+func WithAdminAuthDeps(deps handlers.AdminAuthDeps) Option {
+	return func(cfg *routerConfig) {
+		cfg.adminAuth = deps
+	}
+}
+
+// WithAdminSessionMiddleware 注入 admin session 校验中间件。
+func WithAdminSessionMiddleware(mw gin.HandlerFunc) Option {
+	return func(cfg *routerConfig) {
+		cfg.adminSessionMiddleware = mw
+	}
+}
+
 // WithMetrics 注入 metrics 导出器。
 func WithMetrics(metrics *telemetry.Metrics) Option {
 	return func(cfg *routerConfig) {
 		cfg.metrics = metrics
+	}
+}
+
+// WithStaticDir 配置 SPA 静态资源目录。
+func WithStaticDir(staticDir string) Option {
+	return func(cfg *routerConfig) {
+		cfg.staticDir = staticDir
 	}
 }
 
@@ -80,20 +123,98 @@ func NewRouter(options ...Option) *gin.Engine {
 
 	apiV1 := router.Group("/api/v1")
 	handlers.RegisterArticleRoutes(apiV1, cfg.articleReader)
+	handlers.RegisterDossierRoutes(apiV1, cfg.dossierReader)
 	handlers.RegisterDigestRoutes(apiV1, cfg.digestReader)
 	handlers.RegisterProfileRoutes(apiV1, cfg.profileReader)
+	handlers.RegisterAdminAuthRoutes(apiV1.Group("/admin/auth"), cfg.adminAuth)
+
+	adminRoutes := apiV1.Group("/admin")
+	if cfg.adminSessionMiddleware != nil {
+		adminRoutes.Use(cfg.adminSessionMiddleware)
+	}
+	handlers.RegisterAdminRoutes(adminRoutes, cfg.admin)
 
 	jobs := apiV1.Group("")
 	if cfg.apiKey != "" {
 		jobs.Use(middleware.RequireAPIKey(cfg.apiKey))
 	}
 	handlers.RegisterJobRoutes(jobs, cfg.jobTrigger)
+	registerStaticRoutes(router, cfg.staticDir)
 
 	return router
 }
 
 func defaultRouterConfig() routerConfig {
 	return routerConfig{
-		metrics: telemetry.NewMetrics(),
+		metrics:   telemetry.NewMetrics(),
+		staticDir: os.Getenv("APP_STATIC_DIR"),
 	}
+}
+
+func registerStaticRoutes(router *gin.Engine, staticDir string) {
+	if staticDir == "" {
+		return
+	}
+
+	indexFile := filepath.Join(staticDir, "index.html")
+	if _, err := os.Stat(indexFile); err != nil {
+		return
+	}
+
+	router.Static("/assets", filepath.Join(staticDir, "assets"))
+	router.NoRoute(func(c *gin.Context) {
+		if !shouldServeSPAIndex(c.Request) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		c.File(indexFile)
+	})
+}
+
+func shouldServeSPAIndex(request *http.Request) bool {
+	if request == nil {
+		return false
+	}
+
+	switch request.Method {
+	case http.MethodGet, http.MethodHead:
+	default:
+		return false
+	}
+
+	if isReservedRoute(request.URL.Path) {
+		return false
+	}
+
+	return acceptsHTML(request.Header.Get("Accept"))
+}
+
+func isReservedRoute(path string) bool {
+	normalized := strings.TrimRight(path, "/")
+	if normalized == "" {
+		normalized = "/"
+	}
+
+	return normalized == "/api" ||
+		strings.HasPrefix(normalized, "/api/") ||
+		normalized == "/healthz" ||
+		strings.HasPrefix(normalized, "/healthz/") ||
+		normalized == "/metrics" ||
+		strings.HasPrefix(normalized, "/metrics/")
+}
+
+func acceptsHTML(accept string) bool {
+	accept = strings.TrimSpace(accept)
+	if accept == "" {
+		return true
+	}
+
+	for _, value := range strings.Split(accept, ",") {
+		mediaType := strings.TrimSpace(strings.SplitN(value, ";", 2)[0])
+		if mediaType == "text/html" || mediaType == "*/*" {
+			return true
+		}
+	}
+
+	return false
 }

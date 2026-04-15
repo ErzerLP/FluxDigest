@@ -12,6 +12,7 @@ import (
 
 	appscheduler "rss-platform/internal/app/scheduler"
 	"rss-platform/internal/config"
+	"rss-platform/internal/repository/postgres"
 	"rss-platform/internal/service"
 	asynqtask "rss-platform/internal/task/asynq"
 )
@@ -24,6 +25,9 @@ func main() {
 	if cfg.Redis.Addr == "" {
 		log.Fatal("APP_REDIS_ADDR is required")
 	}
+	if cfg.Database.DSN == "" {
+		log.Fatal("APP_DATABASE_DSN is required")
+	}
 
 	client := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.Redis.Addr})
 	defer func() {
@@ -32,14 +36,30 @@ func main() {
 		}
 	}()
 
+	db, err := postgres.Open(cfg.Database.DSN)
+	if err != nil {
+		log.Fatalf("open postgres: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("open sql db: %v", err)
+	}
+	defer func() {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("close postgres: %v", err)
+		}
+	}()
+
 	queue := dailyDigestQueue{client: client, queue: cfg.Job.Queue}
-	cron := appscheduler.Start(schedulerTrigger{job: service.NewJobService(queue)})
+	runtimeConfigs := service.NewRuntimeConfigService(postgres.NewProfileRepository(db), cfg)
+	server := appscheduler.NewServer(schedulerTrigger{job: service.NewJobService(queue, nil)}, runtimeConfigs)
 	log.Println("rss-scheduler started")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	<-ctx.Done()
-	<-cron.Stop().Done()
+	if err := server.Run(ctx); err != nil {
+		log.Fatalf("run scheduler: %v", err)
+	}
 }
 
 type dailyDigestQueue struct {
@@ -61,7 +81,7 @@ func (t schedulerTrigger) TriggerDailyDigest(ctx context.Context, now time.Time)
 }
 
 func (q dailyDigestQueue) EnqueueDailyDigest(ctx context.Context, digestDate string) error {
-	task, err := asynqtask.NewDailyDigestTask(digestDate)
+	task, err := asynqtask.NewDailyDigestTask(asynqtask.DailyDigestPayload{DigestDate: digestDate})
 	if err != nil {
 		return err
 	}
