@@ -421,6 +421,81 @@ func TestAdminConfigServiceUpdatePublishNormalizesLegacyPayloadAndSnapshot(t *te
 	}
 }
 
+func TestAdminConfigServiceUpdatePublishPersistsArticleFlowSettings(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypePublish: {
+			ProfileType: profile.TypePublish,
+			Version:     4,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"provider":"halo","halo_base_url":"https://halo.local","halo_token":"` + encryptedValue(t, "legacy-token") + `","output_dir":"data/output","article_publish_mode":"digest_only","article_review_mode":"manual_review"}`),
+		},
+	}}
+	svc := newAdminConfigService(t, repo)
+
+	if _, err := svc.UpdatePublish(context.Background(), service.UpdatePublishConfigInput{
+		Provider:           "halo",
+		HaloBaseURL:        "https://halo.local",
+		HaloToken:          service.SecretInput{Mode: service.SecretModeKeep},
+		OutputDir:          "data/output",
+		ArticlePublishMode: "suggested",
+		ArticleReviewMode:  "auto_publish",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := decodePayload(t, repo.created[0].PayloadJSON)
+	if payload["article_publish_mode"] != "suggested" {
+		t.Fatalf("want article_publish_mode suggested got %+v", payload)
+	}
+	if payload["article_review_mode"] != "auto_publish" {
+		t.Fatalf("want article_review_mode auto_publish got %+v", payload)
+	}
+
+	snapshot, err := svc.GetSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Publish.ArticlePublishMode != "suggested" || snapshot.Publish.ArticleReviewMode != "auto_publish" {
+		t.Fatalf("unexpected publish snapshot %+v", snapshot.Publish)
+	}
+}
+
+func TestAdminConfigServiceUpdateSchedulerAndSnapshot(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypeScheduler: {
+			ProfileType: profile.TypeScheduler,
+			Version:     2,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"schedule_enabled":true,"schedule_time":"07:00","timezone":"Asia/Shanghai"}`),
+		},
+	}}
+	svc := newAdminConfigService(t, repo)
+
+	if _, err := svc.UpdateScheduler(context.Background(), service.UpdateSchedulerConfigInput{
+		Enabled:      true,
+		ScheduleTime: "08:15",
+		Timezone:     "Asia/Shanghai",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := decodePayload(t, repo.created[0].PayloadJSON)
+	if payload["schedule_time"] != "08:15" {
+		t.Fatalf("want schedule_time 08:15 got %+v", payload)
+	}
+	if payload["schedule_enabled"] != true {
+		t.Fatalf("want schedule_enabled true got %+v", payload)
+	}
+
+	snapshot, err := svc.GetSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Scheduler.ScheduleTime != "08:15" || !snapshot.Scheduler.Enabled {
+		t.Fatalf("unexpected scheduler snapshot %+v", snapshot.Scheduler)
+	}
+}
+
 func TestAdminConfigServiceSnapshotKeepsConfiguredStateWhenCipherMissing(t *testing.T) {
 	repo := &profileRepoStub{active: map[string]profile.Version{
 		profile.TypeLLM: {

@@ -35,6 +35,8 @@ type MaterializeDossierInput struct {
 	TopicCategory            string
 	ImportanceScore          float64
 	ContentTranslated        string
+	ArticlePublishMode       string
+	ArticleReviewMode        string
 	TranslationPromptVersion int
 	AnalysisPromptVersion    int
 	DossierPromptVersion     int
@@ -184,7 +186,7 @@ func (s *DossierService) Materialize(ctx context.Context, input MaterializeDossi
 	materialized.CreatedAt = saved.CreatedAt
 	materialized.UpdatedAt = saved.UpdatedAt
 
-	publishState := defaultPublishState
+	publishState := initialArticlePublishState(input.ArticlePublishMode, input.ArticleReviewMode, materialized.PublishSuggestion)
 	if err := s.publishState.Upsert(ctx, postgres.ArticlePublishStateRecord{
 		DossierID: materialized.ID,
 		State:     publishState,
@@ -218,6 +220,7 @@ func fillDossierDefaults(built dossier.ArticleDossier, source article.SourceArti
 	if strings.TrimSpace(out.ContentPolishedMarkdown) == "" {
 		out.ContentPolishedMarkdown = processed.ContentTranslated
 	}
+	out.ContentPolishedMarkdown = appendDossierSourceBlock(out.ContentPolishedMarkdown, source)
 	if strings.TrimSpace(out.AnalysisLongformMarkdown) == "" {
 		out.AnalysisLongformMarkdown = out.CoreSummary
 	}
@@ -296,10 +299,12 @@ var (
 		mustCompilePublishSuggestionPattern(`不发`),
 	}
 	allowedPublishStates = map[string]struct{}{
-		publishSuggestionDraft: {},
-		"publishing":           {},
-		"published":            {},
-		"failed":               {},
+		publishSuggestionDraft:  {},
+		publishStatePendingReview: {},
+		publishStateQueued:        {},
+		"publishing":              {},
+		"published":               {},
+		"failed":                  {},
 	}
 )
 
@@ -378,6 +383,33 @@ func matchesPublishSuggestionPattern(text string, patterns []*regexp.Regexp) boo
 		}
 	}
 	return false
+}
+
+func appendDossierSourceBlock(content string, source article.SourceArticle) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed != "" && strings.Contains(trimmed, "## 原文来源") && (source.URL == "" || strings.Contains(trimmed, source.URL)) {
+		return trimmed
+	}
+
+	lines := make([]string, 0, 4)
+	if feedTitle := strings.TrimSpace(source.FeedTitle); feedTitle != "" {
+		lines = append(lines, "- 订阅源："+feedTitle)
+	}
+	if author := strings.TrimSpace(source.Author); author != "" {
+		lines = append(lines, "- 作者："+author)
+	}
+	if url := strings.TrimSpace(source.URL); url != "" {
+		lines = append(lines, "- 原文链接："+url)
+	}
+	if len(lines) == 0 {
+		return trimmed
+	}
+
+	sourceBlock := "## 原文来源\n" + strings.Join(lines, "\n")
+	if trimmed == "" {
+		return sourceBlock
+	}
+	return trimmed + "\n\n---\n\n" + sourceBlock
 }
 
 func mustCompilePublishSuggestionPattern(pattern string) *regexp.Regexp {

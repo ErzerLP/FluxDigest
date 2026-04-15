@@ -29,12 +29,15 @@ type RuntimePromptVersions struct {
 // RuntimeProcessingRunner 负责文章处理与 dossier 物化。
 type RuntimeProcessingRunner struct {
 	client                runtimeEntryLister
+	readMarker            runtimeEntryReadMarker
 	articles              runtimeArticleFinder
 	processing            runtimeArticleProcessor
 	results               runtimeProcessingStore
 	dossiers              runtimeDossierMaterializer
 	versions              RuntimePromptVersions
 	concurrencyCalculator func(int) int
+	articlePublishMode    string
+	articleReviewMode     string
 }
 
 // NewRuntimeProcessingRunner 创建 RuntimeProcessingRunner。
@@ -46,14 +49,21 @@ func NewRuntimeProcessingRunner(
 	dossiers runtimeDossierMaterializer,
 	versions RuntimePromptVersions,
 ) *RuntimeProcessingRunner {
+	var readMarker runtimeEntryReadMarker
+	if marker, ok := any(client).(runtimeEntryReadMarker); ok {
+		readMarker = marker
+	}
 	return &RuntimeProcessingRunner{
 		client:                client,
+		readMarker:            readMarker,
 		articles:              articles,
 		processing:            processing,
 		results:               results,
 		dossiers:              dossiers,
 		versions:              versions,
 		concurrencyCalculator: defaultRuntimeConcurrency,
+		articlePublishMode:    normalizeArticlePublishMode(""),
+		articleReviewMode:     normalizeArticleReviewMode(""),
 	}
 }
 
@@ -113,7 +123,7 @@ func (r *RuntimeProcessingRunner) ProcessPending(ctx context.Context, windowStar
 				}
 
 				select {
-				case resultCh <- runtimeProcessingResult{order: job.order, candidate: candidate}:
+				case resultCh <- runtimeProcessingResult{order: job.order, candidate: candidate, entryID: job.entryID}:
 				case <-ctx.Done():
 					return
 				}
@@ -138,6 +148,7 @@ func (r *RuntimeProcessingRunner) ProcessPending(ctx context.Context, windowStar
 	}()
 
 	candidates := make([]domaindigest.CandidateArticle, len(jobs))
+	processedEntryIDs := make([]int64, 0, len(jobs))
 	received := 0
 	var firstErr error
 	for res := range resultCh {
@@ -148,6 +159,7 @@ func (r *RuntimeProcessingRunner) ProcessPending(ctx context.Context, windowStar
 			continue
 		}
 		candidates[res.order] = res.candidate
+		processedEntryIDs = append(processedEntryIDs, res.entryID)
 		received++
 	}
 
@@ -159,6 +171,9 @@ func (r *RuntimeProcessingRunner) ProcessPending(ctx context.Context, windowStar
 	}
 	if received != len(jobs) {
 		return nil, errors.New("runtimeProcessingRunner: incomplete processing results")
+	}
+	if err := r.markProcessedEntriesRead(ctx, processedEntryIDs); err != nil {
+		return nil, err
 	}
 
 	return candidates, nil
@@ -209,6 +224,8 @@ func (r *RuntimeProcessingRunner) ReprocessArticle(ctx context.Context, articleI
 		TopicCategory:            record.TopicCategory,
 		ImportanceScore:          record.ImportanceScore,
 		ContentTranslated:        record.ContentTranslated,
+		ArticlePublishMode:       r.articlePublishMode,
+		ArticleReviewMode:        r.articleReviewMode,
 		TranslationPromptVersion: r.versions.Translation,
 		AnalysisPromptVersion:    r.versions.Analysis,
 		DossierPromptVersion:     r.versions.Dossier,
@@ -225,6 +242,7 @@ type runtimeProcessingJob struct {
 type runtimeProcessingResult struct {
 	order     int
 	candidate domaindigest.CandidateArticle
+	entryID    int64
 	err       error
 }
 
@@ -289,6 +307,8 @@ func (r *RuntimeProcessingRunner) runProcessingJob(ctx context.Context, job runt
 		TopicCategory:            record.TopicCategory,
 		ImportanceScore:          record.ImportanceScore,
 		ContentTranslated:        record.ContentTranslated,
+		ArticlePublishMode:       r.articlePublishMode,
+		ArticleReviewMode:        r.articleReviewMode,
 		TranslationPromptVersion: r.versions.Translation,
 		AnalysisPromptVersion:    r.versions.Analysis,
 		DossierPromptVersion:     r.versions.Dossier,
@@ -316,6 +336,14 @@ func (r *RuntimeProcessingRunner) SetConcurrencyCalculator(fn func(int) int) {
 	r.concurrencyCalculator = fn
 }
 
+func (r *RuntimeProcessingRunner) SetPublishPolicy(mode, review string) {
+	if r == nil {
+		return
+	}
+	r.articlePublishMode = normalizeArticlePublishMode(mode)
+	r.articleReviewMode = normalizeArticleReviewMode(review)
+}
+
 func defaultRuntimeConcurrency(jobCount int) int {
 	if jobCount <= 0 {
 		return 1
@@ -332,6 +360,10 @@ func defaultRuntimeConcurrency(jobCount int) int {
 
 type runtimeEntryLister interface {
 	ListEntries(ctx context.Context, windowStart, windowEnd time.Time) ([]miniflux.Entry, error)
+}
+
+type runtimeEntryReadMarker interface {
+	MarkEntriesRead(ctx context.Context, entryIDs []int64) error
 }
 
 type runtimeArticleFinder interface {
@@ -375,6 +407,30 @@ func candidateFromDossier(source article.SourceArticle, processed postgres.Proce
 		ReadingValue:         item.ReadingValue,
 		PriorityLevel:        item.PriorityLevel,
 	}
+}
+
+func (r *RuntimeProcessingRunner) markProcessedEntriesRead(ctx context.Context, entryIDs []int64) error {
+	if r == nil || r.readMarker == nil || len(entryIDs) == 0 {
+		return nil
+	}
+
+	deduped := make([]int64, 0, len(entryIDs))
+	seen := make(map[int64]struct{}, len(entryIDs))
+	for _, entryID := range entryIDs {
+		if entryID == 0 {
+			continue
+		}
+		if _, ok := seen[entryID]; ok {
+			continue
+		}
+		seen[entryID] = struct{}{}
+		deduped = append(deduped, entryID)
+	}
+	if len(deduped) == 0 {
+		return nil
+	}
+
+	return r.readMarker.MarkEntriesRead(ctx, deduped)
 }
 
 func newProcessingID() string {

@@ -6,16 +6,28 @@ import { PageHeader } from '../../../components/common/PageHeader';
 import { SecretField } from '../../../components/forms/SecretField';
 import { StatusBadge } from '../../../components/status/StatusBadge';
 import {
+  useRunDailyDigest,
   useSavePublishConfig,
+  useSaveSchedulerConfig,
   useTestPublishConfig,
 } from '../../../services/mutations/admin';
 import { useAdminConfigs, useAdminStatus } from '../../../services/queries/admin';
-import type { PublishProvider, SecretInput, UpdatePublishConfigInput } from '../../../types/admin';
+import type {
+  ArticlePublishMode,
+  ArticleReviewMode,
+  SecretInput,
+  UpdatePublishConfigInput,
+  UpdateSchedulerConfigInput,
+} from '../../../types/admin';
 
 interface PublishConfigFormValues {
-  provider: PublishProvider;
+  provider: 'halo' | 'markdown_export';
   halo_base_url: string;
   output_dir: string;
+  article_publish_mode: ArticlePublishMode;
+  article_review_mode: ArticleReviewMode;
+  digest_schedule_time: string;
+  digest_enabled: boolean;
 }
 
 function valueOrDash(value?: string) {
@@ -25,12 +37,17 @@ function valueOrDash(value?: string) {
 export function PublishConfigPage() {
   const configQuery = useAdminConfigs();
   const statusQuery = useAdminStatus();
-  const saveMutation = useSavePublishConfig();
+  const savePublishMutation = useSavePublishConfig();
+  const saveSchedulerMutation = useSaveSchedulerConfig();
+  const runDailyDigestMutation = useRunDailyDigest();
   const testMutation = useTestPublishConfig();
   const [secretInput, setSecretInput] = useState<SecretInput>({ mode: 'keep' });
   const [saveGuidance, setSaveGuidance] = useState<string>();
+  const [saveMessage, setSaveMessage] = useState<string>();
+  const [runMessage, setRunMessage] = useState<string>();
 
   const currentConfig = configQuery.data?.publish;
+  const schedulerConfig = configQuery.data?.scheduler;
   const configReady = configQuery.isSuccess;
   const integration = statusQuery.data?.integrations?.publisher;
 
@@ -39,10 +56,16 @@ export function PublishConfigPage() {
       provider: 'halo',
       halo_base_url: '',
       output_dir: '',
+      article_publish_mode: 'digest_only',
+      article_review_mode: 'manual_review',
+      digest_schedule_time: '07:00',
+      digest_enabled: true,
     },
   });
 
   const provider = watch('provider');
+  const articlePublishMode = watch('article_publish_mode');
+  const digestEnabled = watch('digest_enabled');
 
   useEffect(() => {
     if (!currentConfig) {
@@ -54,21 +77,35 @@ export function PublishConfigPage() {
       provider: nextProvider,
       halo_base_url: currentConfig.halo_base_url ?? '',
       output_dir: currentConfig.output_dir ?? '',
+      article_publish_mode: currentConfig.article_publish_mode ?? 'digest_only',
+      article_review_mode: currentConfig.article_review_mode ?? 'manual_review',
+      digest_schedule_time: schedulerConfig?.schedule_time ?? '07:00',
+      digest_enabled: schedulerConfig?.enabled ?? true,
     });
     setSecretInput({
       mode: nextProvider === 'halo' && !currentConfig.halo_token?.is_set ? 'replace' : 'keep',
       value: '',
     });
     setSaveGuidance(undefined);
-  }, [currentConfig, reset]);
+    setSaveMessage(undefined);
+  }, [currentConfig, schedulerConfig, reset]);
 
-  const saveMessage = useMemo(() => {
-    if (!saveMutation.isSuccess) {
-      return null;
+  const connectionStatus = integration?.configured
+    ? integration.last_test_status ?? 'configured'
+    : 'missing';
+  const isSaving = savePublishMutation.isPending || saveSchedulerMutation.isPending;
+  const saveError = savePublishMutation.error ?? saveSchedulerMutation.error;
+
+  const outputPolicySummary = useMemo(() => {
+    switch (articlePublishMode) {
+      case 'all':
+        return '所有单篇文章都会进入发布队列，可结合审核策略控制是否先人工确认。';
+      case 'suggested':
+        return '仅 AI 建议值得发布的文章进入后续流程，适合“部分发送 + 审核”。';
+      default:
+        return '只发布每日汇总日报，单篇文章仅保存为内部资产与接口数据。';
     }
-
-    return '发布配置已保存。';
-  }, [saveMutation.isSuccess]);
+  }, [articlePublishMode]);
 
   const onSubmit = async (values: PublishConfigFormValues) => {
     if (!configReady) {
@@ -80,23 +117,44 @@ export function PublishConfigPage() {
       return;
     }
 
-    const payload: UpdatePublishConfigInput = {
+    const publishPayload: UpdatePublishConfigInput = {
       provider: values.provider,
       halo_base_url: values.halo_base_url,
       output_dir: values.output_dir,
+      article_publish_mode: values.article_publish_mode,
+      article_review_mode: values.article_review_mode,
       halo_token:
         secretInput.mode === 'replace'
           ? { mode: 'replace', value: secretInput.value ?? '' }
           : { mode: secretInput.mode },
     };
+    const schedulerPayload: UpdateSchedulerConfigInput = {
+      enabled: values.digest_enabled,
+      schedule_time: values.digest_schedule_time,
+      timezone: schedulerConfig?.timezone ?? 'Asia/Shanghai',
+    };
 
-    setSaveGuidance(undefined);
-    saveMutation.mutate(payload);
+    try {
+      setSaveGuidance(undefined);
+      setSaveMessage(undefined);
+      await Promise.all([
+        savePublishMutation.mutateAsync(publishPayload),
+        saveSchedulerMutation.mutateAsync(schedulerPayload),
+      ]);
+      setSaveMessage('发布设置已保存。');
+    } catch {
+      setSaveMessage(undefined);
+    }
   };
 
-  const connectionStatus = integration?.configured
-    ? integration.last_test_status ?? 'configured'
-    : 'missing';
+  const handleManualRun = async () => {
+    try {
+      const result = await runDailyDigestMutation.mutateAsync({ force: true });
+      setRunMessage(`已触发手动日报：${result.digest_date ?? '今日'}（${result.status ?? 'accepted'}）`);
+    } catch {
+      setRunMessage(undefined);
+    }
+  };
 
   return (
     <section className="page-stack">
@@ -104,9 +162,16 @@ export function PublishConfigPage() {
         <PageHeader
           eyebrow="Configuration"
           title="Publish"
-          subtitle="配置日报发布通道、输出策略与已保存渠道的连通性检查。"
+          subtitle="配置日报时间、单篇文章发布流程、审核策略与发布通道，并支持手动重跑日报。"
           actions={
             <div className="button-cluster">
+              <Button
+                onClick={() => void handleManualRun()}
+                loading={runDailyDigestMutation.isPending}
+                disabled={!configReady}
+              >
+                手动生成日报
+              </Button>
               <Button
                 onClick={() => testMutation.mutate()}
                 loading={testMutation.isPending}
@@ -117,7 +182,7 @@ export function PublishConfigPage() {
               <Button
                 type="primary"
                 onClick={() => void handleSubmit(onSubmit)()}
-                loading={saveMutation.isPending}
+                loading={isSaving}
                 disabled={!configReady}
               >
                 保存配置
@@ -142,15 +207,28 @@ export function PublishConfigPage() {
         ) : null}
 
         {saveMessage ? <Alert type="success" showIcon message={saveMessage} /> : null}
-        {saveMutation.isError ? (
+        {saveError ? (
           <Alert
             type="error"
             showIcon
             message="发布配置保存失败"
-            description={saveMutation.error instanceof Error ? saveMutation.error.message : '未知错误'}
+            description={saveError instanceof Error ? saveError.message : '未知错误'}
           />
         ) : null}
         {saveGuidance ? <Alert type="warning" showIcon message={saveGuidance} /> : null}
+        {runMessage ? <Alert type="success" showIcon message={runMessage} /> : null}
+        {runDailyDigestMutation.isError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="手动生成日报失败"
+            description={
+              runDailyDigestMutation.error instanceof Error
+                ? runDailyDigestMutation.error.message
+                : '未知错误'
+            }
+          />
+        ) : null}
         {testMutation.isSuccess ? (
           <Alert
             type="info"
@@ -181,7 +259,7 @@ export function PublishConfigPage() {
             <section className="data-card form-card">
               <div className="section-heading-row compact-row">
                 <div>
-                  <p className="section-eyebrow">Provider strategy</p>
+                  <p className="section-eyebrow">Delivery channel</p>
                   <h2 className="section-title">发布通道</h2>
                 </div>
                 <StatusBadge status={connectionStatus} />
@@ -232,6 +310,80 @@ export function PublishConfigPage() {
               )}
             </section>
 
+            <section className="data-card form-card">
+              <div className="section-heading-row compact-row">
+                <div>
+                  <p className="section-eyebrow">Digest workflow</p>
+                  <h2 className="section-title">日报与文章发布设置</h2>
+                </div>
+              </div>
+
+              <div className="form-stack">
+                <label className="form-label" htmlFor="publish-digest-time">
+                  日报生成时间
+                </label>
+                <input
+                  id="publish-digest-time"
+                  className="console-input"
+                  type="time"
+                  {...register('digest_schedule_time')}
+                />
+              </div>
+
+              <div className="form-stack">
+                <label className="form-label" htmlFor="publish-digest-enabled">
+                  启用自动日报
+                </label>
+                <input
+                  id="publish-digest-enabled"
+                  type="checkbox"
+                  {...register('digest_enabled')}
+                />
+              </div>
+
+              <div className="form-stack">
+                <label className="form-label" htmlFor="publish-article-mode">
+                  文章发布流程
+                </label>
+                <select
+                  id="publish-article-mode"
+                  className="console-input"
+                  {...register('article_publish_mode')}
+                >
+                  <option value="digest_only">只发日报</option>
+                  <option value="suggested">部分发送（仅建议稿）</option>
+                  <option value="all">全部发送</option>
+                </select>
+              </div>
+
+              <div className="form-stack">
+                <label className="form-label" htmlFor="publish-article-review">
+                  文章发布审核
+                </label>
+                <select
+                  id="publish-article-review"
+                  className="console-input"
+                  {...register('article_review_mode')}
+                >
+                  <option value="manual_review">人工审核</option>
+                  <option value="auto_publish">自动发布</option>
+                </select>
+              </div>
+
+              <div className="metric-meta compact-stack">
+                <div className="status-row">
+                  <span>时区</span>
+                  <span className="detail-value monospace">
+                    {valueOrDash(schedulerConfig?.timezone ?? 'Asia/Shanghai')}
+                  </span>
+                </div>
+                <div className="status-row">
+                  <span>自动日报</span>
+                  <StatusBadge status={digestEnabled ? 'ok' : 'disabled'} />
+                </div>
+              </div>
+            </section>
+
             <section className="data-card soft-card">
               <div className="section-heading-row compact-row">
                 <div>
@@ -256,8 +408,12 @@ export function PublishConfigPage() {
                 </div>
               </div>
               <ul className="helper-list">
-                <li>`halo`：直接推送每日汇总到 Halo 站点。</li>
-                <li>`markdown_export`：将日报导出为本地 Markdown，供后续静态发布或人工处理。</li>
+                <li>{outputPolicySummary}</li>
+                <li>
+                  {provider === 'halo'
+                    ? '`halo`：直接推送每日汇总到 Halo，并为单篇文章保留后续扩展能力。'
+                    : '`markdown_export`：将日报或单篇内容导出为 Markdown，便于静态站或外部脚本消费。'}
+                </li>
               </ul>
             </section>
           </form>

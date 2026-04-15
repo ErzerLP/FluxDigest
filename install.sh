@@ -27,6 +27,7 @@ ROOT_STACK_DIR="${DEFAULT_STACK_DIR}"
 ROOT_RELEASE_ID=""
 ROOT_HOST=""
 ROOT_FORCE=0
+ROOT_PURGE_DATA=0
 ROOT_NON_INTERACTIVE=0
 ROOT_SHOW_HELP=0
 
@@ -42,14 +43,16 @@ Direct actions:
   bash install.sh --action upgrade --stack-dir /opt/fluxdigest-stack
   bash install.sh --action rollback --stack-dir /opt/fluxdigest-stack --release-id 20260415070001
   bash install.sh --action status --stack-dir /opt/fluxdigest-stack
+  bash install.sh --action uninstall --stack-dir /opt/fluxdigest-stack --purge-data
 
 Options:
-  --action <name>    install | upgrade | rollback | status
+  --action <name>    install | upgrade | rollback | status | uninstall
   --profile <name>   full | fluxdigest-miniflux | fluxdigest-halo | fluxdigest-only
   --stack-dir <dir>  Stack directory
   --release-id <id>  Release ID for rollback
   --host <value>     Public host or IP for summary output
   --force            Allow overwriting generated files during install/upgrade
+  --purge-data       Delete the whole stack directory during uninstall
   -h, --help         Show this help
 EOF
 }
@@ -198,6 +201,11 @@ parse_args() {
         ROOT_NON_INTERACTIVE=1
         shift
         ;;
+      --purge-data)
+        ROOT_PURGE_DATA=1
+        ROOT_NON_INTERACTIVE=1
+        shift
+        ;;
       -h|--help)
         ROOT_SHOW_HELP=1
         shift
@@ -209,7 +217,7 @@ parse_args() {
   done
 
   case "${ROOT_ACTION}" in
-    install|upgrade|rollback|status) ;;
+    install|upgrade|rollback|status|uninstall) ;;
     *) fail "不支持的 action: ${ROOT_ACTION}" ;;
   esac
 
@@ -268,6 +276,7 @@ run_stack_action() {
   local host="$4"
   local release_id="$5"
   local force_flag="$6"
+  local purge_data_flag="${7:-0}"
   local args=(--action "${action}")
 
   if [[ -n "${profile}" ]]; then
@@ -283,6 +292,9 @@ run_stack_action() {
   if [[ "${force_flag}" -eq 1 ]]; then
     args+=(--force)
   fi
+  if [[ "${purge_data_flag}" -eq 1 ]]; then
+    args+=(--purge-data)
+  fi
 
   bash "${STACK_INSTALL_BIN}" "${args[@]}"
 }
@@ -294,6 +306,7 @@ main_menu() {
     upgrade "升级现有部署" \
     rollback "回滚到历史版本" \
     status "查看当前部署信息" \
+    uninstall "卸载现有部署" \
     exit "退出"
 }
 
@@ -372,6 +385,23 @@ handle_status() {
   fi
 }
 
+select_uninstall_mode() {
+  ui_menu "卸载模式" "请选择卸载方式" \
+    preserve "仅卸载服务，保留数据目录" \
+    purge "卸载服务并删除整个部署目录"
+}
+
+handle_uninstall() {
+  local stack_dir uninstall_mode purge_flag=0
+  stack_dir="$(ui_input "安装目录" "请输入现有安装目录" "${DEFAULT_STACK_DIR}")"
+  uninstall_mode="$(select_uninstall_mode)"
+  if [[ "${uninstall_mode}" == "purge" ]]; then
+    purge_flag=1
+  fi
+  ui_confirm "确认卸载" "即将卸载 ${stack_dir}，继续吗？" || return 0
+  run_stack_action uninstall "" "${stack_dir}" "" "" 1 "${purge_flag}"
+}
+
 run_interactive() {
   ensure_whiptail
   while true; do
@@ -395,6 +425,10 @@ run_interactive() {
       status)
         handle_status
         ;;
+      uninstall)
+        handle_uninstall
+        return 0
+        ;;
       exit)
         return 0
         ;;
@@ -410,7 +444,7 @@ run_non_interactive() {
   if [[ -z "${profile}" && "${ROOT_ACTION}" == "install" ]]; then
     profile="full"
   fi
-  run_stack_action "${ROOT_ACTION}" "${profile}" "${ROOT_STACK_DIR}" "${ROOT_HOST}" "${ROOT_RELEASE_ID}" "${ROOT_FORCE}"
+  run_stack_action "${ROOT_ACTION}" "${profile}" "${ROOT_STACK_DIR}" "${ROOT_HOST}" "${ROOT_RELEASE_ID}" "${ROOT_FORCE}" "${ROOT_PURGE_DATA}"
 }
 
 main() {

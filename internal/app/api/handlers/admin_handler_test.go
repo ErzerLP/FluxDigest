@@ -51,6 +51,8 @@ type adminConfigUpdaterStub struct {
 	minifluxErr     error
 	publishVersion  profile.Version
 	publishErr      error
+	schedulerVersion profile.Version
+	schedulerErr     error
 	promptsVersion  profile.Version
 	promptsErr      error
 }
@@ -74,6 +76,13 @@ func (s adminConfigUpdaterStub) UpdatePublish(_ context.Context, _ service.Updat
 		return profile.Version{}, s.publishErr
 	}
 	return s.publishVersion, nil
+}
+
+func (s adminConfigUpdaterStub) UpdateScheduler(_ context.Context, _ service.UpdateSchedulerConfigInput) (profile.Version, error) {
+	if s.schedulerErr != nil {
+		return profile.Version{}, s.schedulerErr
+	}
+	return s.schedulerVersion, nil
 }
 
 func (s adminConfigUpdaterStub) UpdatePrompts(_ context.Context, _ service.UpdatePromptConfigInput) (profile.Version, error) {
@@ -114,6 +123,25 @@ func (s adminJobReaderStub) ListLatest(_ context.Context, _ service.JobRunListFi
 		return nil, s.err
 	}
 	return s.items, nil
+}
+
+type adminJobTriggerStub struct {
+	result service.JobTriggerResult
+	err    error
+	force  bool
+}
+
+func (s *adminJobTriggerStub) TriggerDailyDigest(_ context.Context, _ time.Time) (service.JobTriggerResult, error) {
+	return s.result, s.err
+}
+
+func (s *adminJobTriggerStub) TriggerDailyDigestWithOptions(_ context.Context, _ time.Time, opts service.DailyDigestTriggerOptions) (service.JobTriggerResult, error) {
+	s.force = opts.Force
+	return s.result, s.err
+}
+
+func (s *adminJobTriggerStub) TriggerArticleReprocess(_ context.Context, _ string, _ bool) (service.JobTriggerResult, error) {
+	return service.JobTriggerResult{}, nil
 }
 
 type adminAuthRepoRouteStub struct {
@@ -271,6 +299,13 @@ func TestAdminConfigsRouteReturnsFullSnapshot(t *testing.T) {
 				HaloBaseURL: "https://halo.local",
 				HaloToken:   service.SecretView{IsSet: true, MaskedValue: "halo****"},
 				OutputDir:   "/tmp/publish",
+				ArticlePublishMode: "suggested",
+				ArticleReviewMode:  "manual_review",
+			},
+			Scheduler: service.SchedulerConfigView{
+				Enabled:      true,
+				ScheduleTime: "07:30",
+				Timezone:     "Asia/Shanghai",
 			},
 			Prompts: service.PromptConfigView{
 				TargetLanguage:    "zh-CN",
@@ -295,7 +330,7 @@ func TestAdminConfigsRouteReturnsFullSnapshot(t *testing.T) {
 		t.Fatalf("unmarshal response: %v", err)
 	}
 
-	for _, key := range []string{"llm", "miniflux", "publish", "prompts"} {
+	for _, key := range []string{"llm", "miniflux", "publish", "scheduler", "prompts"} {
 		if _, ok := body[key]; !ok {
 			t.Fatalf("want snapshot key %q in response: %#v", key, body)
 		}
@@ -369,6 +404,80 @@ func TestAdminUpdatePublishRouteReturnsProfileVersionContract(t *testing.T) {
 	}
 	if body["profile_type"] != profile.TypePublish {
 		t.Fatalf("want profile_type %q got %#v", profile.TypePublish, body["profile_type"])
+	}
+}
+
+func TestAdminUpdateSchedulerRouteReturnsProfileVersionContract(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
+		ConfigUpdater: adminConfigUpdaterStub{schedulerVersion: profile.Version{
+			ID:          "ver-scheduler-1",
+			ProfileType: profile.TypeScheduler,
+			Name:        "admin-scheduler",
+			Version:     2,
+			IsActive:    true,
+		}},
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/api/v1/admin/configs/scheduler",
+		bytes.NewBufferString(`{"enabled":true,"schedule_time":"08:00","timezone":"Asia/Shanghai"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body["profile_type"] != profile.TypeScheduler {
+		t.Fatalf("want profile_type %q got %#v", profile.TypeScheduler, body["profile_type"])
+	}
+}
+
+func TestAdminRunDailyDigestRouteSupportsForce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	trigger := &adminJobTriggerStub{result: service.JobTriggerResult{DigestDate: "2026-04-15", Status: "accepted"}}
+	handlers.RegisterAdminRoutes(router.Group("/api/v1"), handlers.AdminDeps{
+		JobTrigger: trigger,
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/jobs/daily-digest/run",
+		bytes.NewBufferString(`{"force":true}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("want 202 got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !trigger.force {
+		t.Fatal("expected force flag forwarded to trigger")
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body["status"] != "accepted" {
+		t.Fatalf("want status accepted got %#v", body["status"])
+	}
+	if body["digest_date"] != "2026-04-15" {
+		t.Fatalf("want digest_date 2026-04-15 got %#v", body["digest_date"])
+	}
+	if body["force"] != true {
+		t.Fatalf("want force=true got %#v", body["force"])
 	}
 }
 

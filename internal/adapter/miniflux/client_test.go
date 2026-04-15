@@ -26,6 +26,9 @@ func TestClientListEntriesSendsAuthHeaderAndPublishedAfterUnixAndParsesNestedFee
 		if gotPublishedAfter != wantPublishedAfter {
 			t.Fatalf("published_after mismatch: want %s got %s", wantPublishedAfter, gotPublishedAfter)
 		}
+		if gotStatus := r.URL.Query().Get("status"); gotStatus != "unread" {
+			t.Fatalf("status mismatch: want unread got %s", gotStatus)
+		}
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"entries": []map[string]any{{
@@ -56,6 +59,41 @@ func TestClientListEntriesSendsAuthHeaderAndPublishedAfterUnixAndParsesNestedFee
 	}
 	if entries[0].FeedID != 321 {
 		t.Fatalf("want feed id 321 got %d", entries[0].FeedID)
+	}
+}
+
+func TestClientMarkEntriesReadSendsExpectedPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("want PUT got %s", r.Method)
+		}
+		if r.URL.Path != "/v1/entries" {
+			t.Fatalf("want /v1/entries got %s", r.URL.Path)
+		}
+		if r.Header.Get("X-Auth-Token") != "secret-token" {
+			t.Fatal("missing auth token")
+		}
+
+		var body struct {
+			EntryIDs []int64 `json:"entry_ids"`
+			Status   string  `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body.Status != "read" {
+			t.Fatalf("want status read got %q", body.Status)
+		}
+		if len(body.EntryIDs) != 2 || body.EntryIDs[0] != 1001 || body.EntryIDs[1] != 1002 {
+			t.Fatalf("unexpected entry_ids %#v", body.EntryIDs)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := miniflux.NewClient(server.URL, "secret-token")
+	if err := client.MarkEntriesRead(context.Background(), []int64{1001, 1002}); err != nil {
+		t.Fatal(err)
 	}
 }
 

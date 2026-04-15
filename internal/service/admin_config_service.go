@@ -60,6 +60,7 @@ type AdminConfigSnapshot struct {
 	LLM      LLMConfigView      `json:"llm"`
 	Miniflux MinifluxConfigView `json:"miniflux"`
 	Publish  PublishConfigView  `json:"publish"`
+	Scheduler SchedulerConfigView `json:"scheduler"`
 	Prompts  PromptConfigView   `json:"prompts"`
 }
 
@@ -78,10 +79,18 @@ type MinifluxConfigView struct {
 }
 
 type PublishConfigView struct {
-	Provider    string     `json:"provider"`
-	HaloBaseURL string     `json:"halo_base_url"`
-	HaloToken   SecretView `json:"halo_token"`
-	OutputDir   string     `json:"output_dir"`
+	Provider           string     `json:"provider"`
+	HaloBaseURL        string     `json:"halo_base_url"`
+	HaloToken          SecretView `json:"halo_token"`
+	OutputDir          string     `json:"output_dir"`
+	ArticlePublishMode string     `json:"article_publish_mode"`
+	ArticleReviewMode  string     `json:"article_review_mode"`
+}
+
+type SchedulerConfigView struct {
+	Enabled      bool   `json:"enabled"`
+	ScheduleTime string `json:"schedule_time"`
+	Timezone     string `json:"timezone"`
 }
 
 type PromptConfigView struct {
@@ -107,10 +116,18 @@ type UpdateMinifluxConfigInput struct {
 }
 
 type UpdatePublishConfigInput struct {
-	Provider    string      `json:"provider"`
-	HaloBaseURL string      `json:"halo_base_url"`
-	HaloToken   SecretInput `json:"halo_token"`
-	OutputDir   string      `json:"output_dir"`
+	Provider           string      `json:"provider"`
+	HaloBaseURL        string      `json:"halo_base_url"`
+	HaloToken          SecretInput `json:"halo_token"`
+	OutputDir          string      `json:"output_dir"`
+	ArticlePublishMode string      `json:"article_publish_mode"`
+	ArticleReviewMode  string      `json:"article_review_mode"`
+}
+
+type UpdateSchedulerConfigInput struct {
+	Enabled      bool   `json:"enabled"`
+	ScheduleTime string `json:"schedule_time"`
+	Timezone     string `json:"timezone"`
 }
 
 type UpdatePromptConfigInput struct {
@@ -135,10 +152,16 @@ func (s *AdminConfigService) GetSnapshot(ctx context.Context) (AdminConfigSnapsh
 	if err != nil {
 		return AdminConfigSnapshot{}, err
 	}
+	schedulerPayload, _, err := s.loadProfile(ctx, profile.TypeScheduler)
+	if err != nil {
+		return AdminConfigSnapshot{}, err
+	}
 	promptsPayload, _, err := s.loadProfile(ctx, profile.TypePrompts)
 	if err != nil {
 		return AdminConfigSnapshot{}, err
 	}
+
+	defaultScheduler := defaultSchedulerRuntimeConfig()
 
 	snapshot := AdminConfigSnapshot{
 		LLM: LLMConfigView{
@@ -154,10 +177,17 @@ func (s *AdminConfigService) GetSnapshot(ctx context.Context) (AdminConfigSnapsh
 			APIToken:      maskSecret(s.defaultMinifluxAPIToken()),
 		},
 		Publish: PublishConfigView{
-			Provider:    ResolvePublishProvider(s.defaultPublishChannel(), s.defaultPublishHaloBaseURL(), s.defaultPublishOutputDir()),
-			HaloBaseURL: s.defaultPublishHaloBaseURL(),
-			HaloToken:   maskSecret(s.defaultPublishHaloToken()),
-			OutputDir:   s.defaultPublishOutputDir(),
+			Provider:           ResolvePublishProvider(s.defaultPublishChannel(), s.defaultPublishHaloBaseURL(), s.defaultPublishOutputDir()),
+			HaloBaseURL:        s.defaultPublishHaloBaseURL(),
+			HaloToken:          maskSecret(s.defaultPublishHaloToken()),
+			OutputDir:          s.defaultPublishOutputDir(),
+			ArticlePublishMode: normalizeArticlePublishMode(""),
+			ArticleReviewMode:  normalizeArticleReviewMode(""),
+		},
+		Scheduler: SchedulerConfigView{
+			Enabled:      defaultScheduler.Enabled,
+			ScheduleTime: defaultScheduler.ScheduleTime,
+			Timezone:     defaultScheduler.Timezone,
 		},
 		Prompts: PromptConfigView{
 			TargetLanguage:    stringValue(promptsPayload, "target_language"),
@@ -227,6 +257,18 @@ func (s *AdminConfigService) GetSnapshot(ctx context.Context) (AdminConfigSnapsh
 		snapshot.Publish.HaloToken = view
 	}
 	snapshot.Publish.Provider = ResolvePublishProvider(snapshot.Publish.Provider, snapshot.Publish.HaloBaseURL, snapshot.Publish.OutputDir)
+	snapshot.Publish.ArticlePublishMode = normalizeArticlePublishMode(stringValue(publishPayload, "article_publish_mode"))
+	snapshot.Publish.ArticleReviewMode = normalizeArticleReviewMode(stringValue(publishPayload, "article_review_mode"))
+
+	if value, ok := boolValue(schedulerPayload, "schedule_enabled"); ok {
+		snapshot.Scheduler.Enabled = value
+	}
+	if value := strings.TrimSpace(stringValue(schedulerPayload, "schedule_time")); value != "" {
+		snapshot.Scheduler.ScheduleTime = value
+	}
+	if value := strings.TrimSpace(stringValue(schedulerPayload, "timezone")); value != "" {
+		snapshot.Scheduler.Timezone = value
+	}
 
 	return snapshot, nil
 }
@@ -286,12 +328,47 @@ func (s *AdminConfigService) UpdatePublish(ctx context.Context, input UpdatePubl
 	payload["provider"] = provider
 	payload["halo_base_url"] = input.HaloBaseURL
 	payload["output_dir"] = input.OutputDir
+	payload["article_publish_mode"] = normalizeArticlePublishMode(input.ArticlePublishMode)
+	payload["article_review_mode"] = normalizeArticleReviewMode(input.ArticleReviewMode)
 
 	if err := s.applySecret(payload, currentPayload, "halo_token", []string{"auth_token"}, input.HaloToken, s.defaultPublishHaloToken()); err != nil {
 		return profile.Version{}, err
 	}
 
 	return s.saveProfile(ctx, profile.TypePublish, "admin-publish", currentVersion.Version, payload)
+}
+
+// UpdateScheduler 更新调度配置。
+func (s *AdminConfigService) UpdateScheduler(ctx context.Context, input UpdateSchedulerConfigInput) (profile.Version, error) {
+	currentPayload, currentVersion, err := s.loadProfile(ctx, profile.TypeScheduler)
+	if err != nil {
+		return profile.Version{}, err
+	}
+
+	payload := clonePayload(currentPayload)
+	payload["schedule_enabled"] = input.Enabled
+
+	scheduleTime := strings.TrimSpace(input.ScheduleTime)
+	if scheduleTime == "" {
+		if current := strings.TrimSpace(stringValue(currentPayload, "schedule_time")); current != "" {
+			scheduleTime = current
+		} else {
+			scheduleTime = defaultSchedulerRuntimeConfig().ScheduleTime
+		}
+	}
+	payload["schedule_time"] = scheduleTime
+
+	timezone := strings.TrimSpace(input.Timezone)
+	if timezone == "" {
+		if current := strings.TrimSpace(stringValue(currentPayload, "timezone")); current != "" {
+			timezone = current
+		} else {
+			timezone = defaultSchedulerRuntimeConfig().Timezone
+		}
+	}
+	payload["timezone"] = timezone
+
+	return s.saveProfile(ctx, profile.TypeScheduler, "admin-scheduler", currentVersion.Version, payload)
 }
 
 func (s *AdminConfigService) UpdatePrompts(ctx context.Context, input UpdatePromptConfigInput) (profile.Version, error) {

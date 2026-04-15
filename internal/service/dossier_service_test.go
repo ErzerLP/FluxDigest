@@ -2,8 +2,10 @@ package service_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"rss-platform/internal/domain/article"
 	"rss-platform/internal/domain/dossier"
 	"rss-platform/internal/repository/postgres"
 	"rss-platform/internal/service"
@@ -202,5 +204,98 @@ func TestDossierServiceMaterializeUsesRepositoryAssignedVersionSequence(t *testi
 	}
 	if dossiers.received[0].Version != 0 || dossiers.received[1].Version != 0 {
 		t.Fatalf("expected service to defer version assignment to repository, got %+v", dossiers.received)
+	}
+}
+
+func TestDossierServiceMaterializeAppendsSourceBlockToArticleContent(t *testing.T) {
+	builder := dossierBuilderStub{out: dossier.ArticleDossier{
+		TitleTranslated:         "模型新闻",
+		ContentPolishedMarkdown: "## 正文\n这里是译文。",
+		PublishSuggestion:       "suggested",
+	}}
+	dossiers := &dossierRepoStub{}
+	publishStates := &publishStateRepoStub{}
+	svc := service.NewDossierService(builder, dossiers, publishStates)
+
+	out, err := svc.Materialize(context.Background(), service.MaterializeDossierInput{
+		Article: article.SourceArticle{
+			ID:        "art-1",
+			FeedTitle: "AI Weekly",
+			Author:    "Alice",
+			URL:       "https://example.com/article",
+		},
+		ArticleID:                "art-1",
+		ProcessingID:             "proc-1",
+		DigestDate:               "2026-04-12",
+		TitleTranslated:          "模型新闻",
+		CoreSummary:              "核心总结",
+		ContentTranslated:        "## 正文\n这里是译文。",
+		TranslationPromptVersion: 6,
+		AnalysisPromptVersion:    6,
+		DossierPromptVersion:     6,
+		LLMProfileVersion:        4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, snippet := range []string{"## 原文来源", "AI Weekly", "Alice", "https://example.com/article"} {
+		if !strings.Contains(out.ContentPolishedMarkdown, snippet) {
+			t.Fatalf("want source block snippet %q in content: %s", snippet, out.ContentPolishedMarkdown)
+		}
+	}
+}
+
+func TestDossierServiceMaterializeUsesPendingReviewForSuggestedArticlesWhenReviewRequired(t *testing.T) {
+	builder := dossierBuilderStub{out: dossier.ArticleDossier{TitleTranslated: "模型新闻", PublishSuggestion: "suggested"}}
+	dossiers := &dossierRepoStub{}
+	publishStates := &publishStateRepoStub{}
+	svc := service.NewDossierService(builder, dossiers, publishStates)
+
+	_, err := svc.Materialize(context.Background(), service.MaterializeDossierInput{
+		ArticleID:                "art-1",
+		ProcessingID:             "proc-1",
+		DigestDate:               "2026-04-12",
+		TitleTranslated:          "模型新闻",
+		CoreSummary:              "核心总结",
+		ArticlePublishMode:       "suggested",
+		ArticleReviewMode:        "manual_review",
+		TranslationPromptVersion: 6,
+		AnalysisPromptVersion:    6,
+		DossierPromptVersion:     6,
+		LLMProfileVersion:        4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(publishStates.saved) != 1 || publishStates.saved[0].State != "pending_review" {
+		t.Fatalf("expected pending_review state got %+v", publishStates.saved)
+	}
+}
+
+func TestDossierServiceMaterializeUsesQueuedForAllArticlesWhenAutoPublishEnabled(t *testing.T) {
+	builder := dossierBuilderStub{out: dossier.ArticleDossier{TitleTranslated: "模型新闻", PublishSuggestion: "draft"}}
+	dossiers := &dossierRepoStub{}
+	publishStates := &publishStateRepoStub{}
+	svc := service.NewDossierService(builder, dossiers, publishStates)
+
+	_, err := svc.Materialize(context.Background(), service.MaterializeDossierInput{
+		ArticleID:                "art-1",
+		ProcessingID:             "proc-1",
+		DigestDate:               "2026-04-12",
+		TitleTranslated:          "模型新闻",
+		CoreSummary:              "核心总结",
+		ArticlePublishMode:       "all",
+		ArticleReviewMode:        "auto_publish",
+		TranslationPromptVersion: 6,
+		AnalysisPromptVersion:    6,
+		DossierPromptVersion:     6,
+		LLMProfileVersion:        4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(publishStates.saved) != 1 || publishStates.saved[0].State != "queued" {
+		t.Fatalf("expected queued state got %+v", publishStates.saved)
 	}
 }

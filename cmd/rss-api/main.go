@@ -148,6 +148,7 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 	adminSessionMiddleware := middleware.RequireAdminSession(adminAuthService, middleware.AdminSessionOptions{
 		CookieName: service.DefaultAdminSessionCookieName,
 	})
+	jobSvc := service.NewJobService(dailyQueue, articleQueue, metrics)
 	router := api.NewRouter(
 		api.WithAPIKey(cfg.Job.APIKey),
 		api.WithMetrics(metrics),
@@ -155,13 +156,14 @@ func buildAPIRouter(ctx context.Context, cfg *config.Config, dailyQueue service.
 		api.WithDossierReader(dossierQueryService),
 		api.WithDigestReader(digestQueryService),
 		api.WithProfileReader(profileQueryService),
-		api.WithJobTrigger(service.NewJobService(dailyQueue, articleQueue, metrics)),
+		api.WithJobTrigger(jobSvc),
 		api.WithAdminDeps(handlers.AdminDeps{
 			Status:        adminStatusService,
 			Configs:       adminConfigService,
 			ConfigUpdater: adminConfigService,
 			Tester:        adminTestService,
 			Jobs:          jobRunQueryService,
+			JobTrigger:    jobSvc,
 		}),
 		api.WithAdminAuthDeps(handlers.AdminAuthDeps{
 			Auth:        adminAuthService,

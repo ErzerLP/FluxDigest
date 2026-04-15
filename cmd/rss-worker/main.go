@@ -175,6 +175,10 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 			LLM:         runtimeSnapshot.LLM.Version,
 		},
 	)
+	processingRunner.SetPublishPolicy(
+		runtimeSnapshot.Publish.ArticlePublishMode,
+		runtimeSnapshot.Publish.ArticleReviewMode,
+	)
 	digestRunner := digestWorkflowRunner{
 		workflow: daily_digest_workflow.New(
 			digest_planning.NewWithPrompt(digest_planning.NewOpenAIRunner(invoker), digestTemplate),

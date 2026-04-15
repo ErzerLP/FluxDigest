@@ -301,3 +301,27 @@ func TestRuntimeConfigServiceTreatsDefaultPublishSeedAsFallbackForEnvMarkdownExp
 		t.Fatalf("default publish seed should not force halo config %+v", snapshot.Publish)
 	}
 }
+
+func TestRuntimeConfigServiceIncludesArticlePublishFlowConfig(t *testing.T) {
+	repo := &profileRepoStub{active: map[string]profile.Version{
+		profile.TypePublish: {
+			ProfileType: profile.TypePublish,
+			Name:        "admin-publish",
+			Version:     5,
+			IsActive:    true,
+			PayloadJSON: []byte(`{"provider":"halo","halo_base_url":"https://db.halo.local","halo_token":"db-halo-token","output_dir":"D:/db-output","article_publish_mode":"all","article_review_mode":"manual_review"}`),
+		},
+	}}
+
+	svc := service.NewRuntimeConfigService(repo, &config.Config{})
+	snapshot, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Publish.ArticlePublishMode != "all" {
+		t.Fatalf("want article_publish_mode all got %q", snapshot.Publish.ArticlePublishMode)
+	}
+	if snapshot.Publish.ArticleReviewMode != "manual_review" {
+		t.Fatalf("want article_review_mode manual_review got %q", snapshot.Publish.ArticleReviewMode)
+	}
+}

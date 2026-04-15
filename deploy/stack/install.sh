@@ -30,6 +30,7 @@ if [[ -f "${INSTALL_SCRIPT_DIR}/scripts/bootstrap_halo.sh" ]]; then
 fi
 
 STACK_FORCE=0
+STACK_PURGE_DATA=0
 STACK_SHOW_HELP=0
 
 readonly FLUXDIGEST_HTTP_PORT=18088
@@ -44,12 +45,13 @@ usage() {
 Usage: install.sh [options]
 
 Options:
-  --action <name>    Action: install | upgrade | rollback | status
+  --action <name>    Action: install | upgrade | rollback | status | uninstall
   --profile <name>   Stack profile: full | fluxdigest-miniflux | fluxdigest-halo | fluxdigest-only
   --stack-dir <dir>  Target stack directory (default: /opt/fluxdigest-stack)
   --release-id <id>  Release ID used by rollback
   --host <value>     Public host or IP for summary output
   --force            Allow overwriting existing generated files
+  --purge-data       Remove the whole stack directory during uninstall
   -h, --help         Show this help
 EOF
 }
@@ -88,6 +90,10 @@ parse_args() {
         STACK_FORCE=1
         shift
         ;;
+      --purge-data)
+        STACK_PURGE_DATA=1
+        shift
+        ;;
       -h|--help)
         STACK_SHOW_HELP=1
         shift
@@ -99,7 +105,7 @@ parse_args() {
   done
 
   case "${STACK_ACTION}" in
-    install|upgrade|rollback|status) ;;
+    install|upgrade|rollback|status|uninstall) ;;
     *) fail "不支持的 action: ${STACK_ACTION}" ;;
   esac
 
@@ -216,6 +222,11 @@ prepare_stack_dir() {
           fi
         done
       fi
+      ;;
+    uninstall)
+      [[ -d "${STACK_DIR}" ]] || fail "未找到现有 stack 目录: ${STACK_DIR}"
+      log_info "Using stack directory: ${STACK_DIR}"
+      return 0
       ;;
     upgrade|rollback|status)
       for file in "${STACK_DIR}/.env" "${STACK_DIR}/docker-compose.yml"; do
@@ -882,6 +893,67 @@ run_status_action() {
   render_summary_report 0
 }
 
+stop_stack_services() {
+  if [[ ! -f "${STACK_DIR}/docker-compose.yml" ]]; then
+    log_warn "docker-compose.yml 不存在，跳过 compose down"
+    return 0
+  fi
+
+  if [[ -f "${STACK_DIR}/.env" ]]; then
+    docker compose \
+      --project-directory "${STACK_DIR}" \
+      --env-file "${STACK_DIR}/.env" \
+      -f "${STACK_DIR}/docker-compose.yml" \
+      down --remove-orphans
+    return 0
+  fi
+
+  docker compose \
+    --project-directory "${STACK_DIR}" \
+    -f "${STACK_DIR}/docker-compose.yml" \
+    down --remove-orphans
+}
+
+remove_stack_runtime_files() {
+  rm -f \
+    "${STACK_DIR}/.env" \
+    "${STACK_DIR}/docker-compose.yml" \
+    "${STACK_DIR}/install-summary.txt"
+
+  rm -rf \
+    "${STACK_DIR}/initdb" \
+    "${STACK_DIR}/logs" \
+    "${STACK_DIR}/releases"
+}
+
+run_uninstall_action() {
+  load_existing_env_values
+  stop_stack_services
+
+  if [[ "${STACK_PURGE_DATA}" -eq 1 ]]; then
+    rm -rf "${STACK_DIR}"
+    cat <<EOF
+卸载完成。
+- 已删除整个部署目录：${STACK_DIR}
+EOF
+    return 0
+  fi
+
+  remove_stack_runtime_files
+  if [[ -d "${STACK_DIR}" ]]; then
+    if ! find "${STACK_DIR}" -mindepth 1 -maxdepth 1 | read -r _; then
+      rmdir "${STACK_DIR}" 2>/dev/null || true
+    fi
+  fi
+
+  cat <<EOF
+卸载完成。
+- 已停止 FluxDigest / Miniflux / Halo 容器
+- 已移除生成文件，数据目录已保留：${STACK_DIR}/data
+- 如需彻底清理，请重新执行并带上 --purge-data
+EOF
+}
+
 main() {
   parse_args "$@"
   if [[ "${STACK_SHOW_HELP}" -eq 1 ]]; then
@@ -903,6 +975,9 @@ main() {
       ;;
     status)
       run_status_action
+      ;;
+    uninstall)
+      run_uninstall_action
       ;;
   esac
 

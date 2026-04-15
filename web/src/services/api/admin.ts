@@ -13,6 +13,7 @@ import type {
   UpdateMinifluxConfigInput,
   UpdatePromptConfigInput,
   UpdatePublishConfigInput,
+  UpdateSchedulerConfigInput,
 } from '../../types/admin';
 
 const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
@@ -222,6 +223,13 @@ export function updatePublishConfig(input: UpdatePublishConfigInput) {
   });
 }
 
+export function updateSchedulerConfig(input: UpdateSchedulerConfigInput) {
+  return requestAdmin<ProfileVersion>('/configs/scheduler', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
+}
+
 export function testPublishConfig() {
   return requestAdmin<ConnectivityTestResult>('/test/publish', {
     method: 'POST',
@@ -244,8 +252,9 @@ export function getJobRunDetail(jobId: string) {
   return requestAdmin<JobRunDetail>(`/jobs/${encodeURIComponent(jobId)}`);
 }
 
-export function runDailyDigest() {
+export function runDailyDigest(input: { force?: boolean } = {}) {
   return requestAdmin<RunJobResponse>('/jobs/daily-digest/run', {
     method: 'POST',
+    body: JSON.stringify(input),
   });
 }

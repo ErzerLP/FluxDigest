@@ -20,10 +20,17 @@ import (
 
 type entryListerStub struct {
 	entries []miniflux.Entry
+	marked  [][]int64
 }
 
 func (s entryListerStub) ListEntries(_ context.Context, _, _ time.Time) ([]miniflux.Entry, error) {
 	return s.entries, nil
+}
+
+func (s *entryListerStub) MarkEntriesRead(_ context.Context, entryIDs []int64) error {
+	copied := append([]int64(nil), entryIDs...)
+	s.marked = append(s.marked, copied)
+	return nil
 }
 
 type articleFinderStub struct {
@@ -143,12 +150,13 @@ func (s *errorProcessingStub) ProcessArticle(ctx context.Context, input article.
 }
 
 func TestRuntimeProcessingRunnerReturnsDossierDerivedCandidates(t *testing.T) {
+	lister := &entryListerStub{entries: []miniflux.Entry{{ID: 101}}}
 	store := &processingStoreStub{err: gorm.ErrRecordNotFound}
 	materializer := &dossierMaterializerStub{dossier: dossier.ArticleDossier{ID: "dos-1", ArticleID: "art-1", TitleTranslated: "模型新闻", SummaryPolished: "润色摘要", CoreSummary: "核心总结", TopicCategory: "AI", ImportanceScore: 0.8, RecommendationReason: "值得重点跟进", ReadingValue: "高", PriorityLevel: "high"}}
 	finder := &articleFinderStub{article: article.SourceArticle{ID: "art-1", Title: "Model News"}}
 	processor := &processingSvcStub{processed: processing.ProcessedArticle{Translation: processing.Translation{TitleTranslated: "模型新闻", SummaryTranslated: "摘要", ContentTranslated: "正文"}, Analysis: processing.Analysis{CoreSummary: "核心总结", KeyPoints: []string{"k1"}, TopicCategory: "AI", ImportanceScore: 0.8}}}
 	runner := service.NewRuntimeProcessingRunner(
-		entryListerStub{entries: []miniflux.Entry{{ID: 101}}},
+		lister,
 		finder,
 		processor,
 		store,
@@ -162,6 +170,9 @@ func TestRuntimeProcessingRunnerReturnsDossierDerivedCandidates(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].DossierID != "dos-1" {
 		t.Fatalf("unexpected candidates %+v", items)
+	}
+	if len(lister.marked) != 1 || len(lister.marked[0]) != 1 || lister.marked[0][0] != 101 {
+		t.Fatalf("expected processed entry marked read, got %#v", lister.marked)
 	}
 }
 

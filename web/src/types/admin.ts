@@ -2,6 +2,8 @@ export type SecretMode = 'keep' | 'replace' | 'clear';
 
 export type RecordValue = Record<string, unknown>;
 export type PublishProvider = 'halo' | 'markdown_export';
+export type ArticlePublishMode = 'digest_only' | 'suggested' | 'all';
+export type ArticleReviewMode = 'manual_review' | 'auto_publish';
 
 export interface SecretView {
   is_set?: boolean;
@@ -27,6 +29,14 @@ export interface PublishConfigView {
   halo_base_url?: string;
   halo_token?: SecretView;
   output_dir?: string;
+  article_publish_mode?: ArticlePublishMode;
+  article_review_mode?: ArticleReviewMode;
+}
+
+export interface SchedulerConfigView {
+  enabled?: boolean;
+  schedule_time?: string;
+  timezone?: string;
 }
 
 export interface PromptConfigView {
@@ -41,6 +51,7 @@ export interface AdminConfigSnapshot {
   llm?: LLMConfigView;
   miniflux?: MinifluxConfigView;
   publish?: PublishConfigView;
+  scheduler?: SchedulerConfigView;
   prompts?: PromptConfigView;
 }
 
@@ -99,6 +110,14 @@ export interface UpdatePublishConfigInput {
   halo_base_url?: string;
   halo_token?: SecretInput;
   output_dir?: string;
+  article_publish_mode?: ArticlePublishMode;
+  article_review_mode?: ArticleReviewMode;
+}
+
+export interface UpdateSchedulerConfigInput {
+  enabled?: boolean;
+  schedule_time?: string;
+  timezone?: string;
 }
 
 export interface UpdatePromptConfigInput {
@@ -159,4 +178,6 @@ export interface RunJobResponse {
   ok?: boolean;
   job_id?: string;
   status?: string;
+  digest_date?: string;
+  force?: boolean;
 }

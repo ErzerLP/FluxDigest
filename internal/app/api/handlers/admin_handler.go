@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -18,6 +19,7 @@ var errAdminConfigReaderRequired = errors.New("admin config reader is not config
 var errAdminConfigUpdaterRequired = errors.New("admin config updater is not configured")
 var errAdminConnectivityTesterRequired = errors.New("admin connectivity tester is not configured")
 var errAdminJobReaderRequired = errors.New("admin job reader is not configured")
+var errAdminJobTriggerRequired = errors.New("admin job trigger is not configured")
 
 // AdminStatusReader 定义 dashboard 状态读取能力。
 type AdminStatusReader interface {
@@ -34,6 +36,7 @@ type AdminConfigUpdater interface {
 	UpdateLLM(ctx context.Context, input service.UpdateLLMConfigInput) (profile.Version, error)
 	UpdateMiniflux(ctx context.Context, input service.UpdateMinifluxConfigInput) (profile.Version, error)
 	UpdatePublish(ctx context.Context, input service.UpdatePublishConfigInput) (profile.Version, error)
+	UpdateScheduler(ctx context.Context, input service.UpdateSchedulerConfigInput) (profile.Version, error)
 	UpdatePrompts(ctx context.Context, input service.UpdatePromptConfigInput) (profile.Version, error)
 }
 
@@ -56,6 +59,7 @@ type AdminDeps struct {
 	ConfigUpdater AdminConfigUpdater
 	Tester        AdminConnectivityTester
 	Jobs          AdminJobReader
+	JobTrigger    JobTrigger
 }
 
 type profileVersionResponse struct {
@@ -154,6 +158,27 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 		}
 
 		version, err := deps.ConfigUpdater.UpdatePublish(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
+	})
+
+	admin.PUT("/configs/scheduler", func(c *gin.Context) {
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
+			return
+		}
+
+		var req service.UpdateSchedulerConfigInput
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		version, err := deps.ConfigUpdater.UpdateScheduler(c.Request.Context(), req)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -261,6 +286,65 @@ func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
 		}
 
 		c.JSON(http.StatusOK, gin.H{"items": runs})
+	})
+
+	admin.POST("/jobs/daily-digest/run", func(c *gin.Context) {
+		if deps.JobTrigger == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminJobTriggerRequired.Error()})
+			return
+		}
+
+		req := triggerDailyDigestRequest{}
+		if c.Request.ContentLength > 0 {
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
+
+		triggerAt := time.Now()
+		if req.TriggerAt != "" {
+			parsed, err := time.Parse(time.RFC3339, req.TriggerAt)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid trigger_at"})
+				return
+			}
+			triggerAt = parsed
+		}
+
+		var (
+			result service.JobTriggerResult
+			err    error
+		)
+		if req.Force {
+			forceTrigger, ok := deps.JobTrigger.(DailyDigestForceTrigger)
+			if !ok {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": errJobForceTriggerUnsupported.Error()})
+				return
+			}
+			result, err = forceTrigger.TriggerDailyDigestWithOptions(c.Request.Context(), triggerAt, service.DailyDigestTriggerOptions{Force: true})
+		} else {
+			result, err = deps.JobTrigger.TriggerDailyDigest(c.Request.Context(), triggerAt)
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if result.Status == "" {
+			result.Status = "accepted"
+		}
+
+		statusCode := http.StatusAccepted
+		if result.Status == "skipped" {
+			statusCode = http.StatusOK
+		}
+
+		c.JSON(statusCode, gin.H{
+			"digest_date": result.DigestDate,
+			"status":      result.Status,
+			"trigger_at":  triggerAt.Format(time.RFC3339),
+			"force":       req.Force,
+		})
 	})
 }
 

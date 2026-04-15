@@ -32,11 +32,13 @@ type MinifluxRuntimeConfig struct {
 
 // PublishRuntimeConfig 表示 worker 使用的发布运行时配置。
 type PublishRuntimeConfig struct {
-	Provider    string `json:"provider"`
-	HaloBaseURL string `json:"halo_base_url"`
-	HaloToken   string `json:"halo_token"`
-	OutputDir   string `json:"output_dir"`
-	Version     int    `json:"version"`
+	Provider           string `json:"provider"`
+	HaloBaseURL        string `json:"halo_base_url"`
+	HaloToken          string `json:"halo_token"`
+	OutputDir          string `json:"output_dir"`
+	ArticlePublishMode string `json:"article_publish_mode"`
+	ArticleReviewMode  string `json:"article_review_mode"`
+	Version            int    `json:"version"`
 }
 
 // PromptRuntimeConfig 表示 worker 使用的 prompt 运行时配置。
@@ -109,10 +111,12 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 			LookbackHours: defaultMinifluxLookbackHours,
 		},
 		Publish: PublishRuntimeConfig{
-			Provider:    ResolvePublishProvider(s.defaultPublishChannel(), s.defaultPublishHaloBaseURL(), s.defaultPublishOutputDir()),
-			HaloBaseURL: s.defaultPublishHaloBaseURL(),
-			HaloToken:   s.defaultPublishHaloToken(),
-			OutputDir:   s.defaultPublishOutputDir(),
+			Provider:           ResolvePublishProvider(s.defaultPublishChannel(), s.defaultPublishHaloBaseURL(), s.defaultPublishOutputDir()),
+			HaloBaseURL:        s.defaultPublishHaloBaseURL(),
+			HaloToken:          s.defaultPublishHaloToken(),
+			OutputDir:          s.defaultPublishOutputDir(),
+			ArticlePublishMode: normalizeArticlePublishMode(""),
+			ArticleReviewMode:  normalizeArticleReviewMode(""),
 		},
 		Scheduler: defaultSchedulerRuntimeConfig(),
 	}
@@ -216,6 +220,8 @@ func (s *RuntimeConfigService) Snapshot(ctx context.Context) (RuntimeSnapshot, e
 	} else if value := strings.TrimSpace(stringValue(publishProfile.payload, "output_dir")); value != "" {
 		snapshot.Publish.OutputDir = value
 	}
+	snapshot.Publish.ArticlePublishMode = normalizeArticlePublishMode(stringValue(publishProfile.payload, "article_publish_mode"))
+	snapshot.Publish.ArticleReviewMode = normalizeArticleReviewMode(stringValue(publishProfile.payload, "article_review_mode"))
 	snapshot.Publish.Provider = ResolvePublishProvider(snapshot.Publish.Provider, snapshot.Publish.HaloBaseURL, snapshot.Publish.OutputDir)
 	snapshot.Publish.Version = publishProfile.version.Version
 

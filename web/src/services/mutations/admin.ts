@@ -11,6 +11,7 @@ import {
   updateMinifluxConfig,
   updatePromptConfig,
   updatePublishConfig,
+  updateSchedulerConfig,
 } from '../api/admin';
 import { adminQueryKeys } from '../queries/admin';
 
@@ -130,6 +131,17 @@ export function useTestPublishConfig() {
     mutationFn: testPublishConfig,
     onSuccess: async () => {
       await invalidateAdminStatusViews(queryClient);
+    },
+  });
+}
+
+export function useSaveSchedulerConfig() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: updateSchedulerConfig,
+    onSuccess: async () => {
+      await invalidateAdminConfigViews(queryClient);
     },
   });
 }
