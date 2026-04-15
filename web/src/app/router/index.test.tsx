@@ -56,6 +56,13 @@ function mockAuthenticatedConsole() {
       return jsonResponse({ items: [] });
     }
 
+    if (url.endsWith('/api/v1/admin/configs') && method === 'GET') {
+      return jsonResponse({
+        publish: { provider: 'halo', article_publish_mode: 'digest_only', article_review_mode: 'manual_review' },
+        scheduler: { enabled: true, schedule_time: '07:00', timezone: 'Asia/Shanghai' },
+      });
+    }
+
     return new Response('not found', { status: 404 });
   });
 }
@@ -64,7 +71,7 @@ test('renders dashboard navigation item and dashboard placeholder content', asyn
   mockAuthenticatedConsole();
   renderRouter(['/dashboard']);
 
-  expect(await screen.findByText('Dashboard')).toBeInTheDocument();
+  expect(await screen.findByText('总览')).toBeInTheDocument();
   expect(screen.getByText('FluxDigest')).toBeInTheDocument();
   expect(
     screen.getByText('观察当前系统健康、集成状态与最近一次摘要运行结果。'),
@@ -78,7 +85,7 @@ test('falls back unknown routes to dashboard content', async () => {
   expect(
     await screen.findByText('观察当前系统健康、集成状态与最近一次摘要运行结果。'),
   ).toBeInTheDocument();
-  expect(screen.getByText('Dashboard')).toBeInTheDocument();
+  expect(screen.getByText('总览')).toBeInTheDocument();
 });
 
 test('redirects index route to dashboard content', async () => {

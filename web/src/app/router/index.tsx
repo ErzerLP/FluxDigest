@@ -17,12 +17,12 @@ export type AppNavigationItem = {
 };
 
 export const appNavigation: AppNavigationItem[] = [
-  { path: '/dashboard', label: 'Dashboard', description: '运行概览与系统健康' },
-  { path: '/configs/llm', label: 'LLM Config', description: '模型入口与密钥策略' },
-  { path: '/configs/miniflux', label: 'Miniflux', description: '订阅源同步与接入状态' },
-  { path: '/configs/prompts', label: 'Prompts', description: '翻译分析提示词管理' },
-  { path: '/configs/publish', label: 'Publish', description: '发布通道与输出策略' },
-  { path: '/jobs', label: 'Jobs', description: '任务触发与运行记录' },
+  { path: '/dashboard', label: '总览', description: '运行概览与系统健康' },
+  { path: '/configs/llm', label: '模型配置', description: '模型入口与密钥策略' },
+  { path: '/configs/miniflux', label: '订阅源', description: '订阅源同步与接入状态' },
+  { path: '/configs/prompts', label: '提示词', description: '翻译分析提示词管理' },
+  { path: '/configs/publish', label: '发布设置', description: '发布通道与输出策略' },
+  { path: '/jobs', label: '任务记录', description: '任务触发与运行记录' },
 ];
 
 export function AppRouter() {
