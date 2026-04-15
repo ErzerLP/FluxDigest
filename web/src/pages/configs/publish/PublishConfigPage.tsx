@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { PageHeader } from '../../../components/common/PageHeader';
+import { ChoiceCardGroup } from '../../../components/forms/ChoiceCardGroup';
 import { SecretField } from '../../../components/forms/SecretField';
 import { StatusBadge } from '../../../components/status/StatusBadge';
 import {
@@ -30,6 +31,50 @@ interface PublishConfigFormValues {
   digest_enabled: boolean;
 }
 
+const providerOptions = [
+  {
+    value: 'halo',
+    label: 'Halo 发布',
+    description: '直接推送日报到 Halo，并为后续单篇文章发布保留统一入口。',
+  },
+  {
+    value: 'markdown_export',
+    label: 'Markdown 导出',
+    description: '把日报或单篇文章导出为 Markdown，适合静态站或外部脚本接力。',
+  },
+] as const;
+
+const articlePublishModeOptions = [
+  {
+    value: 'digest_only',
+    label: '只发日报',
+    description: '单篇文章只做翻译、分析与入库，不自动进入外部发布通道。',
+  },
+  {
+    value: 'suggested',
+    label: '部分发送 + 审核',
+    description: '仅 AI 判断值得发布的文章进入后续流程，适合更稳妥的个人使用方式。',
+  },
+  {
+    value: 'all',
+    label: '全部发送',
+    description: '所有处理完成的文章都进入发布流程，适合重度自动化场景。',
+  },
+] as const;
+
+const articleReviewModeOptions = [
+  {
+    value: 'manual_review',
+    label: '人工审核',
+    description: '进入发布队列后等待人工确认，适合需要把关标题和措辞的场景。',
+  },
+  {
+    value: 'auto_publish',
+    label: '自动发布',
+    description: '生成完成后直接发布，适合稳定提示词和固定输出渠道。',
+  },
+] as const;
+
 function valueOrDash(value?: string) {
   return value?.trim() ? value : '—';
 }
@@ -51,7 +96,7 @@ export function PublishConfigPage() {
   const configReady = configQuery.isSuccess;
   const integration = statusQuery.data?.integrations?.publisher;
 
-  const { register, handleSubmit, reset, watch } = useForm<PublishConfigFormValues>({
+  const { register, handleSubmit, reset, setValue, watch } = useForm<PublishConfigFormValues>({
     defaultValues: {
       provider: 'halo',
       halo_base_url: '',
@@ -65,6 +110,7 @@ export function PublishConfigPage() {
 
   const provider = watch('provider');
   const articlePublishMode = watch('article_publish_mode');
+  const articleReviewMode = watch('article_review_mode');
   const digestEnabled = watch('digest_enabled');
 
   useEffect(() => {
@@ -106,6 +152,24 @@ export function PublishConfigPage() {
         return '只发布每日汇总日报，单篇文章仅保存为内部资产与接口数据。';
     }
   }, [articlePublishMode]);
+
+  const providerSummary = useMemo(() => {
+    switch (provider) {
+      case 'markdown_export':
+        return 'Markdown 导出';
+      default:
+        return 'Halo 发布';
+    }
+  }, [provider]);
+
+  const reviewSummary = useMemo(() => {
+    switch (articleReviewMode) {
+      case 'auto_publish':
+        return '自动发布';
+      default:
+        return '人工审核';
+    }
+  }, [articleReviewMode]);
 
   const onSubmit = async (values: PublishConfigFormValues) => {
     if (!configReady) {
@@ -261,19 +325,23 @@ export function PublishConfigPage() {
                 <div>
                   <p className="section-eyebrow">Delivery channel</p>
                   <h2 className="section-title">发布通道</h2>
+                  <p className="section-description">
+                    先选定 FluxDigest 的最终输出目标，再补充对应的连接参数与鉴权信息。
+                  </p>
                 </div>
                 <StatusBadge status={connectionStatus} />
               </div>
 
-              <div className="form-stack">
-                <label className="form-label" htmlFor="publish-provider">
-                  Provider
-                </label>
-                <select id="publish-provider" className="console-input" {...register('provider')}>
-                  <option value="halo">Halo</option>
-                  <option value="markdown_export">Markdown Export</option>
-                </select>
-              </div>
+              <ChoiceCardGroup
+                name="publish-provider"
+                label="Provider"
+                value={provider}
+                options={[...providerOptions]}
+                onChange={(nextProvider) => {
+                  setValue('provider', nextProvider, { shouldDirty: true, shouldTouch: true });
+                }}
+              />
+              <input type="hidden" {...register('provider')} />
 
               {provider === 'halo' ? (
                 <>
@@ -315,6 +383,9 @@ export function PublishConfigPage() {
                 <div>
                   <p className="section-eyebrow">Digest workflow</p>
                   <h2 className="section-title">日报与文章发布设置</h2>
+                  <p className="section-description">
+                    这里决定每天几点生成日报、是否自动跑任务，以及单篇文章是否进入发布流程。
+                  </p>
                 </div>
               </div>
 
@@ -341,34 +412,33 @@ export function PublishConfigPage() {
                 />
               </div>
 
-              <div className="form-stack">
-                <label className="form-label" htmlFor="publish-article-mode">
-                  文章发布流程
-                </label>
-                <select
-                  id="publish-article-mode"
-                  className="console-input"
-                  {...register('article_publish_mode')}
-                >
-                  <option value="digest_only">只发日报</option>
-                  <option value="suggested">部分发送（仅建议稿）</option>
-                  <option value="all">全部发送</option>
-                </select>
-              </div>
+              <ChoiceCardGroup
+                name="publish-article-mode"
+                label="文章发布流程"
+                value={articlePublishMode}
+                options={[...articlePublishModeOptions]}
+                onChange={(nextMode) => {
+                  setValue('article_publish_mode', nextMode, {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  });
+                }}
+              />
+              <input type="hidden" {...register('article_publish_mode')} />
 
-              <div className="form-stack">
-                <label className="form-label" htmlFor="publish-article-review">
-                  文章发布审核
-                </label>
-                <select
-                  id="publish-article-review"
-                  className="console-input"
-                  {...register('article_review_mode')}
-                >
-                  <option value="manual_review">人工审核</option>
-                  <option value="auto_publish">自动发布</option>
-                </select>
-              </div>
+              <ChoiceCardGroup
+                name="publish-article-review"
+                label="文章发布审核"
+                value={articleReviewMode}
+                options={[...articleReviewModeOptions]}
+                onChange={(nextMode) => {
+                  setValue('article_review_mode', nextMode, {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  });
+                }}
+              />
+              <input type="hidden" {...register('article_review_mode')} />
 
               <div className="metric-meta compact-stack">
                 <div className="status-row">
@@ -394,11 +464,15 @@ export function PublishConfigPage() {
               <div className="metric-meta compact-stack">
                 <div className="status-row">
                   <span>当前 Provider</span>
-                  <span className="detail-value monospace">{valueOrDash(provider)}</span>
+                  <span className="detail-value">{valueOrDash(providerSummary)}</span>
                 </div>
                 <div className="status-row">
                   <span>接入状态</span>
                   <StatusBadge status={connectionStatus} />
+                </div>
+                <div className="status-row">
+                  <span>审核策略</span>
+                  <span className="detail-value">{reviewSummary}</span>
                 </div>
                 <div className="status-row">
                   <span>最近测试</span>

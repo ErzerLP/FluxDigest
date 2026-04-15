@@ -641,6 +641,51 @@ select {
   gap: 0.6rem;
 }
 
+.choice-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.85rem;
+}
+
+.choice-card {
+  display: grid;
+  gap: 0.45rem;
+  min-height: 7.25rem;
+  padding: 1rem 1rem 1.05rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  background: rgba(143, 167, 196, 0.05);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.choice-card:hover {
+  border-color: rgba(114, 175, 255, 0.45);
+  background: rgba(84, 142, 226, 0.08);
+  transform: translateY(-1px);
+}
+
+.choice-card-active {
+  border-color: var(--border-strong);
+  background: rgba(84, 142, 226, 0.12);
+  box-shadow: 0 16px 28px rgba(6, 11, 19, 0.16);
+}
+
+.choice-card-title {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.choice-card-description {
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
 .segment-option {
   display: inline-flex;
   align-items: center;

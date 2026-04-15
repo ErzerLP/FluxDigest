@@ -81,17 +81,21 @@ test('publish config page switches provider-specific fields and saves payload', 
 
   renderPage(<PublishConfigPage />);
 
-  expect(await screen.findByLabelText('Provider')).toHaveValue('halo');
+  expect(await screen.findByLabelText('Provider / Halo 发布')).toBeChecked();
+  expect(screen.getByLabelText('Provider / Markdown 导出')).not.toBeChecked();
+  expect(screen.getByLabelText('文章发布流程 / 只发日报')).not.toBeChecked();
+  expect(screen.getByLabelText('文章发布流程 / 部分发送 + 审核')).toBeChecked();
+  expect(screen.getByLabelText('文章发布流程 / 全部发送')).not.toBeChecked();
+  expect(screen.getByLabelText('文章发布审核 / 人工审核')).toBeChecked();
+  expect(screen.getByLabelText('文章发布审核 / 自动发布')).not.toBeChecked();
   expect(screen.getByLabelText('Halo Base URL')).toBeInTheDocument();
   expect(screen.getByLabelText('日报生成时间')).toHaveValue('07:30');
-  expect(screen.getByLabelText('文章发布流程')).toHaveValue('suggested');
-  expect(screen.getByLabelText('文章发布审核')).toHaveValue('manual_review');
 
-  await userEvent.selectOptions(screen.getByLabelText('Provider'), 'markdown_export');
+  await userEvent.click(screen.getByLabelText('Provider / Markdown 导出'));
   await userEvent.clear(screen.getByLabelText('日报生成时间'));
   await userEvent.type(screen.getByLabelText('日报生成时间'), '08:15');
-  await userEvent.selectOptions(screen.getByLabelText('文章发布流程'), 'all');
-  await userEvent.selectOptions(screen.getByLabelText('文章发布审核'), 'auto_publish');
+  await userEvent.click(screen.getByLabelText('文章发布流程 / 全部发送'));
+  await userEvent.click(screen.getByLabelText('文章发布审核 / 自动发布'));
   expect(screen.getByLabelText('Output Directory')).toBeInTheDocument();
 
   await userEvent.clear(screen.getByLabelText('Output Directory'));

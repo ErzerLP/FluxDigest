@@ -67,12 +67,14 @@ function mockAuthenticatedConsole() {
   });
 }
 
-test('renders dashboard navigation item and dashboard placeholder content', async () => {
+test('renders dashboard navigation item without shell placeholder copy', async () => {
   mockAuthenticatedConsole();
   renderRouter(['/dashboard']);
 
   expect(await screen.findByText('总览')).toBeInTheDocument();
   expect(screen.getByText('FluxDigest')).toBeInTheDocument();
+  expect(screen.queryByText('Shell scaffold online')).not.toBeInTheDocument();
+  expect(screen.queryByText('MVP shell')).not.toBeInTheDocument();
   expect(
     screen.getByText('观察当前系统健康、集成状态与最近一次摘要运行结果。'),
   ).toBeInTheDocument();

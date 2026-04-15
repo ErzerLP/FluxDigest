@@ -36,7 +36,7 @@ export function AppLayout({ navigation }: AppLayoutProps) {
         <div className="brand-lockup">
           <span className="brand-kicker">Self-hosted AI digest</span>
           <h1>FluxDigest</h1>
-          <p>为个人知识流准备的冷静控制台，聚焦运行态而非花哨装饰。</p>
+          <p>面向个人 RSS 知识流的 AI 翻译、分析与日报编排控制台。</p>
         </div>
 
         <nav className="nav-stack" aria-label="Primary">
@@ -56,7 +56,7 @@ export function AppLayout({ navigation }: AppLayoutProps) {
 
         <div className="sidebar-footnote">
           <span className="status-dot" />
-          Shell scaffold online
+          配置页已接入 · 运行态在线
         </div>
       </aside>
 
@@ -71,8 +71,7 @@ export function AppLayout({ navigation }: AppLayoutProps) {
             {currentUserQuery.data?.must_change_password ? (
               <span className="meta-chip meta-chip-warning">Default password</span>
             ) : null}
-            <span className="meta-chip">Graphite / Cyan</span>
-            <span className="meta-chip meta-chip-subtle">MVP shell</span>
+            <span className="meta-chip">Personal Console</span>
             <Button
               type="default"
               className="topbar-logout"
