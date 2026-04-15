@@ -88,6 +88,7 @@ grep -qE '^FLUXDIGEST_RELEASE_ID=[0-9]{14}$' "${env_file}" || fail "FLUXDIGEST_R
 grep -qE '^FLUXDIGEST_API_IMAGE=fluxdigest/api:[0-9]{14}$' "${env_file}" || fail "FLUXDIGEST_API_IMAGE 未写入 .env"
 grep -qE '^FLUXDIGEST_WORKER_IMAGE=fluxdigest/worker:[0-9]{14}$' "${env_file}" || fail "FLUXDIGEST_WORKER_IMAGE 未写入 .env"
 grep -qE '^FLUXDIGEST_SCHEDULER_IMAGE=fluxdigest/scheduler:[0-9]{14}$' "${env_file}" || fail "FLUXDIGEST_SCHEDULER_IMAGE 未写入 .env"
+grep -q '^MINIFLUX_IMAGE=ghcr.io/miniflux/miniflux:2.2.15$' "${env_file}" || fail "MINIFLUX_IMAGE 默认值不正确"
 
 grep -Eq 'docker compose .*up -d postgres redis' "${MOCK_DOCKER_LOG}" || fail "mock docker 日志缺少基础服务 up 命令"
 grep -Eq 'docker compose .*up -d fluxdigest-api fluxdigest-worker fluxdigest-scheduler' "${MOCK_DOCKER_LOG}" || fail "mock docker 日志缺少 FluxDigest 服务 up 命令"

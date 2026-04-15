@@ -296,7 +296,7 @@ generate_credentials() {
   export DOCKER_SYSTEMD_DROPIN_DIR="${DOCKER_SYSTEMD_DROPIN_DIR:-${DEFAULT_DOCKER_SYSTEMD_DROPIN_DIR}}"
   export POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:17}"
   export REDIS_IMAGE="${REDIS_IMAGE:-redis:7}"
-  export MINIFLUX_IMAGE="${MINIFLUX_IMAGE:-miniflux/miniflux:latest}"
+  export MINIFLUX_IMAGE="${MINIFLUX_IMAGE:-ghcr.io/miniflux/miniflux:2.2.15}"
   export HALO_IMAGE="${HALO_IMAGE:-registry.fit2cloud.com/halo/halo:2.23}"
 
   export APP_HTTP_PORT="${FLUXDIGEST_HTTP_PORT}"
