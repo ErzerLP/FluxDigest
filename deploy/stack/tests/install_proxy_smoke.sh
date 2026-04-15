@@ -103,4 +103,39 @@ grep -q 'BUILD_NO_PROXY=corp.internal,localhost,127.0.0.1,::1,postgres,redis,min
 grep -q 'NO_PROXY=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo' "${rendered_env}" || fail ".env 缺少合并后的 NO_PROXY"
 grep -q 'no_proxy=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo' "${rendered_env}" || fail ".env 缺少合并后的 no_proxy"
 
+python - "${rendered_env}" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = text.replace("BUILD_HTTP_PROXY=http://127.0.0.1:7890", "BUILD_HTTP_PROXY=http://172.17.0.1:7890")
+text = text.replace("BUILD_HTTPS_PROXY=http://127.0.0.1:7890", "BUILD_HTTPS_PROXY=http://172.17.0.1:7890")
+text = text.replace("BUILD_NO_PROXY=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo", "BUILD_NO_PROXY=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo,172.17.0.1")
+text = text.replace("HTTP_PROXY=http://host.docker.internal:7890", "HTTP_PROXY=http://172.17.0.1:7890")
+text = text.replace("HTTPS_PROXY=http://host.docker.internal:7890", "HTTPS_PROXY=http://172.17.0.1:7890")
+text = text.replace("http_proxy=http://host.docker.internal:7890", "http_proxy=http://172.17.0.1:7890")
+text = text.replace("https_proxy=http://host.docker.internal:7890", "https_proxy=http://172.17.0.1:7890")
+text = text.replace("NO_PROXY=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo", "NO_PROXY=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo,172.17.0.1")
+text = text.replace("no_proxy=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo", "no_proxy=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo,172.17.0.1")
+path.write_text(text, encoding="utf-8")
+PY
+
+export http_proxy="http://127.0.0.1:7890"
+export https_proxy="http://127.0.0.1:7890"
+export HTTP_PROXY="http://127.0.0.1:7890"
+export HTTPS_PROXY="http://127.0.0.1:7890"
+export NO_PROXY="corp.internal"
+
+(
+  cd "${WORK_DIR}"
+  main --action upgrade --profile full --stack-dir "${STACK_DIR_REL}"
+)
+
+grep -q 'BUILD_HTTP_PROXY=http://127.0.0.1:7890' "${rendered_env}" || fail "upgrade 后 BUILD_HTTP_PROXY 未按当前宿主代理刷新"
+grep -q 'BUILD_HTTPS_PROXY=http://127.0.0.1:7890' "${rendered_env}" || fail "upgrade 后 BUILD_HTTPS_PROXY 未按当前宿主代理刷新"
+grep -q 'BUILD_NO_PROXY=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo' "${rendered_env}" || fail "upgrade 后 BUILD_NO_PROXY 未按当前宿主 NO_PROXY 刷新"
+grep -q 'HTTP_PROXY=http://host.docker.internal:7890' "${rendered_env}" || fail "upgrade 后运行时 HTTP_PROXY 未恢复为 host.docker.internal"
+grep -q 'http_proxy=http://host.docker.internal:7890' "${rendered_env}" || fail "upgrade 后运行时 http_proxy 未恢复为 host.docker.internal"
+
 log_info "install proxy smoke passed"

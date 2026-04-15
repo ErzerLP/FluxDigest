@@ -396,9 +396,15 @@ generate_credentials() {
   runtime_http_proxy="$(normalize_container_runtime_proxy "${host_http_proxy}")"
   runtime_https_proxy="$(normalize_container_runtime_proxy "${host_https_proxy}")"
 
-  export BUILD_HTTP_PROXY="${BUILD_HTTP_PROXY:-${host_http_proxy}}"
-  export BUILD_HTTPS_PROXY="${BUILD_HTTPS_PROXY:-${host_https_proxy}}"
-  export BUILD_NO_PROXY="${BUILD_NO_PROXY:-${runtime_no_proxy}}"
+  if [[ -n "${host_http_proxy}" || -n "${host_https_proxy}" ]]; then
+    export BUILD_HTTP_PROXY="${host_http_proxy}"
+    export BUILD_HTTPS_PROXY="${host_https_proxy}"
+    export BUILD_NO_PROXY="${runtime_no_proxy}"
+  else
+    export BUILD_HTTP_PROXY="${BUILD_HTTP_PROXY:-${host_http_proxy}}"
+    export BUILD_HTTPS_PROXY="${BUILD_HTTPS_PROXY:-${host_https_proxy}}"
+    export BUILD_NO_PROXY="${BUILD_NO_PROXY:-${runtime_no_proxy}}"
+  fi
   export http_proxy="${runtime_http_proxy}"
   export https_proxy="${runtime_https_proxy}"
   export HTTP_PROXY="${runtime_http_proxy}"
