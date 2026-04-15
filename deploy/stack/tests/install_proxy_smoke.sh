@@ -93,6 +93,13 @@ grep -Eq 'docker pull registry.fit2cloud.com/halo/halo:2.23' "${MOCK_DOCKER_LOG}
 
 rendered_env="${WORK_DIR}/${STACK_DIR_REL}/.env"
 [[ -f "${rendered_env}" ]] || fail "未生成 stack .env"
+grep -q 'HTTP_PROXY=http://host.docker.internal:7890' "${rendered_env}" || fail ".env 运行时 HTTP_PROXY 未转换为 host.docker.internal"
+grep -q 'HTTPS_PROXY=http://host.docker.internal:7890' "${rendered_env}" || fail ".env 运行时 HTTPS_PROXY 未转换为 host.docker.internal"
+grep -q 'http_proxy=http://host.docker.internal:7890' "${rendered_env}" || fail ".env 运行时 http_proxy 未转换为 host.docker.internal"
+grep -q 'https_proxy=http://host.docker.internal:7890' "${rendered_env}" || fail ".env 运行时 https_proxy 未转换为 host.docker.internal"
+grep -q 'BUILD_HTTP_PROXY=http://127.0.0.1:7890' "${rendered_env}" || fail ".env 缺少原始构建 BUILD_HTTP_PROXY"
+grep -q 'BUILD_HTTPS_PROXY=http://127.0.0.1:7890' "${rendered_env}" || fail ".env 缺少原始构建 BUILD_HTTPS_PROXY"
+grep -q 'BUILD_NO_PROXY=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo' "${rendered_env}" || fail ".env 缺少原始构建 BUILD_NO_PROXY"
 grep -q 'NO_PROXY=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo' "${rendered_env}" || fail ".env 缺少合并后的 NO_PROXY"
 grep -q 'no_proxy=corp.internal,localhost,127.0.0.1,::1,postgres,redis,miniflux,halo' "${rendered_env}" || fail ".env 缺少合并后的 no_proxy"
 

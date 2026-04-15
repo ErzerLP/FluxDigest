@@ -185,6 +185,65 @@ merge_csv_values() {
   printf '%s\n' "${merged}"
 }
 
+resolve_python_interpreter() {
+  if command -v python >/dev/null 2>&1; then
+    printf 'python\n'
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    printf 'python3\n'
+    return 0
+  fi
+  fail "需要 python3/python 来解析代理地址"
+}
+
+normalize_container_runtime_proxy() {
+  local proxy_url="${1:-}"
+  [[ -n "${proxy_url}" ]] || return 0
+
+  local interpreter
+  interpreter="$(resolve_python_interpreter)"
+
+  "${interpreter}" - "${proxy_url}" <<'PY'
+import sys
+from urllib.parse import quote, urlsplit, urlunsplit
+
+value = sys.argv[1].strip()
+if not value:
+    print("")
+    raise SystemExit(0)
+
+try:
+    parsed = urlsplit(value)
+except Exception:
+    print(value)
+    raise SystemExit(0)
+
+host = parsed.hostname
+if not host:
+    print(value)
+    raise SystemExit(0)
+
+normalized_host = host.lower().strip("[]")
+is_loopback = normalized_host in {"localhost", "::1"} or normalized_host.startswith("127.")
+if not is_loopback:
+    print(value)
+    raise SystemExit(0)
+
+netloc = ""
+if parsed.username is not None:
+    netloc += quote(parsed.username, safe="")
+    if parsed.password is not None:
+        netloc += f":{quote(parsed.password, safe='')}"
+    netloc += "@"
+netloc += "host.docker.internal"
+if parsed.port is not None:
+    netloc += f":{parsed.port}"
+
+print(urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)))
+PY
+}
+
 set_stack_paths() {
   export STACK_SOURCE_ROOT
   export STACK_PROFILE
@@ -263,6 +322,8 @@ setup_profile_service_blocks() {
       CREATE_ADMIN: "1"
       ADMIN_USERNAME: ${MINIFLUX_ADMIN_USERNAME}
       ADMIN_PASSWORD: ${MINIFLUX_ADMIN_PASSWORD}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "28082:8080"
     depends_on:
@@ -292,6 +353,8 @@ EOF
       - --halo.security.initializer.superadminusername=${HALO_ADMIN_USERNAME}
       - --halo.security.initializer.superadminpassword=${HALO_ADMIN_PASSWORD}
       - --halo.security.basic-auth.disabled=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "28090:8090"
     volumes:
@@ -323,12 +386,23 @@ set_release_image_tags() {
 }
 
 generate_credentials() {
-  export http_proxy="${http_proxy:-${HTTP_PROXY:-}}"
-  export https_proxy="${https_proxy:-${HTTPS_PROXY:-}}"
-  export HTTP_PROXY="${HTTP_PROXY:-${http_proxy}}"
-  export HTTPS_PROXY="${HTTPS_PROXY:-${https_proxy}}"
-  local runtime_no_proxy
+  local host_http_proxy host_https_proxy runtime_http_proxy runtime_https_proxy runtime_no_proxy
+  host_http_proxy="${http_proxy:-${HTTP_PROXY:-}}"
+  host_https_proxy="${https_proxy:-${HTTPS_PROXY:-${host_http_proxy}}}"
+  [[ -n "${host_http_proxy}" ]] || host_http_proxy="${host_https_proxy}"
+  [[ -n "${host_https_proxy}" ]] || host_https_proxy="${host_http_proxy}"
+
   runtime_no_proxy="$(merge_csv_values "${no_proxy:-}" "${NO_PROXY:-}" "localhost,127.0.0.1,::1,postgres,redis,miniflux,halo")"
+  runtime_http_proxy="$(normalize_container_runtime_proxy "${host_http_proxy}")"
+  runtime_https_proxy="$(normalize_container_runtime_proxy "${host_https_proxy}")"
+
+  export BUILD_HTTP_PROXY="${BUILD_HTTP_PROXY:-${host_http_proxy}}"
+  export BUILD_HTTPS_PROXY="${BUILD_HTTPS_PROXY:-${host_https_proxy}}"
+  export BUILD_NO_PROXY="${BUILD_NO_PROXY:-${runtime_no_proxy}}"
+  export http_proxy="${runtime_http_proxy}"
+  export https_proxy="${runtime_https_proxy}"
+  export HTTP_PROXY="${runtime_http_proxy}"
+  export HTTPS_PROXY="${runtime_https_proxy}"
   export no_proxy="${runtime_no_proxy}"
   export NO_PROXY="${runtime_no_proxy}"
   export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
@@ -400,7 +474,7 @@ generate_credentials() {
 preservable_env_key() {
   case "${1:-}" in
     STACK_PROFILE|STACK_PUBLIC_HOST|FLUXDIGEST_RELEASE_ID|FLUXDIGEST_API_IMAGE|FLUXDIGEST_WORKER_IMAGE|FLUXDIGEST_SCHEDULER_IMAGE|\
-    http_proxy|https_proxy|HTTP_PROXY|HTTPS_PROXY|no_proxy|NO_PROXY|GOPROXY|GOSUMDB|DOCKER_CONFIGURE_DAEMON_PROXY|DOCKER_SYSTEMD_DROPIN_DIR|POSTGRES_IMAGE|REDIS_IMAGE|MINIFLUX_IMAGE|HALO_IMAGE|\
+    http_proxy|https_proxy|HTTP_PROXY|HTTPS_PROXY|no_proxy|NO_PROXY|BUILD_HTTP_PROXY|BUILD_HTTPS_PROXY|BUILD_NO_PROXY|GOPROXY|GOSUMDB|DOCKER_CONFIGURE_DAEMON_PROXY|DOCKER_SYSTEMD_DROPIN_DIR|POSTGRES_IMAGE|REDIS_IMAGE|MINIFLUX_IMAGE|HALO_IMAGE|\
     APP_HTTP_PORT|APP_DATABASE_NAME|APP_DATABASE_USER|APP_DATABASE_PASSWORD|APP_DATABASE_DSN|APP_REDIS_ADDR|APP_JOB_API_KEY|APP_JOB_QUEUE|APP_WORKER_CONCURRENCY|\
     APP_ADMIN_SESSION_SECRET|APP_SECRET_KEY|APP_ADMIN_BOOTSTRAP_USERNAME|APP_ADMIN_BOOTSTRAP_PASSWORD|APP_MINIFLUX_BASE_URL|APP_MINIFLUX_AUTH_TOKEN|\
     APP_LLM_BASE_URL|APP_LLM_API_KEY|APP_LLM_MODEL|APP_LLM_FALLBACK_MODELS|APP_LLM_TIMEOUT_MS|\
@@ -573,9 +647,9 @@ configure_docker_daemon_proxy_if_needed() {
     return 0
   fi
 
-  local docker_http_proxy="${DOCKER_HTTP_PROXY:-${HTTP_PROXY:-${http_proxy:-}}}"
-  local docker_https_proxy="${DOCKER_HTTPS_PROXY:-${HTTPS_PROXY:-${https_proxy:-${docker_http_proxy}}}}"
-  local docker_no_proxy="${DOCKER_NO_PROXY:-${NO_PROXY:-${no_proxy:-localhost,127.0.0.1,::1}}}"
+  local docker_http_proxy="${DOCKER_HTTP_PROXY:-${BUILD_HTTP_PROXY:-${HTTP_PROXY:-${http_proxy:-}}}}"
+  local docker_https_proxy="${DOCKER_HTTPS_PROXY:-${BUILD_HTTPS_PROXY:-${HTTPS_PROXY:-${https_proxy:-${docker_http_proxy}}}}}"
+  local docker_no_proxy="${DOCKER_NO_PROXY:-${BUILD_NO_PROXY:-${NO_PROXY:-${no_proxy:-localhost,127.0.0.1,::1}}}}"
 
   if [[ -z "${docker_http_proxy}" && -z "${docker_https_proxy}" ]]; then
     log_info "No HTTP(S) proxy detected; skipping Docker daemon proxy configuration"

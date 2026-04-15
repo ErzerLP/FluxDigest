@@ -38,18 +38,20 @@ services:
       dockerfile: {{STACK_SOURCE_ROOT}}/deployments/docker/api.Dockerfile
       network: host
       args:
-        http_proxy: ${http_proxy}
-        https_proxy: ${https_proxy}
-        HTTP_PROXY: ${HTTP_PROXY}
-        HTTPS_PROXY: ${HTTPS_PROXY}
-        no_proxy: ${no_proxy}
-        NO_PROXY: ${NO_PROXY}
+        http_proxy: ${BUILD_HTTP_PROXY}
+        https_proxy: ${BUILD_HTTPS_PROXY}
+        HTTP_PROXY: ${BUILD_HTTP_PROXY}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY}
+        no_proxy: ${BUILD_NO_PROXY}
+        NO_PROXY: ${BUILD_NO_PROXY}
         GOPROXY: ${GOPROXY}
         GOSUMDB: ${GOSUMDB}
     image: ${FLUXDIGEST_API_IMAGE}
     restart: unless-stopped
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "18088:18088"
     depends_on:
@@ -64,18 +66,20 @@ services:
       dockerfile: {{STACK_SOURCE_ROOT}}/deployments/docker/worker.Dockerfile
       network: host
       args:
-        http_proxy: ${http_proxy}
-        https_proxy: ${https_proxy}
-        HTTP_PROXY: ${HTTP_PROXY}
-        HTTPS_PROXY: ${HTTPS_PROXY}
-        no_proxy: ${no_proxy}
-        NO_PROXY: ${NO_PROXY}
+        http_proxy: ${BUILD_HTTP_PROXY}
+        https_proxy: ${BUILD_HTTPS_PROXY}
+        HTTP_PROXY: ${BUILD_HTTP_PROXY}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY}
+        no_proxy: ${BUILD_NO_PROXY}
+        NO_PROXY: ${BUILD_NO_PROXY}
         GOPROXY: ${GOPROXY}
         GOSUMDB: ${GOSUMDB}
     image: ${FLUXDIGEST_WORKER_IMAGE}
     restart: unless-stopped
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - {{STACK_FLUXDIGEST_OUTPUT_DIR}}:/app/data/output
     depends_on:
@@ -90,18 +94,20 @@ services:
       dockerfile: {{STACK_SOURCE_ROOT}}/deployments/docker/scheduler.Dockerfile
       network: host
       args:
-        http_proxy: ${http_proxy}
-        https_proxy: ${https_proxy}
-        HTTP_PROXY: ${HTTP_PROXY}
-        HTTPS_PROXY: ${HTTPS_PROXY}
-        no_proxy: ${no_proxy}
-        NO_PROXY: ${NO_PROXY}
+        http_proxy: ${BUILD_HTTP_PROXY}
+        https_proxy: ${BUILD_HTTPS_PROXY}
+        HTTP_PROXY: ${BUILD_HTTP_PROXY}
+        HTTPS_PROXY: ${BUILD_HTTPS_PROXY}
+        no_proxy: ${BUILD_NO_PROXY}
+        NO_PROXY: ${BUILD_NO_PROXY}
         GOPROXY: ${GOPROXY}
         GOSUMDB: ${GOSUMDB}
     image: ${FLUXDIGEST_SCHEDULER_IMAGE}
     restart: unless-stopped
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

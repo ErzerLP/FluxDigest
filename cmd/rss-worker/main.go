@@ -51,15 +51,18 @@ func main() {
 		log.Fatal("APP_DATABASE_DSN is required")
 	}
 
-	runtimeSvc, processingRunner, dbCloser, err := buildRuntimeService(context.Background(), cfg)
+	runtimeEnv, dbCloser, err := newRuntimeEnvironment(cfg)
 	if err != nil {
-		log.Fatalf("build runtime service: %v", err)
+		log.Fatalf("build runtime environment: %v", err)
 	}
 	defer func() {
 		if err := dbCloser(); err != nil {
 			log.Printf("close postgres: %v", err)
 		}
 	}()
+	runtimeExecutor := refreshingRuntimeExecutor{
+		builder: runtimeEnv,
+	}
 
 	server := appworker.NewServer(asynq.RedisClientOpt{Addr: cfg.Redis.Addr}, appworker.ServerConfig{
 		Concurrency: cfg.Worker.Concurrency,
@@ -71,7 +74,7 @@ func main() {
 		nil,
 		asynqtask.NewDailyDigestHandler(func(ctx context.Context, payload asynqtask.DailyDigestPayload) error {
 			now := time.Now().In(shanghaiLocation())
-			result, err := runtimeSvc.Run(ctx, payload.DigestDate, now, service.RunOptions{Force: payload.Force})
+			result, err := runtimeExecutor.Run(ctx, payload.DigestDate, now, service.RunOptions{Force: payload.Force})
 			if err != nil {
 				return err
 			}
@@ -80,11 +83,7 @@ func main() {
 			return nil
 		}),
 		asynqtask.NewArticleReprocessHandler(func(ctx context.Context, payload asynqtask.ReprocessArticlePayload) error {
-			if processingRunner == nil {
-				return errors.New("runtime processing runner is required")
-			}
-
-			if err := processingRunner.ReprocessArticle(ctx, payload.ArticleID, payload.Force); err != nil {
+			if err := runtimeExecutor.ReprocessArticle(ctx, payload.ArticleID, payload.Force); err != nil {
 				return err
 			}
 
@@ -99,44 +98,144 @@ func main() {
 	}
 }
 
-func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.DailyDigestRuntimeService, *service.RuntimeProcessingRunner, func() error, error) {
+type runtimeTaskUnit interface {
+	Run(ctx context.Context, digestDate string, now time.Time, opts ...service.RunOptions) (service.RunResult, error)
+	ReprocessArticle(ctx context.Context, articleID string, force bool) error
+}
+
+type runtimeTaskUnitBuilder interface {
+	Build(ctx context.Context) (runtimeTaskUnit, error)
+}
+
+type runtimeTaskUnitBuilderFunc func(ctx context.Context) (runtimeTaskUnit, error)
+
+func (fn runtimeTaskUnitBuilderFunc) Build(ctx context.Context) (runtimeTaskUnit, error) {
+	return fn(ctx)
+}
+
+// refreshingRuntimeExecutor 确保每次任务都按最新 runtime 配置重新组装执行单元。
+type refreshingRuntimeExecutor struct {
+	builder runtimeTaskUnitBuilder
+}
+
+func (e refreshingRuntimeExecutor) Run(
+	ctx context.Context,
+	digestDate string,
+	now time.Time,
+	opts ...service.RunOptions,
+) (service.RunResult, error) {
+	unit, err := e.build(ctx)
+	if err != nil {
+		return service.RunResult{}, err
+	}
+	return unit.Run(ctx, digestDate, now, opts...)
+}
+
+func (e refreshingRuntimeExecutor) ReprocessArticle(ctx context.Context, articleID string, force bool) error {
+	unit, err := e.build(ctx)
+	if err != nil {
+		return err
+	}
+	return unit.ReprocessArticle(ctx, articleID, force)
+}
+
+func (e refreshingRuntimeExecutor) build(ctx context.Context) (runtimeTaskUnit, error) {
+	if e.builder == nil {
+		return nil, errors.New("runtime task unit builder is required")
+	}
+	return e.builder.Build(ctx)
+}
+
+type runtimeTaskServices struct {
+	dailyDigest *service.DailyDigestRuntimeService
+	processing  *service.RuntimeProcessingRunner
+}
+
+func (u runtimeTaskServices) Run(
+	ctx context.Context,
+	digestDate string,
+	now time.Time,
+	opts ...service.RunOptions,
+) (service.RunResult, error) {
+	if u.dailyDigest == nil {
+		return service.RunResult{}, errors.New("daily digest runtime service is required")
+	}
+	return u.dailyDigest.Run(ctx, digestDate, now, opts...)
+}
+
+func (u runtimeTaskServices) ReprocessArticle(ctx context.Context, articleID string, force bool) error {
+	if u.processing == nil {
+		return errors.New("runtime processing runner is required")
+	}
+	return u.processing.ReprocessArticle(ctx, articleID, force)
+}
+
+type runtimeEnvironment struct {
+	runtimeConfigs      *service.RuntimeConfigService
+	articleRepo         *postgres.ArticleRepository
+	processingRepo      *postgres.ProcessingRepository
+	digestRepo          *postgres.DigestRepository
+	dossierRepo         *postgres.DossierRepository
+	publishStateRepo    *postgres.PublishStateRepository
+	translationTemplate string
+	analysisTemplate    string
+	dossierTemplate     string
+	digestTemplate      string
+}
+
+func newRuntimeEnvironment(cfg *config.Config) (*runtimeEnvironment, func() error, error) {
 	db, err := postgres.Open(cfg.Database.DSN)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
-	runtimeConfigs := service.NewRuntimeConfigService(postgres.NewProfileRepository(db), cfg)
-	runtimeSnapshot, err := runtimeConfigs.Snapshot(ctx)
+	translationTemplate, analysisTemplate, dossierTemplate, digestTemplate, err := loadDefaultPromptTemplates()
 	if err != nil {
 		_ = sqlDB.Close()
-		return nil, nil, nil, err
+		return nil, nil, err
+	}
+
+	return &runtimeEnvironment{
+		runtimeConfigs:      service.NewRuntimeConfigService(postgres.NewProfileRepository(db), cfg),
+		articleRepo:         postgres.NewArticleRepository(db),
+		processingRepo:      postgres.NewProcessingRepository(db),
+		digestRepo:          postgres.NewDigestRepository(db),
+		dossierRepo:         postgres.NewDossierRepository(db),
+		publishStateRepo:    postgres.NewPublishStateRepository(db),
+		translationTemplate: translationTemplate,
+		analysisTemplate:    analysisTemplate,
+		dossierTemplate:     dossierTemplate,
+		digestTemplate:      digestTemplate,
+	}, sqlDB.Close, nil
+}
+
+func (e *runtimeEnvironment) Build(ctx context.Context) (runtimeTaskUnit, error) {
+	if e == nil || e.runtimeConfigs == nil {
+		return nil, errors.New("runtime environment is required")
+	}
+
+	runtimeSnapshot, err := e.runtimeConfigs.Snapshot(ctx)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateRuntimeSnapshot(runtimeSnapshot); err != nil {
-		_ = sqlDB.Close()
-		return nil, nil, nil, err
+		return nil, err
 	}
 
 	invoker, err := buildChatModelInvoker(ctx, runtimeSnapshot.LLM, llmadapter.NewChatModel)
 	if err != nil {
-		_ = sqlDB.Close()
-		return nil, nil, nil, err
+		return nil, err
 	}
-	articleRepo := postgres.NewArticleRepository(db)
-	processingRepo := postgres.NewProcessingRepository(db)
-	digestRepo := postgres.NewDigestRepository(db)
-	dossierRepo := postgres.NewDossierRepository(db)
-	publishStateRepo := postgres.NewPublishStateRepository(db)
 	minifluxClient := miniflux.NewClient(runtimeSnapshot.Miniflux.BaseURL, runtimeSnapshot.Miniflux.AuthToken)
-	translationTemplate, analysisTemplate, dossierTemplate, digestTemplate, err := loadDefaultPromptTemplates()
-	if err != nil {
-		_ = sqlDB.Close()
-		return nil, nil, nil, err
-	}
+	translationTemplate := e.translationTemplate
+	analysisTemplate := e.analysisTemplate
+	dossierTemplate := e.dossierTemplate
+	digestTemplate := e.digestTemplate
 	if strings.TrimSpace(runtimeSnapshot.Prompts.TranslationPrompt) != "" {
 		translationTemplate = runtimeSnapshot.Prompts.TranslationPrompt
 	}
@@ -152,21 +251,20 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 
 	publisher, err := buildPublisherFromRuntimeConfig(runtimeSnapshot.Publish)
 	if err != nil {
-		_ = sqlDB.Close()
-		return nil, nil, nil, err
+		return nil, err
 	}
 
 	processingSvc := service.NewProcessingService(llmadapter.NewArticleProcessorFromTemplateText(invoker, translationTemplate, analysisTemplate))
 	dossierSvc := service.NewDossierService(
 		dossierBuilderAdapter{builder: llmadapter.NewDossierBuilderFromTemplateText(invoker, dossierTemplate)},
-		dossierRepo,
-		publishStateRepo,
+		e.dossierRepo,
+		e.publishStateRepo,
 	)
 	processingRunner := service.NewRuntimeProcessingRunner(
 		minifluxClient,
-		articleRepo,
+		e.articleRepo,
 		processingSvc,
-		processingRepo,
+		e.processingRepo,
 		dossierSvc,
 		service.RuntimePromptVersions{
 			Translation: runtimeSnapshot.Prompts.TranslationVersion,
@@ -189,14 +287,17 @@ func buildRuntimeService(ctx context.Context, cfg *config.Config) (*service.Dail
 	}
 
 	runtimeSvc := service.NewDailyDigestRuntimeService(
-		service.NewArticleIngestionService(minifluxClient, articleRepo),
+		service.NewArticleIngestionService(minifluxClient, e.articleRepo),
 		processingRunner,
 		digestRunner,
-		digestRepo,
+		e.digestRepo,
 		publisher,
 	)
 
-	return runtimeSvc, processingRunner, sqlDB.Close, nil
+	return runtimeTaskServices{
+		dailyDigest: runtimeSvc,
+		processing:  processingRunner,
+	}, nil
 }
 
 func runtimeLLMFactoryConfig(cfg service.LLMRuntimeConfig) llmadapter.FactoryConfig {

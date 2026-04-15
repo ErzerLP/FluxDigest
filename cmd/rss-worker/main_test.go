@@ -89,6 +89,18 @@ type chatModelStub struct {
 	calls   int
 }
 
+type runtimeTaskUnitStub struct {
+	runCalls         int
+	reprocessCalls   int
+	runResult        service.RunResult
+	runErr           error
+	reprocessErr     error
+	gotDigestDates   []string
+	gotDigestForces  []bool
+	gotArticleIDs    []string
+	gotArticleForces []bool
+}
+
 func (s *chatModelStub) Generate(_ context.Context, _ []*schema.Message, _ ...einomodel.Option) (*schema.Message, error) {
 	s.calls++
 	idx := s.calls - 1
@@ -100,6 +112,24 @@ func (s *chatModelStub) Generate(_ context.Context, _ []*schema.Message, _ ...ei
 
 func (s *chatModelStub) Stream(_ context.Context, _ []*schema.Message, _ ...einomodel.Option) (*schema.StreamReader[*schema.Message], error) {
 	return nil, errors.New("not implemented")
+}
+
+func (s *runtimeTaskUnitStub) Run(_ context.Context, digestDate string, _ time.Time, opts ...service.RunOptions) (service.RunResult, error) {
+	s.runCalls++
+	s.gotDigestDates = append(s.gotDigestDates, digestDate)
+	force := false
+	if len(opts) > 0 {
+		force = opts[len(opts)-1].Force
+	}
+	s.gotDigestForces = append(s.gotDigestForces, force)
+	return s.runResult, s.runErr
+}
+
+func (s *runtimeTaskUnitStub) ReprocessArticle(_ context.Context, articleID string, force bool) error {
+	s.reprocessCalls++
+	s.gotArticleIDs = append(s.gotArticleIDs, articleID)
+	s.gotArticleForces = append(s.gotArticleForces, force)
+	return s.reprocessErr
 }
 
 func TestLoadDefaultPromptTemplatesIgnoresWorkingDirectory(t *testing.T) {
@@ -126,6 +156,87 @@ func TestLoadDefaultPromptTemplatesIgnoresWorkingDirectory(t *testing.T) {
 	}
 	if analysisTemplate == "" {
 		t.Fatal("want analysis template content")
+	}
+}
+
+func TestRefreshingRuntimeExecutorRunBuildsFreshRuntimePerInvocation(t *testing.T) {
+	first := &runtimeTaskUnitStub{
+		runResult: service.RunResult{DigestDate: "2026-04-15", RemoteURL: "/archives/first"},
+	}
+	second := &runtimeTaskUnitStub{
+		runResult: service.RunResult{DigestDate: "2026-04-16", RemoteURL: "/archives/second"},
+	}
+
+	buildCalls := 0
+	executor := refreshingRuntimeExecutor{
+		builder: runtimeTaskUnitBuilderFunc(func(_ context.Context) (runtimeTaskUnit, error) {
+			buildCalls++
+			if buildCalls == 1 {
+				return first, nil
+			}
+			return second, nil
+		}),
+	}
+
+	gotFirst, err := executor.Run(context.Background(), "2026-04-15", time.Now(), service.RunOptions{Force: true})
+	if err != nil {
+		t.Fatalf("Run() first error = %v", err)
+	}
+	gotSecond, err := executor.Run(context.Background(), "2026-04-16", time.Now(), service.RunOptions{Force: false})
+	if err != nil {
+		t.Fatalf("Run() second error = %v", err)
+	}
+
+	if buildCalls != 2 {
+		t.Fatalf("builder calls = %d, want 2", buildCalls)
+	}
+	if first.runCalls != 1 || second.runCalls != 1 {
+		t.Fatalf("run calls = first:%d second:%d, want 1/1", first.runCalls, second.runCalls)
+	}
+	if len(first.gotDigestForces) != 1 || !first.gotDigestForces[0] {
+		t.Fatalf("first force flags = %#v, want [true]", first.gotDigestForces)
+	}
+	if len(second.gotDigestForces) != 1 || second.gotDigestForces[0] {
+		t.Fatalf("second force flags = %#v, want [false]", second.gotDigestForces)
+	}
+	if gotFirst.RemoteURL != "/archives/first" || gotSecond.RemoteURL != "/archives/second" {
+		t.Fatalf("unexpected run results: first=%+v second=%+v", gotFirst, gotSecond)
+	}
+}
+
+func TestRefreshingRuntimeExecutorReprocessBuildsFreshRuntimePerInvocation(t *testing.T) {
+	first := &runtimeTaskUnitStub{}
+	second := &runtimeTaskUnitStub{}
+
+	buildCalls := 0
+	executor := refreshingRuntimeExecutor{
+		builder: runtimeTaskUnitBuilderFunc(func(_ context.Context) (runtimeTaskUnit, error) {
+			buildCalls++
+			if buildCalls == 1 {
+				return first, nil
+			}
+			return second, nil
+		}),
+	}
+
+	if err := executor.ReprocessArticle(context.Background(), "article-1", true); err != nil {
+		t.Fatalf("ReprocessArticle() first error = %v", err)
+	}
+	if err := executor.ReprocessArticle(context.Background(), "article-2", false); err != nil {
+		t.Fatalf("ReprocessArticle() second error = %v", err)
+	}
+
+	if buildCalls != 2 {
+		t.Fatalf("builder calls = %d, want 2", buildCalls)
+	}
+	if first.reprocessCalls != 1 || second.reprocessCalls != 1 {
+		t.Fatalf("reprocess calls = first:%d second:%d, want 1/1", first.reprocessCalls, second.reprocessCalls)
+	}
+	if len(first.gotArticleIDs) != 1 || first.gotArticleIDs[0] != "article-1" || !first.gotArticleForces[0] {
+		t.Fatalf("first reprocess args = ids:%#v forces:%#v", first.gotArticleIDs, first.gotArticleForces)
+	}
+	if len(second.gotArticleIDs) != 1 || second.gotArticleIDs[0] != "article-2" || second.gotArticleForces[0] {
+		t.Fatalf("second reprocess args = ids:%#v forces:%#v", second.gotArticleIDs, second.gotArticleForces)
 	}
 }
 
