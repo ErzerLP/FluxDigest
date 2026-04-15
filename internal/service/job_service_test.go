@@ -197,6 +197,27 @@ func TestJobServiceTriggerDailyDigestWithForce(t *testing.T) {
 	}
 }
 
+func TestJobServiceSkipsDuplicateDigestDateWhenForceTaskAlreadyQueued(t *testing.T) {
+	queue := &enqueueStub{errs: []error{ErrDailyDigestAlreadyQueued}}
+	svc := NewJobService(queue, nil)
+	now := time.Date(2026, 4, 10, 7, 0, 0, 0, time.FixedZone("CST", 8*3600))
+
+	result, err := svc.TriggerDailyDigestWithOptions(context.Background(), now, DailyDigestTriggerOptions{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(queue.dates) != 1 || queue.dates[0] != "2026-04-10" {
+		t.Fatalf("want digest date 2026-04-10 got %#v", queue.dates)
+	}
+	if len(queue.dailyDigestForces) != 1 || !queue.dailyDigestForces[0] {
+		t.Fatalf("want force=true got %#v", queue.dailyDigestForces)
+	}
+	if result.Status != "skipped" {
+		t.Fatalf("want skipped status got %s", result.Status)
+	}
+}
+
 func TestJobServiceSkipsDuplicateArticleReprocessWhenNotForce(t *testing.T) {
 	queue := &enqueueStub{reprocessErrs: []error{ErrArticleReprocessAlreadyQueued}}
 	svc := NewJobService(nil, queue)

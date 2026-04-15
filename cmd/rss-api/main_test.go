@@ -215,13 +215,10 @@ func TestMapDailyDigestEnqueueErrorMapsTaskIDConflictWhenNotForce(t *testing.T) 
 	}
 }
 
-func TestMapDailyDigestEnqueueErrorKeepsConflictWhenForce(t *testing.T) {
+func TestMapDailyDigestEnqueueErrorMapsTaskIDConflictWhenForce(t *testing.T) {
 	got := mapDailyDigestEnqueueError(asynq.ErrTaskIDConflict, true)
-	if !errors.Is(got, asynq.ErrTaskIDConflict) {
-		t.Fatalf("want asynq.ErrTaskIDConflict got %v", got)
-	}
-	if errors.Is(got, service.ErrDailyDigestAlreadyQueued) {
-		t.Fatalf("force enqueue should not map to ErrDailyDigestAlreadyQueued, got %v", got)
+	if !errors.Is(got, service.ErrDailyDigestAlreadyQueued) {
+		t.Fatalf("want ErrDailyDigestAlreadyQueued got %v", got)
 	}
 }
 
@@ -232,13 +229,10 @@ func TestMapArticleReprocessEnqueueErrorMapsTaskIDConflictWhenNotForce(t *testin
 	}
 }
 
-func TestMapArticleReprocessEnqueueErrorKeepsConflictWhenForce(t *testing.T) {
+func TestMapArticleReprocessEnqueueErrorMapsTaskIDConflictWhenForce(t *testing.T) {
 	got := mapArticleReprocessEnqueueError(asynq.ErrTaskIDConflict, true)
-	if !errors.Is(got, asynq.ErrTaskIDConflict) {
-		t.Fatalf("want asynq.ErrTaskIDConflict got %v", got)
-	}
-	if errors.Is(got, service.ErrArticleReprocessAlreadyQueued) {
-		t.Fatalf("force enqueue should not map to ErrArticleReprocessAlreadyQueued, got %v", got)
+	if !errors.Is(got, service.ErrArticleReprocessAlreadyQueued) {
+		t.Fatalf("want ErrArticleReprocessAlreadyQueued got %v", got)
 	}
 }
 

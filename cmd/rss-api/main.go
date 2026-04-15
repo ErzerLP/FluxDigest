@@ -333,15 +333,15 @@ func forceArticleReprocessTaskID(articleID string) string {
 	return "article-reprocess:force:" + articleID
 }
 
-func mapDailyDigestEnqueueError(err error, force bool) error {
-	if !force && errors.Is(err, asynq.ErrTaskIDConflict) {
+func mapDailyDigestEnqueueError(err error, _ bool) error {
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
 		return service.ErrDailyDigestAlreadyQueued
 	}
 	return err
 }
 
-func mapArticleReprocessEnqueueError(err error, force bool) error {
-	if !force && errors.Is(err, asynq.ErrTaskIDConflict) {
+func mapArticleReprocessEnqueueError(err error, _ bool) error {
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
 		return service.ErrArticleReprocessAlreadyQueued
 	}
 	return err
