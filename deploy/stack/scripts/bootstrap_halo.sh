@@ -65,37 +65,51 @@ ensure_halo_initialized() {
   tmp_dir="$(mktemp -d)"
   cookies_file="${tmp_dir}/cookies.txt"
   setup_html="${tmp_dir}/setup.html"
+  local attempt max_attempts sleep_seconds
+  max_attempts="${HALO_SETUP_READY_ATTEMPTS:-30}"
+  sleep_seconds="${HALO_SETUP_READY_SLEEP_SECONDS:-3}"
 
-  response="$(
-    curl -sS \
-      -c "${cookies_file}" \
-      -o "${setup_html}" \
-      -w '%{http_code}' \
-      "${base}/system/setup"
-  )"
-  status="${response}"
+  for attempt in $(seq 1 "${max_attempts}"); do
+    response="$(
+      curl -sS \
+        -c "${cookies_file}" \
+        -o "${setup_html}" \
+        -w '%{http_code}' \
+        "${base}/system/setup" || true
+    )"
+    status="${response}"
 
-  case "${status}" in
-    302|303|307|308)
-      rm -rf "${tmp_dir}"
-      return 0
-      ;;
-    401|404)
-      rm -rf "${tmp_dir}"
-      return 0
-      ;;
-    200)
-      if ! grep -q 'action="/system/setup"' "${setup_html}"; then
+    case "${status}" in
+      302|303|307|308)
         rm -rf "${tmp_dir}"
         return 0
-      fi
-      [[ -n "${HALO_ADMIN_EMAIL:-}" ]] || fail "HALO_ADMIN_EMAIL is required"
-      [[ -n "${HALO_EXTERNAL_URL:-}" ]] || fail "HALO_EXTERNAL_URL is required"
-      ;;
-    *)
-      fail "获取 Halo setup 页面失败: status=${status}"
-      ;;
-  esac
+        ;;
+      401|404)
+        rm -rf "${tmp_dir}"
+        return 0
+        ;;
+      200)
+        if ! grep -q 'action="/system/setup"' "${setup_html}"; then
+          rm -rf "${tmp_dir}"
+          return 0
+        fi
+        [[ -n "${HALO_ADMIN_EMAIL:-}" ]] || fail "HALO_ADMIN_EMAIL is required"
+        [[ -n "${HALO_EXTERNAL_URL:-}" ]] || fail "HALO_EXTERNAL_URL is required"
+        break
+        ;;
+      500|502|503|000)
+        if [[ "${attempt}" -lt "${max_attempts}" ]]; then
+          log_warn "Halo setup 页面尚未就绪 (${attempt}/${max_attempts})：status=${status}" >&2
+          sleep "${sleep_seconds}"
+          continue
+        fi
+        fail "获取 Halo setup 页面失败: status=${status}"
+        ;;
+      *)
+        fail "获取 Halo setup 页面失败: status=${status}"
+        ;;
+    esac
+  done
 
   csrf="$(
     sed -n 's/.*name="_csrf" value="\([^"]*\)".*/\1/p' "${setup_html}" |
