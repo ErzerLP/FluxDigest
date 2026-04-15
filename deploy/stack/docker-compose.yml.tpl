@@ -42,6 +42,8 @@ services:
         https_proxy: ${https_proxy}
         HTTP_PROXY: ${HTTP_PROXY}
         HTTPS_PROXY: ${HTTPS_PROXY}
+        no_proxy: ${no_proxy}
+        NO_PROXY: ${NO_PROXY}
         GOPROXY: ${GOPROXY}
         GOSUMDB: ${GOSUMDB}
     image: ${FLUXDIGEST_API_IMAGE}
@@ -66,6 +68,8 @@ services:
         https_proxy: ${https_proxy}
         HTTP_PROXY: ${HTTP_PROXY}
         HTTPS_PROXY: ${HTTPS_PROXY}
+        no_proxy: ${no_proxy}
+        NO_PROXY: ${NO_PROXY}
         GOPROXY: ${GOPROXY}
         GOSUMDB: ${GOSUMDB}
     image: ${FLUXDIGEST_WORKER_IMAGE}
@@ -90,6 +94,8 @@ services:
         https_proxy: ${https_proxy}
         HTTP_PROXY: ${HTTP_PROXY}
         HTTPS_PROXY: ${HTTPS_PROXY}
+        no_proxy: ${no_proxy}
+        NO_PROXY: ${NO_PROXY}
         GOPROXY: ${GOPROXY}
         GOSUMDB: ${GOSUMDB}
     image: ${FLUXDIGEST_SCHEDULER_IMAGE}

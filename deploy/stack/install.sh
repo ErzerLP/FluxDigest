@@ -153,6 +153,32 @@ to_absolute_path() {
   printf '%s/%s\n' "${abs_base}" "${leaf}"
 }
 
+merge_csv_values() {
+  local merged=""
+  local source raw item
+  declare -A seen=()
+
+  for source in "$@"; do
+    [[ -n "${source}" ]] || continue
+    IFS=',' read -ra raw <<< "${source}"
+    for item in "${raw[@]}"; do
+      item="$(trim_spaces "${item}")"
+      [[ -n "${item}" ]] || continue
+      if [[ -n "${seen[${item}]+x}" ]]; then
+        continue
+      fi
+      seen["${item}"]=1
+      if [[ -n "${merged}" ]]; then
+        merged+=",${item}"
+      else
+        merged="${item}"
+      fi
+    done
+  done
+
+  printf '%s\n' "${merged}"
+}
+
 set_stack_paths() {
   export STACK_SOURCE_ROOT
   export STACK_PROFILE
@@ -290,6 +316,10 @@ generate_credentials() {
   export https_proxy="${https_proxy:-${HTTPS_PROXY:-}}"
   export HTTP_PROXY="${HTTP_PROXY:-${http_proxy}}"
   export HTTPS_PROXY="${HTTPS_PROXY:-${https_proxy}}"
+  local runtime_no_proxy
+  runtime_no_proxy="$(merge_csv_values "${no_proxy:-}" "${NO_PROXY:-}" "localhost,127.0.0.1,::1,postgres,redis,miniflux,halo")"
+  export no_proxy="${runtime_no_proxy}"
+  export NO_PROXY="${runtime_no_proxy}"
   export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
   export GOSUMDB="${GOSUMDB:-sum.golang.google.cn}"
   export DOCKER_CONFIGURE_DAEMON_PROXY="${DOCKER_CONFIGURE_DAEMON_PROXY:-auto}"
@@ -359,7 +389,7 @@ generate_credentials() {
 preservable_env_key() {
   case "${1:-}" in
     STACK_PROFILE|STACK_PUBLIC_HOST|FLUXDIGEST_RELEASE_ID|FLUXDIGEST_API_IMAGE|FLUXDIGEST_WORKER_IMAGE|FLUXDIGEST_SCHEDULER_IMAGE|\
-    http_proxy|https_proxy|HTTP_PROXY|HTTPS_PROXY|GOPROXY|GOSUMDB|DOCKER_CONFIGURE_DAEMON_PROXY|DOCKER_SYSTEMD_DROPIN_DIR|POSTGRES_IMAGE|REDIS_IMAGE|MINIFLUX_IMAGE|HALO_IMAGE|\
+    http_proxy|https_proxy|HTTP_PROXY|HTTPS_PROXY|no_proxy|NO_PROXY|GOPROXY|GOSUMDB|DOCKER_CONFIGURE_DAEMON_PROXY|DOCKER_SYSTEMD_DROPIN_DIR|POSTGRES_IMAGE|REDIS_IMAGE|MINIFLUX_IMAGE|HALO_IMAGE|\
     APP_HTTP_PORT|APP_DATABASE_NAME|APP_DATABASE_USER|APP_DATABASE_PASSWORD|APP_DATABASE_DSN|APP_REDIS_ADDR|APP_JOB_API_KEY|APP_JOB_QUEUE|APP_WORKER_CONCURRENCY|\
     APP_ADMIN_SESSION_SECRET|APP_SECRET_KEY|APP_ADMIN_BOOTSTRAP_USERNAME|APP_ADMIN_BOOTSTRAP_PASSWORD|APP_MINIFLUX_BASE_URL|APP_MINIFLUX_AUTH_TOKEN|\
     APP_LLM_BASE_URL|APP_LLM_API_KEY|APP_LLM_MODEL|APP_LLM_FALLBACK_MODELS|APP_LLM_TIMEOUT_MS|\
