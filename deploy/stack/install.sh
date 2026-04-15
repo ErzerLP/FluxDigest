@@ -6,6 +6,14 @@ INSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK_SOURCE_ROOT="$(cd "${INSTALL_SCRIPT_DIR}/../.." && pwd)"
 STACK_PROFILE="${STACK_PROFILE:-full}"
 STACK_DIR="${STACK_DIR:-/opt/fluxdigest-stack}"
+STACK_ACTION="${STACK_ACTION:-install}"
+STACK_RELEASE_ID_OVERRIDE="${STACK_RELEASE_ID_OVERRIDE:-}"
+STACK_RELEASE_TARGET_ID="${STACK_RELEASE_TARGET_ID:-}"
+STACK_PUBLIC_HOST="${STACK_PUBLIC_HOST:-}"
+STACK_RELEASE_ID="${STACK_RELEASE_ID:-}"
+STACK_RELEASES_DIR="${STACK_RELEASES_DIR:-}"
+STACK_PROFILE_EXPLICIT=0
+STACK_PUBLIC_HOST_EXPLICIT=0
 
 source "${INSTALL_SCRIPT_DIR}/scripts/common.sh"
 source "${INSTALL_SCRIPT_DIR}/scripts/render.sh"
@@ -36,8 +44,11 @@ usage() {
 Usage: install.sh [options]
 
 Options:
+  --action <name>    Action: install | upgrade | rollback | status
   --profile <name>   Stack profile: full | fluxdigest-miniflux | fluxdigest-halo | fluxdigest-only
   --stack-dir <dir>  Target stack directory (default: /opt/fluxdigest-stack)
+  --release-id <id>  Release ID used by rollback
+  --host <value>     Public host or IP for summary output
   --force            Allow overwriting existing generated files
   -h, --help         Show this help
 EOF
@@ -46,14 +57,31 @@ EOF
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --action)
+        [[ $# -ge 2 ]] || fail "--action 缺少参数"
+        STACK_ACTION="$2"
+        shift 2
+        ;;
       --profile)
         [[ $# -ge 2 ]] || fail "--profile 缺少参数"
         STACK_PROFILE="$2"
+        STACK_PROFILE_EXPLICIT=1
         shift 2
         ;;
       --stack-dir)
         [[ $# -ge 2 ]] || fail "--stack-dir 缺少参数"
         STACK_DIR="$2"
+        shift 2
+        ;;
+      --release-id)
+        [[ $# -ge 2 ]] || fail "--release-id 缺少参数"
+        STACK_RELEASE_TARGET_ID="$2"
+        shift 2
+        ;;
+      --host)
+        [[ $# -ge 2 ]] || fail "--host 缺少参数"
+        STACK_PUBLIC_HOST="$2"
+        STACK_PUBLIC_HOST_EXPLICIT=1
         shift 2
         ;;
       --force)
@@ -70,6 +98,11 @@ parse_args() {
     esac
   done
 
+  case "${STACK_ACTION}" in
+    install|upgrade|rollback|status) ;;
+    *) fail "不支持的 action: ${STACK_ACTION}" ;;
+  esac
+
   case "${STACK_PROFILE}" in
     full|fluxdigest-miniflux|fluxdigest-halo|fluxdigest-only) ;;
     *) fail "不支持的 profile: ${STACK_PROFILE}" ;;
@@ -84,10 +117,15 @@ ensure_linux() {
 
 ensure_required_commands() {
   local cmd
-  for cmd in docker openssl sed awk curl; do
+  for cmd in openssl sed awk curl sort find cmp; do
     require_cmd "${cmd}"
   done
 
+  if [[ "${STACK_ACTION}" == "status" ]]; then
+    return 0
+  fi
+
+  require_cmd docker
   if ! docker compose version >/dev/null 2>&1; then
     fail "缺少 docker compose（请确认 docker compose 子命令可用）"
   fi
@@ -118,6 +156,7 @@ to_absolute_path() {
 set_stack_paths() {
   export STACK_SOURCE_ROOT
   export STACK_PROFILE
+  export STACK_PUBLIC_HOST
 
   export STACK_INITDB_DIR="${STACK_DIR}/initdb"
   export STACK_DATA_ROOT="${STACK_DIR}/data"
@@ -128,6 +167,7 @@ set_stack_paths() {
   export STACK_FLUXDIGEST_DATA_DIR="${STACK_DATA_ROOT}/fluxdigest"
   export STACK_FLUXDIGEST_OUTPUT_DIR="${STACK_FLUXDIGEST_DATA_DIR}/output"
   export STACK_LOG_DIR="${STACK_DIR}/logs"
+  export STACK_RELEASES_DIR="${STACK_DIR}/releases"
 }
 
 prepare_stack_dir() {
@@ -141,13 +181,22 @@ prepare_stack_dir() {
   )
 
   local file
-  if [[ "${STACK_FORCE}" -ne 1 ]]; then
-    for file in "${key_files[@]}"; do
-      if [[ -e "${file}" ]]; then
-        fail "目标目录已存在关键文件，使用 --force 允许覆盖: ${file}"
+  case "${STACK_ACTION}" in
+    install)
+      if [[ "${STACK_FORCE}" -ne 1 ]]; then
+        for file in "${key_files[@]}"; do
+          if [[ -e "${file}" ]]; then
+            fail "目标目录已存在关键文件，使用 --force 允许覆盖: ${file}"
+          fi
+        done
       fi
-    done
-  fi
+      ;;
+    upgrade|rollback|status)
+      for file in "${STACK_DIR}/.env" "${STACK_DIR}/docker-compose.yml"; do
+        [[ -e "${file}" ]] || fail "未找到现有 stack 文件: ${file}"
+      done
+      ;;
+  esac
 
   mkdir -p \
     "${STACK_INITDB_DIR}" \
@@ -156,7 +205,8 @@ prepare_stack_dir() {
     "${STACK_MINIFLUX_DATA_DIR}" \
     "${STACK_HALO_DATA_DIR}" \
     "${STACK_FLUXDIGEST_OUTPUT_DIR}" \
-    "${STACK_LOG_DIR}"
+    "${STACK_LOG_DIR}" \
+    "${STACK_RELEASES_DIR}"
 
   log_info "Using stack directory: ${STACK_DIR}"
 }
@@ -217,6 +267,22 @@ EOF
   else
     export STACK_HALO_SERVICE_BLOCK=""
   fi
+}
+
+generate_release_id() {
+  if [[ -n "${STACK_RELEASE_ID_OVERRIDE}" ]]; then
+    printf '%s\n' "${STACK_RELEASE_ID_OVERRIDE}"
+    return 0
+  fi
+  date -u +'%Y%m%d%H%M%S'
+}
+
+set_release_image_tags() {
+  STACK_RELEASE_ID="$(generate_release_id)"
+  export FLUXDIGEST_RELEASE_ID="${STACK_RELEASE_ID}"
+  export FLUXDIGEST_API_IMAGE="fluxdigest/api:${STACK_RELEASE_ID}"
+  export FLUXDIGEST_WORKER_IMAGE="fluxdigest/worker:${STACK_RELEASE_ID}"
+  export FLUXDIGEST_SCHEDULER_IMAGE="fluxdigest/scheduler:${STACK_RELEASE_ID}"
 }
 
 generate_credentials() {
@@ -292,6 +358,7 @@ generate_credentials() {
 
 preservable_env_key() {
   case "${1:-}" in
+    STACK_PROFILE|STACK_PUBLIC_HOST|FLUXDIGEST_RELEASE_ID|FLUXDIGEST_API_IMAGE|FLUXDIGEST_WORKER_IMAGE|FLUXDIGEST_SCHEDULER_IMAGE|\
     http_proxy|https_proxy|HTTP_PROXY|HTTPS_PROXY|GOPROXY|GOSUMDB|DOCKER_CONFIGURE_DAEMON_PROXY|DOCKER_SYSTEMD_DROPIN_DIR|POSTGRES_IMAGE|REDIS_IMAGE|MINIFLUX_IMAGE|HALO_IMAGE|\
     APP_HTTP_PORT|APP_DATABASE_NAME|APP_DATABASE_USER|APP_DATABASE_PASSWORD|APP_DATABASE_DSN|APP_REDIS_ADDR|APP_JOB_API_KEY|APP_JOB_QUEUE|APP_WORKER_CONCURRENCY|\
     APP_ADMIN_SESSION_SECRET|APP_SECRET_KEY|APP_ADMIN_BOOTSTRAP_USERNAME|APP_ADMIN_BOOTSTRAP_PASSWORD|APP_MINIFLUX_BASE_URL|APP_MINIFLUX_AUTH_TOKEN|\
@@ -309,8 +376,9 @@ preservable_env_key() {
   esac
 }
 
-load_existing_env_values() {
-  local existing_env="${STACK_DIR}/.env"
+load_env_values_from_file() {
+  local existing_env="${1:?}"
+  local override_mode="${2:-preserve}"
   [[ -f "${existing_env}" ]] || return 0
 
   local loaded=0
@@ -325,6 +393,25 @@ load_existing_env_values() {
     value="${line#*=}"
     key="$(trim_spaces "${key}")"
     preservable_env_key "${key}" || continue
+
+    if [[ "${override_mode}" == "override" ]]; then
+      export "${key}=${value}"
+      loaded=1
+      continue
+    fi
+
+    if [[ "${key}" == "STACK_PROFILE" && "${STACK_PROFILE_EXPLICIT}" -eq 0 ]]; then
+      export "${key}=${value}"
+      loaded=1
+      continue
+    fi
+
+    if [[ "${key}" == "STACK_PUBLIC_HOST" && "${STACK_PUBLIC_HOST_EXPLICIT}" -eq 0 ]]; then
+      export "${key}=${value}"
+      loaded=1
+      continue
+    fi
+
     if [[ -z "${!key+x}" ]]; then
       export "${key}=${value}"
       loaded=1
@@ -332,8 +419,101 @@ load_existing_env_values() {
   done < "${existing_env}"
 
   if [[ "${loaded}" -eq 1 ]]; then
-    log_info "Loaded existing stack env defaults from ${existing_env}"
+    log_info "Loaded stack env defaults from ${existing_env}"
   fi
+}
+
+load_existing_env_values() {
+  load_env_values_from_file "${STACK_DIR}/.env" preserve
+}
+
+reload_current_env_values() {
+  load_env_values_from_file "${STACK_DIR}/.env" override
+}
+
+current_public_host() {
+  printf '%s' "${STACK_PUBLIC_HOST:-<host>}"
+}
+
+release_snapshot_dir() {
+  local release_id="${1:?}"
+  printf '%s\n' "${STACK_RELEASES_DIR}/${release_id}"
+}
+
+snapshot_release_state() {
+  local release_id="${1:?}"
+  local snapshot_dir
+  snapshot_dir="$(release_snapshot_dir "${release_id}")"
+  mkdir -p "${snapshot_dir}"
+  cp "${STACK_DIR}/.env" "${snapshot_dir}/.env"
+  cp "${STACK_DIR}/docker-compose.yml" "${snapshot_dir}/docker-compose.yml"
+  if [[ -f "${STACK_DIR}/install-summary.txt" ]]; then
+    cp "${STACK_DIR}/install-summary.txt" "${snapshot_dir}/install-summary.txt"
+  fi
+  printf '%s\n' "${release_id}" > "${STACK_RELEASES_DIR}/current"
+  log_info "Snapshot saved for release ${release_id}"
+}
+
+restore_release_snapshot() {
+  local release_id="${1:?}"
+  local snapshot_dir
+  snapshot_dir="$(release_snapshot_dir "${release_id}")"
+  [[ -f "${snapshot_dir}/.env" ]] || fail "找不到 release 快照: ${release_id}"
+  [[ -f "${snapshot_dir}/docker-compose.yml" ]] || fail "release 快照缺少 docker-compose.yml: ${release_id}"
+  cp "${snapshot_dir}/.env" "${STACK_DIR}/.env"
+  cp "${snapshot_dir}/docker-compose.yml" "${STACK_DIR}/docker-compose.yml"
+  if [[ -f "${snapshot_dir}/install-summary.txt" ]]; then
+    cp "${snapshot_dir}/install-summary.txt" "${STACK_DIR}/install-summary.txt"
+  fi
+  printf '%s\n' "${release_id}" > "${STACK_RELEASES_DIR}/current"
+  log_info "Snapshot restored for release ${release_id}"
+}
+
+list_release_ids() {
+  [[ -d "${STACK_RELEASES_DIR}" ]] || return 0
+  find "${STACK_RELEASES_DIR}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | grep -E '^[0-9]{14}$' | sort -r || true
+}
+
+current_release_id() {
+  if [[ -n "${FLUXDIGEST_RELEASE_ID:-}" ]]; then
+    printf '%s\n' "${FLUXDIGEST_RELEASE_ID}"
+    return 0
+  fi
+  if [[ -f "${STACK_RELEASES_DIR}/current" ]]; then
+    sed -n '1p' "${STACK_RELEASES_DIR}/current"
+    return 0
+  fi
+  return 1
+}
+
+resolve_rollback_target_id() {
+  if [[ -n "${STACK_RELEASE_TARGET_ID}" ]]; then
+    local target_dir
+    target_dir="$(release_snapshot_dir "${STACK_RELEASE_TARGET_ID}")"
+    [[ -d "${target_dir}" ]] || fail "指定 release 不存在: ${STACK_RELEASE_TARGET_ID}"
+    printf '%s\n' "${STACK_RELEASE_TARGET_ID}"
+    return 0
+  fi
+
+  local current_id
+  current_id="$(current_release_id || true)"
+  [[ -n "${current_id}" ]] || fail "当前 release ID 不存在，无法自动回滚"
+
+  local releases=()
+  mapfile -t releases < <(list_release_ids)
+  [[ "${#releases[@]}" -gt 0 ]] || fail "没有可用的历史 release"
+
+  local index
+  for index in "${!releases[@]}"; do
+    if [[ "${releases[index]}" == "${current_id}" ]]; then
+      local target_index=$((index + 1))
+      [[ "${target_index}" -lt "${#releases[@]}" ]] || fail "当前 release 已是最旧版本，无法继续回滚"
+      printf '%s\n' "${releases[target_index]}"
+      return 0
+    fi
+  done
+
+  fail "未在 release 列表中找到当前 release: ${current_id}"
 }
 
 escape_systemd_env_value() {
@@ -453,17 +633,6 @@ build_fluxdigest_images() {
     build fluxdigest-api fluxdigest-worker fluxdigest-scheduler
 }
 
-selected_services() {
-  local services=(postgres redis fluxdigest-api fluxdigest-worker fluxdigest-scheduler)
-  if profile_has_service "${STACK_PROFILE}" "miniflux"; then
-    services+=(miniflux)
-  fi
-  if profile_has_service "${STACK_PROFILE}" "halo"; then
-    services+=(halo)
-  fi
-  printf '%s\n' "${services[@]}"
-}
-
 start_compose_services() {
   local services=("$@")
   [[ "${#services[@]}" -gt 0 ]] || return 0
@@ -476,6 +645,8 @@ start_compose_services() {
 }
 
 start_selected_services() {
+  local bootstrap_integrations="${1:-1}"
+
   log_info "Starting base services: postgres redis"
   start_compose_services postgres redis
 
@@ -483,29 +654,33 @@ start_selected_services() {
     log_info "Starting Miniflux"
     start_compose_services miniflux
     wait_for_http_ok "http://127.0.0.1:${MINIFLUX_HTTP_PORT}/healthz" 60 2 || fail "Miniflux 健康检查失败"
-    export MINIFLUX_BASE_URL="http://127.0.0.1:${MINIFLUX_HTTP_PORT}"
-    export APP_MINIFLUX_BASE_URL="http://miniflux:8080"
-    local miniflux_token
-    if ! miniflux_token="$(bootstrap_miniflux)"; then
-      fail "Miniflux bootstrap 失败"
+    if [[ "${bootstrap_integrations}" -eq 1 ]]; then
+      export MINIFLUX_BASE_URL="http://127.0.0.1:${MINIFLUX_HTTP_PORT}"
+      export APP_MINIFLUX_BASE_URL="http://miniflux:8080"
+      local miniflux_token
+      if ! miniflux_token="$(bootstrap_miniflux)"; then
+        fail "Miniflux bootstrap 失败"
+      fi
+      export APP_MINIFLUX_AUTH_TOKEN="${miniflux_token}"
+      render_stack_files
     fi
-    export APP_MINIFLUX_AUTH_TOKEN="${miniflux_token}"
-    render_stack_files
   fi
 
   if profile_has_service "${STACK_PROFILE}" "halo"; then
     log_info "Starting Halo"
     start_compose_services halo
     wait_for_http_ok "http://127.0.0.1:${HALO_HTTP_PORT}/actuator/health" 90 3 || fail "Halo 健康检查失败"
-    export HALO_BASE_URL="http://127.0.0.1:${HALO_HTTP_PORT}"
-    export APP_PUBLISH_CHANNEL="halo"
-    export APP_PUBLISH_HALO_BASE_URL="http://halo:8090"
-    local halo_token
-    if ! halo_token="$(bootstrap_halo)"; then
-      fail "Halo bootstrap 失败"
+    if [[ "${bootstrap_integrations}" -eq 1 ]]; then
+      export HALO_BASE_URL="http://127.0.0.1:${HALO_HTTP_PORT}"
+      export APP_PUBLISH_CHANNEL="halo"
+      export APP_PUBLISH_HALO_BASE_URL="http://halo:8090"
+      local halo_token
+      if ! halo_token="$(bootstrap_halo)"; then
+        fail "Halo bootstrap 失败"
+      fi
+      export APP_PUBLISH_HALO_TOKEN="${halo_token}"
+      render_stack_files
     fi
-    export APP_PUBLISH_HALO_TOKEN="${halo_token}"
-    render_stack_files
   fi
 
   log_info "Starting FluxDigest services"
@@ -516,22 +691,31 @@ start_selected_services() {
 write_install_summary() {
   local summary_path="${STACK_DIR}/install-summary.txt"
   local generated_at
+  local display_host
   generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  display_host="$(current_public_host)"
 
   {
+    printf 'Stack Action: %s\n' "${STACK_ACTION}"
     printf 'Install Profile: %s\n' "${STACK_PROFILE}"
     printf 'Stack Directory: %s\n' "${STACK_DIR}"
     printf 'Generated At: %s\n\n' "${generated_at}"
 
+    printf 'Release\n'
+    printf -- '- Current Release: %s\n' "${FLUXDIGEST_RELEASE_ID:-unknown}"
+    printf -- '- API Image: %s\n' "${FLUXDIGEST_API_IMAGE:-unknown}"
+    printf -- '- Worker Image: %s\n' "${FLUXDIGEST_WORKER_IMAGE:-unknown}"
+    printf -- '- Scheduler Image: %s\n\n' "${FLUXDIGEST_SCHEDULER_IMAGE:-unknown}"
+
     printf 'Service URLs\n'
-    printf -- '- FluxDigest WebUI / API: http://<host>:%s\n' "${FLUXDIGEST_HTTP_PORT}"
+    printf -- '- FluxDigest WebUI / API: http://%s:%s\n' "${display_host}" "${FLUXDIGEST_HTTP_PORT}"
     if profile_has_service "${STACK_PROFILE}" "miniflux"; then
-      printf -- '- Miniflux: http://<host>:%s\n' "${MINIFLUX_HTTP_PORT}"
+      printf -- '- Miniflux: http://%s:%s\n' "${display_host}" "${MINIFLUX_HTTP_PORT}"
     else
       printf -- '- Miniflux: Not installed in this profile\n'
     fi
     if profile_has_service "${STACK_PROFILE}" "halo"; then
-      printf -- '- Halo: http://<host>:%s\n' "${HALO_HTTP_PORT}"
+      printf -- '- Halo: http://%s:%s\n' "${display_host}" "${HALO_HTTP_PORT}"
     else
       printf -- '- Halo: Not installed in this profile\n'
     fi
@@ -558,14 +742,14 @@ write_install_summary() {
     fi
 
     printf '\nPostgreSQL\n'
-    printf -- '- Host: <host>\n'
+    printf -- '- Host: %s\n' "${display_host}"
     printf -- '- Port: %s\n' "${POSTGRES_HOST_PORT}"
     printf -- '- FluxDigest DB: %s / %s / %s\n' "${FLUXDIGEST_DB_NAME}" "${FLUXDIGEST_DB_USER}" "${FLUXDIGEST_DB_PASSWORD}"
     printf -- '- Miniflux DB: %s / %s / %s\n' "${MINIFLUX_DB_NAME}" "${MINIFLUX_DB_USER}" "${MINIFLUX_DB_PASSWORD}"
     printf -- '- Halo DB: %s / %s / %s\n' "${HALO_DB_NAME}" "${HALO_DB_USER}" "${HALO_DB_PASSWORD}"
 
     printf '\nRedis\n'
-    printf -- '- Host: <host>\n'
+    printf -- '- Host: %s\n' "${display_host}"
     printf -- '- Port: %s\n' "${REDIS_HOST_PORT}"
 
     printf '\nImages\n'
@@ -578,6 +762,7 @@ write_install_summary() {
     printf -- '- .env: %s\n' "${STACK_DIR}/.env"
     printf -- '- docker-compose.yml: %s\n' "${STACK_DIR}/docker-compose.yml"
     printf -- '- install-summary.txt: %s\n' "${summary_path}"
+    printf -- '- releases/: %s\n' "${STACK_RELEASES_DIR}"
 
     printf '\nNext Steps\n'
     printf -- '- 1) 登录 FluxDigest WebUI\n'
@@ -595,13 +780,49 @@ write_install_summary() {
 }
 
 print_install_summary_hint() {
+  local display_host
+  display_host="$(current_public_host)"
   cat <<EOF
 安装完成。
-- FluxDigest WebUI / API: http://<host>:${FLUXDIGEST_HTTP_PORT}
-- Miniflux: $(if profile_has_service "${STACK_PROFILE}" "miniflux"; then printf 'http://<host>:%s' "${MINIFLUX_HTTP_PORT}"; else printf 'Not installed in this profile'; fi)
-- Halo: $(if profile_has_service "${STACK_PROFILE}" "halo"; then printf 'http://<host>:%s' "${HALO_HTTP_PORT}"; else printf 'Not installed in this profile'; fi)
+- FluxDigest WebUI / API: http://${display_host}:${FLUXDIGEST_HTTP_PORT}
+- Miniflux: $(if profile_has_service "${STACK_PROFILE}" "miniflux"; then printf 'http://%s:%s' "${display_host}" "${MINIFLUX_HTTP_PORT}"; else printf 'Not installed in this profile'; fi)
+- Halo: $(if profile_has_service "${STACK_PROFILE}" "halo"; then printf 'http://%s:%s' "${display_host}" "${HALO_HTTP_PORT}"; else printf 'Not installed in this profile'; fi)
 - 详细凭据与连接信息请查看: ${STACK_DIR}/install-summary.txt
 EOF
+}
+
+run_install_like_action() {
+  load_existing_env_values
+  generate_credentials
+  set_release_image_tags
+  render_stack_files
+  configure_docker_daemon_proxy_if_needed
+  prepull_external_images
+  build_fluxdigest_images
+  start_selected_services 1
+  write_install_summary
+  snapshot_release_state "${FLUXDIGEST_RELEASE_ID}"
+  print_install_summary_hint
+}
+
+run_rollback_action() {
+  load_existing_env_values
+  local target_release_id
+  target_release_id="$(resolve_rollback_target_id)"
+  restore_release_snapshot "${target_release_id}"
+  reload_current_env_values
+  set_stack_paths
+  start_selected_services 0
+  write_install_summary
+  print_install_summary_hint
+}
+
+run_status_action() {
+  load_existing_env_values
+  if [[ ! -f "${STACK_DIR}/install-summary.txt" ]]; then
+    write_install_summary
+  fi
+  cat "${STACK_DIR}/install-summary.txt"
 }
 
 main() {
@@ -611,21 +832,24 @@ main() {
     return 0
   fi
 
-  log_info "Starting stack installation"
+  log_info "Starting stack action: ${STACK_ACTION}"
   ensure_linux
   ensure_required_commands
   prepare_stack_dir
-  load_existing_env_values
-  generate_credentials
-  render_stack_files
-  configure_docker_daemon_proxy_if_needed
-  prepull_external_images
-  build_fluxdigest_images
-  start_selected_services
-  write_install_summary
-  print_install_summary_hint
 
-  log_info "Installation finished. Summary: ${STACK_DIR}/install-summary.txt"
+  case "${STACK_ACTION}" in
+    install|upgrade)
+      run_install_like_action
+      ;;
+    rollback)
+      run_rollback_action
+      ;;
+    status)
+      run_status_action
+      ;;
+  esac
+
+  log_info "Stack action finished: ${STACK_ACTION}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

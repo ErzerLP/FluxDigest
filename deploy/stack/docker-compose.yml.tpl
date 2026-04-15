@@ -44,7 +44,7 @@ services:
         HTTPS_PROXY: ${HTTPS_PROXY}
         GOPROXY: ${GOPROXY}
         GOSUMDB: ${GOSUMDB}
-    image: fluxdigest/api:latest
+    image: ${FLUXDIGEST_API_IMAGE}
     restart: unless-stopped
     env_file:
       - .env
@@ -68,7 +68,7 @@ services:
         HTTPS_PROXY: ${HTTPS_PROXY}
         GOPROXY: ${GOPROXY}
         GOSUMDB: ${GOSUMDB}
-    image: fluxdigest/worker:latest
+    image: ${FLUXDIGEST_WORKER_IMAGE}
     restart: unless-stopped
     env_file:
       - .env
@@ -92,7 +92,7 @@ services:
         HTTPS_PROXY: ${HTTPS_PROXY}
         GOPROXY: ${GOPROXY}
         GOSUMDB: ${GOSUMDB}
-    image: fluxdigest/scheduler:latest
+    image: ${FLUXDIGEST_SCHEDULER_IMAGE}
     restart: unless-stopped
     env_file:
       - .env

@@ -66,7 +66,7 @@ bootstrap_halo() { :; }
 (
   cd "${WORK_DIR}"
   export STACK_PROFILE_SERVICES="miniflux,halo"
-  main --profile fluxdigest-only --stack-dir "${STACK_DIR_REL}" --force
+  main --action install --profile fluxdigest-only --stack-dir "${STACK_DIR_REL}" --force
 )
 
 STACK_DIR="$(cd "${WORK_DIR}/${STACK_DIR_REL}" && pwd -P)"
@@ -84,6 +84,10 @@ grep -qE '^- install-summary.txt: /' "${summary_file}" || fail "summary 的 inst
 app_secret_key="$(sed -n 's/^APP_SECRET_KEY=//p' "${env_file}" | head -n 1)"
 [[ -n "${app_secret_key}" ]] || fail "APP_SECRET_KEY 未写入 .env"
 [[ "${#app_secret_key}" -eq 32 ]] || fail "APP_SECRET_KEY 长度应为 32 字节，实际为 ${#app_secret_key}"
+grep -qE '^FLUXDIGEST_RELEASE_ID=[0-9]{14}$' "${env_file}" || fail "FLUXDIGEST_RELEASE_ID 未写入 .env"
+grep -qE '^FLUXDIGEST_API_IMAGE=fluxdigest/api:[0-9]{14}$' "${env_file}" || fail "FLUXDIGEST_API_IMAGE 未写入 .env"
+grep -qE '^FLUXDIGEST_WORKER_IMAGE=fluxdigest/worker:[0-9]{14}$' "${env_file}" || fail "FLUXDIGEST_WORKER_IMAGE 未写入 .env"
+grep -qE '^FLUXDIGEST_SCHEDULER_IMAGE=fluxdigest/scheduler:[0-9]{14}$' "${env_file}" || fail "FLUXDIGEST_SCHEDULER_IMAGE 未写入 .env"
 
 grep -Eq 'docker compose .*up -d postgres redis' "${MOCK_DOCKER_LOG}" || fail "mock docker 日志缺少基础服务 up 命令"
 grep -Eq 'docker compose .*up -d fluxdigest-api fluxdigest-worker fluxdigest-scheduler' "${MOCK_DOCKER_LOG}" || fail "mock docker 日志缺少 FluxDigest 服务 up 命令"

@@ -68,7 +68,7 @@ bootstrap_halo() { printf 'existing-halo-token\n'; }
 
 (
   cd "${WORK_DIR}"
-  main --profile full --stack-dir "${STACK_DIR_REL}" --force
+  main --action install --profile full --stack-dir "${STACK_DIR_REL}" --force
 )
 
 env_file="${WORK_DIR}/${STACK_DIR_REL}/.env"
@@ -79,5 +79,9 @@ grep -q 'HALO_DB_PASSWORD=existing-halo-password' "${env_file}" || fail "未保�
 grep -q 'APP_ADMIN_BOOTSTRAP_PASSWORD=existing-admin-password' "${env_file}" || fail "未保留现有管理员密码"
 grep -q 'MINIFLUX_ADMIN_PASSWORD=existing-miniflux-admin' "${env_file}" || fail "未保留现有 Miniflux 管理员密码"
 grep -q 'HALO_ADMIN_PASSWORD=existing-halo-admin' "${env_file}" || fail "未保留现有 Halo 管理员密码"
+grep -qE '^FLUXDIGEST_RELEASE_ID=[0-9]{14}$' "${env_file}" || fail "未写入 release ID"
+grep -qE '^FLUXDIGEST_API_IMAGE=fluxdigest/api:[0-9]{14}$' "${env_file}" || fail "未写入 API 镜像 tag"
+grep -qE '^FLUXDIGEST_WORKER_IMAGE=fluxdigest/worker:[0-9]{14}$' "${env_file}" || fail "未写入 Worker 镜像 tag"
+grep -qE '^FLUXDIGEST_SCHEDULER_IMAGE=fluxdigest/scheduler:[0-9]{14}$' "${env_file}" || fail "未写入 Scheduler 镜像 tag"
 
 log_info "install existing env smoke passed"
