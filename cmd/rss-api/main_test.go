@@ -653,3 +653,34 @@ func TestAdminMinifluxConnectivityCheckerUsesRuntimeConfig(t *testing.T) {
 		t.Fatalf("want /v1/entries got %q", gotPath)
 	}
 }
+
+func TestAdminPublishConnectivityCheckerUsesBasicAuthorizationWhenConfigured(t *testing.T) {
+	wantAuth := "Basic YWRtaW46aGFsby1zZWNyZXQ="
+	var gotPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("want basic authorization got %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"items":[]}`)
+	}))
+	defer server.Close()
+
+	checker := newAdminPublishConnectivityChecker(adminRuntimeConfigReaderStub{
+		publish: service.PublishRuntimeConfig{
+			Provider:    "halo",
+			HaloBaseURL: server.URL,
+			HaloToken:   "basic:YWRtaW46aGFsby1zZWNyZXQ=",
+		},
+	})
+
+	_, err := checker.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if gotPath != "/apis/api.console.halo.run/v1alpha1/posts?page=1&size=1" {
+		t.Fatalf("want halo posts path got %q", gotPath)
+	}
+}

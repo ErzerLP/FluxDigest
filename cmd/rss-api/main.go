@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm"
 
 	llmadapter "rss-platform/internal/adapter/llm"
+	halopublisher "rss-platform/internal/adapter/publisher/halo"
 	"rss-platform/internal/app/api"
 	"rss-platform/internal/app/api/handlers"
 	"rss-platform/internal/app/api/middleware"
@@ -512,7 +513,7 @@ func (c adminPublishConnectivityChecker) checkHalo(ctx context.Context, startedA
 	if err != nil {
 		return time.Since(startedAt), err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.HaloToken)
+	halopublisher.ApplyAuthorizationHeader(req, cfg.HaloToken)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

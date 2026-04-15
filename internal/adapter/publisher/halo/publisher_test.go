@@ -2,6 +2,7 @@ package halo
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -150,6 +151,45 @@ func TestPublishDigestReturnsAmbiguousErrorOnInvalidJSONResponse(t *testing.T) {
 	_, err := p.PublishDigest(context.Background(), adapterpublisher.PublishDigestRequest{Title: "Daily Digest", ContentMarkdown: "# Digest"})
 	if !adapterpublisher.IsAmbiguousPublishError(err) {
 		t.Fatalf("want ambiguous publish error got %v", err)
+	}
+}
+
+func TestPublishDigestUsesBasicAuthorizationWhenTokenHasBasicPrefix(t *testing.T) {
+	t.Helper()
+
+	wantCredential := base64.StdEncoding.EncodeToString([]byte("admin:halo-secret"))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Basic "+wantCredential {
+			t.Fatalf("want basic auth header got %q", got)
+		}
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/api.console.halo.run/v1alpha1/posts":
+			_ = json.NewEncoder(w).Encode(postEnvelope{
+				Metadata: metadata{Name: "daily-digest-1"},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/apis/api.console.halo.run/v1alpha1/posts/daily-digest-1/publish":
+			_ = json.NewEncoder(w).Encode(postEnvelope{
+				Metadata: metadata{Name: "daily-digest-1"},
+				Status:   postStatus{Permalink: "https://blog.example.com/basic-auth"},
+			})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := New(server.URL, "basic:"+wantCredential)
+	result, err := p.PublishDigest(context.Background(), adapterpublisher.PublishDigestRequest{
+		Title:           "Daily Digest",
+		ContentMarkdown: "# Digest",
+	})
+	if err != nil {
+		t.Fatalf("PublishDigest() error = %v", err)
+	}
+	if result.RemoteURL != "https://blog.example.com/basic-auth" {
+		t.Fatalf("want basic auth publish url got %q", result.RemoteURL)
 	}
 }
 

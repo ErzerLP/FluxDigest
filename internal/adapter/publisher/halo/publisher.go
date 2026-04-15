@@ -112,9 +112,7 @@ func (p *Publisher) publishPost(ctx context.Context, postName string) (postEnvel
 
 func (p *Publisher) doJSON(httpReq *http.Request, out any, action string, ambiguousOnNon2xx bool) error {
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.token != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.token)
-	}
+	ApplyAuthorizationHeader(httpReq, p.token)
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {

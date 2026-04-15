@@ -17,6 +17,63 @@ preferred_python_cmd() {
   return 1
 }
 
+halo_base64_encode() {
+  local raw="${1:-}"
+  local python_cmd
+
+  if python_cmd="$(preferred_python_cmd)"; then
+    HALO_BASE64_RAW="${raw}" "${python_cmd}" - <<'PY'
+import base64
+import os
+
+print(base64.b64encode(os.environ.get("HALO_BASE64_RAW", "").encode()).decode())
+PY
+    return 0
+  fi
+
+  if command -v base64 >/dev/null 2>&1; then
+    printf '%s' "${raw}" | base64 | tr -d '\r\n'
+    return 0
+  fi
+
+  return 1
+}
+
+halo_auth_header_value() {
+  local token="${1:-}"
+  if [[ -z "${token}" ]]; then
+    return 1
+  fi
+
+  if [[ "${token,,}" == basic:* ]]; then
+    printf 'Basic %s\n' "${token#*:}"
+    return 0
+  fi
+
+  printf 'Bearer %s\n' "${token}"
+}
+
+halo_validate_publish_token() {
+  local token="${1:-}"
+  [[ -n "${token}" ]] || return 1
+
+  local auth_header
+  auth_header="$(halo_auth_header_value "${token}")" || return 1
+
+  curl -fsS \
+    -H "Authorization: ${auth_header}" \
+    "${HALO_BASE_URL%/}/apis/api.console.halo.run/v1alpha1/posts?page=1&size=1" >/dev/null
+}
+
+halo_basic_token() {
+  [[ -n "${HALO_ADMIN_USERNAME:-}" ]] || fail "HALO_ADMIN_USERNAME is required"
+  [[ -n "${HALO_ADMIN_PASSWORD:-}" ]] || fail "HALO_ADMIN_PASSWORD is required"
+
+  local encoded
+  encoded="$(halo_base64_encode "${HALO_ADMIN_USERNAME}:${HALO_ADMIN_PASSWORD}")" || fail "无法生成 Halo Basic token"
+  printf 'basic:%s\n' "${encoded}"
+}
+
 halo_access_token_from_response() {
   local payload="${1:?}"
   local python_cmd
@@ -198,7 +255,7 @@ bootstrap_halo() {
   [[ -n "${HALO_BASE_URL:-}" ]] || fail "HALO_BASE_URL is required"
 
   local existing_token="${APP_PUBLISH_HALO_TOKEN:-}"
-  if [[ -n "${existing_token}" ]] && curl -fsS -H "Authorization: Bearer ${existing_token}" "${HALO_BASE_URL%/}/apis/api.console.halo.run/v1alpha1/posts?page=1&size=1" >/dev/null; then
+  if [[ -n "${existing_token}" ]] && halo_validate_publish_token "${existing_token}"; then
     printf '%s\n' "${existing_token}"
     return 0
   fi
@@ -211,8 +268,20 @@ bootstrap_halo() {
 
   local response token
   response="$(create_halo_pat "$(halo_pat_payload)")"
-  token="$(halo_access_token_from_response "${response}")"
+  token="$(halo_access_token_from_response "${response}" || true)"
 
-  curl -fsS -H "Authorization: Bearer ${token}" "${HALO_BASE_URL%/}/apis/api.console.halo.run/v1alpha1/posts?page=1&size=1" >/dev/null
+  if [[ -n "${token}" ]] && halo_validate_publish_token "${token}"; then
+    printf '%s\n' "${token}"
+    return 0
+  fi
+
+  if [[ -n "${token}" ]]; then
+    log_warn "Halo PAT 已创建但无法访问 Console API，自动回退到 Basic 鉴权" >&2
+  else
+    log_warn "Halo PAT 响应未返回 access token，自动回退到 Basic 鉴权" >&2
+  fi
+
+  token="$(halo_basic_token)"
+  halo_validate_publish_token "${token}" || fail "Halo Basic 鉴权验证失败"
   printf '%s\n' "${token}"
 }
