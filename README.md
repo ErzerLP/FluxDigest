@@ -50,19 +50,34 @@ flowchart LR
 
 ## Quick Start
 
-### 1. 准备依赖
+### 1. 一键启动安装器（推荐）
+
+如果你只是想在 Linux 机器上快速拉起完整环境，直接执行：
+
+```bash
+curl --noproxy ghproxy.vip -fsSL https://ghproxy.vip/https://raw.githubusercontent.com/ErzerLP/FluxDigest/master/install.sh | bash
+```
+
+如果你的服务器平时需要先执行 `fuck` 打开代理，再运行：
+
+```bash
+bash -ic 'fuck; curl --noproxy ghproxy.vip -fsSL https://ghproxy.vip/https://raw.githubusercontent.com/ErzerLP/FluxDigest/master/install.sh | bash'
+```
+
+> 根入口会优先尝试本地源码；当本地源码不存在时，会自动从 GitHub / 镜像下载完整源码后继续安装。
+
+### 2. 准备依赖
 
 在 Linux 主机上准备以下命令：
 
 - `docker`
 - `docker compose`
-- `git`
 - `curl`
 - `whiptail`
 
 > 安装脚本会自动检测依赖，但不会自动替你安装缺失组件。
 
-### 2. 运行唯一安装入口
+### 3. 如果你已经 clone 了仓库
 
 ```bash
 git clone https://github.com/ErzerLP/FluxDigest.git
@@ -83,7 +98,7 @@ bash install.sh
 - `FluxDigest + Halo`
 - `FluxDigest only`
 
-### 3. 安装完成后你会拿到这些信息
+### 4. 安装完成后你会拿到这些信息
 
 脚本会输出并保存安装摘要，包含：
 
@@ -94,7 +109,7 @@ bash install.sh
 - PostgreSQL 与 Redis 连接信息
 - `.env`、`docker-compose.yml`、`install-summary.txt` 路径
 
-### 4. 首次使用流程
+### 5. 首次使用流程
 
 1. 登录 **FluxDigest WebUI**
 2. 配置 **LLM Base URL / API Key / Model**

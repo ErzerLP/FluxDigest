@@ -3,7 +3,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STACK_INSTALL_BIN="${FLUXDIGEST_STACK_INSTALL_BIN:-${ROOT_DIR}/deploy/stack/install.sh}"
+DEFAULT_STACK_INSTALL_BIN="${ROOT_DIR}/deploy/stack/install.sh"
+STACK_INSTALL_BIN="${FLUXDIGEST_STACK_INSTALL_BIN:-${DEFAULT_STACK_INSTALL_BIN}}"
+STACK_INSTALL_BIN_EXPLICIT=0
+if [[ -n "${FLUXDIGEST_STACK_INSTALL_BIN:-}" ]]; then
+  STACK_INSTALL_BIN_EXPLICIT=1
+fi
+
+FLUXDIGEST_BOOTSTRAP_REF="${FLUXDIGEST_BOOTSTRAP_REF:-master}"
+FLUXDIGEST_BOOTSTRAP_ARCHIVE_URLS="${FLUXDIGEST_BOOTSTRAP_ARCHIVE_URLS:-}"
+ROOT_INSTALL_CLEANUP_DIR=""
 WHIPTAIL_BIN="${WHIPTAIL_BIN:-whiptail}"
 DEFAULT_STACK_DIR="/opt/fluxdigest-stack"
 DEFAULT_HOST="127.0.0.1"
@@ -55,6 +64,88 @@ require_file_readable() {
   local path="${1:?}"
   [[ -f "${path}" ]] || fail "未找到文件: ${path}"
   [[ -r "${path}" ]] || fail "文件不可读: ${path}"
+}
+
+cleanup_root_install() {
+  if [[ -n "${ROOT_INSTALL_CLEANUP_DIR}" && -d "${ROOT_INSTALL_CLEANUP_DIR}" ]]; then
+    rm -rf "${ROOT_INSTALL_CLEANUP_DIR}"
+  fi
+}
+
+trap cleanup_root_install EXIT
+
+bootstrap_archive_url_stream() {
+  if [[ -n "${FLUXDIGEST_BOOTSTRAP_ARCHIVE_URLS}" ]]; then
+    printf '%s' "${FLUXDIGEST_BOOTSTRAP_ARCHIVE_URLS}" | tr ', ' $'\n' | sed '/^$/d'
+    return 0
+  fi
+
+  printf '%s\n' \
+    "https://github.com/ErzerLP/FluxDigest/archive/refs/heads/${FLUXDIGEST_BOOTSTRAP_REF}.tar.gz" \
+    "https://ghproxy.vip/https://github.com/ErzerLP/FluxDigest/archive/refs/heads/${FLUXDIGEST_BOOTSTRAP_REF}.tar.gz"
+}
+
+download_bootstrap_archive() {
+  local url="${1:?}"
+  local output_file="${2:?}"
+  local host
+  host="$(printf '%s' "${url}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://([^/]+)/?.*$#\1#')"
+
+  local curl_args=(-fsSL --connect-timeout 15 --max-time 300 -o "${output_file}")
+  if [[ "${host}" == "ghproxy.vip" ]]; then
+    curl_args+=(--noproxy "${host}")
+  fi
+
+  curl "${curl_args[@]}" "${url}" </dev/null
+}
+
+extract_bootstrap_source_root() {
+  local archive_file="${1:?}"
+  local extract_dir="${2:?}"
+  mkdir -p "${extract_dir}"
+  tar -xzf "${archive_file}" -C "${extract_dir}"
+
+  local nested_install
+  nested_install="$(find "${extract_dir}" -mindepth 1 -maxdepth 4 -type f -path '*/deploy/stack/install.sh' | head -n 1)"
+  [[ -n "${nested_install}" ]] || fail "bootstrap 解压后未找到 deploy/stack/install.sh"
+  cd "$(dirname "${nested_install}")/../.." >/dev/null 2>&1 && pwd -P
+}
+
+bootstrap_stack_source() {
+  require_cmd tar
+
+  local bootstrap_dir archive_file extract_dir url
+  local -a archive_urls=()
+  bootstrap_dir="$(mktemp -d)"
+  ROOT_INSTALL_CLEANUP_DIR="${bootstrap_dir}"
+  archive_file="${bootstrap_dir}/fluxdigest-source.tar.gz"
+  extract_dir="${bootstrap_dir}/source"
+
+  mapfile -t archive_urls < <(bootstrap_archive_url_stream)
+  for url in "${archive_urls[@]}"; do
+    [[ -n "${url}" ]] || continue
+    if download_bootstrap_archive "${url}" "${archive_file}"; then
+      ROOT_DIR="$(extract_bootstrap_source_root "${archive_file}" "${extract_dir}")"
+      STACK_INSTALL_BIN="${ROOT_DIR}/deploy/stack/install.sh"
+      require_file_readable "${STACK_INSTALL_BIN}"
+      return 0
+    fi
+  done
+
+  fail "未找到文件: ${STACK_INSTALL_BIN}"
+}
+
+ensure_stack_install_bin_ready() {
+  if [[ -f "${STACK_INSTALL_BIN}" && -r "${STACK_INSTALL_BIN}" ]]; then
+    return 0
+  fi
+
+  if [[ "${STACK_INSTALL_BIN_EXPLICIT}" -eq 1 ]]; then
+    require_file_readable "${STACK_INSTALL_BIN}"
+    return 0
+  fi
+
+  bootstrap_stack_source
 }
 
 ensure_whiptail() {
@@ -324,9 +415,8 @@ main() {
     return 0
   fi
 
-  require_cmd git
   require_cmd curl
-  require_file_readable "${STACK_INSTALL_BIN}"
+  ensure_stack_install_bin_ready
 
   if [[ "${ROOT_NON_INTERACTIVE}" -eq 1 ]]; then
     run_non_interactive
@@ -339,4 +429,3 @@ main() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   main "$@"
 fi
-
