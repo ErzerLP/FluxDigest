@@ -2,7 +2,12 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_SCRIPT_SOURCE="${BASH_SOURCE[0]-}"
+if [[ -n "${ROOT_SCRIPT_SOURCE}" && "${ROOT_SCRIPT_SOURCE}" == */* ]]; then
+  ROOT_DIR="$(cd "$(dirname "${ROOT_SCRIPT_SOURCE}")" && pwd)"
+else
+  ROOT_DIR="$(pwd -P)"
+fi
 DEFAULT_STACK_INSTALL_BIN="${ROOT_DIR}/deploy/stack/install.sh"
 STACK_INSTALL_BIN="${FLUXDIGEST_STACK_INSTALL_BIN:-${DEFAULT_STACK_INSTALL_BIN}}"
 STACK_INSTALL_BIN_EXPLICIT=0
@@ -426,6 +431,6 @@ main() {
   run_interactive
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ -z "${ROOT_SCRIPT_SOURCE}" || "${ROOT_SCRIPT_SOURCE}" == "$0" ]]; then
   main "$@"
 fi
