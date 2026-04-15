@@ -695,31 +695,44 @@ write_install_summary() {
   generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   display_host="$(current_public_host)"
 
-  {
-    printf 'Stack Action: %s\n' "${STACK_ACTION}"
-    printf 'Install Profile: %s\n' "${STACK_PROFILE}"
-    printf 'Stack Directory: %s\n' "${STACK_DIR}"
-    printf 'Generated At: %s\n\n' "${generated_at}"
+  render_summary_report 1 "${generated_at}" "${summary_path}" > "${summary_path}"
 
-    printf 'Release\n'
-    printf -- '- Current Release: %s\n' "${FLUXDIGEST_RELEASE_ID:-unknown}"
-    printf -- '- API Image: %s\n' "${FLUXDIGEST_API_IMAGE:-unknown}"
-    printf -- '- Worker Image: %s\n' "${FLUXDIGEST_WORKER_IMAGE:-unknown}"
-    printf -- '- Scheduler Image: %s\n\n' "${FLUXDIGEST_SCHEDULER_IMAGE:-unknown}"
+  chmod 600 "${summary_path}" || true
+  log_info "Install summary written to ${summary_path}"
+}
 
-    printf 'Service URLs\n'
-    printf -- '- FluxDigest WebUI / API: http://%s:%s\n' "${display_host}" "${FLUXDIGEST_HTTP_PORT}"
-    if profile_has_service "${STACK_PROFILE}" "miniflux"; then
-      printf -- '- Miniflux: http://%s:%s\n' "${display_host}" "${MINIFLUX_HTTP_PORT}"
-    else
-      printf -- '- Miniflux: Not installed in this profile\n'
-    fi
-    if profile_has_service "${STACK_PROFILE}" "halo"; then
-      printf -- '- Halo: http://%s:%s\n' "${display_host}" "${HALO_HTTP_PORT}"
-    else
-      printf -- '- Halo: Not installed in this profile\n'
-    fi
+render_summary_report() {
+  local include_secrets="${1:-1}"
+  local generated_at="${2:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}"
+  local summary_path="${3:-${STACK_DIR}/install-summary.txt}"
+  local display_host
+  display_host="$(current_public_host)"
 
+  printf 'Stack Action: %s\n' "${STACK_ACTION}"
+  printf 'Install Profile: %s\n' "${STACK_PROFILE}"
+  printf 'Stack Directory: %s\n' "${STACK_DIR}"
+  printf 'Generated At: %s\n\n' "${generated_at}"
+
+  printf 'Release\n'
+  printf -- '- Current Release: %s\n' "${FLUXDIGEST_RELEASE_ID:-unknown}"
+  printf -- '- API Image: %s\n' "${FLUXDIGEST_API_IMAGE:-unknown}"
+  printf -- '- Worker Image: %s\n' "${FLUXDIGEST_WORKER_IMAGE:-unknown}"
+  printf -- '- Scheduler Image: %s\n\n' "${FLUXDIGEST_SCHEDULER_IMAGE:-unknown}"
+
+  printf 'Service URLs\n'
+  printf -- '- FluxDigest WebUI / API: http://%s:%s\n' "${display_host}" "${FLUXDIGEST_HTTP_PORT}"
+  if profile_has_service "${STACK_PROFILE}" "miniflux"; then
+    printf -- '- Miniflux: http://%s:%s\n' "${display_host}" "${MINIFLUX_HTTP_PORT}"
+  else
+    printf -- '- Miniflux: Not installed in this profile\n'
+  fi
+  if profile_has_service "${STACK_PROFILE}" "halo"; then
+    printf -- '- Halo: http://%s:%s\n' "${display_host}" "${HALO_HTTP_PORT}"
+  else
+    printf -- '- Halo: Not installed in this profile\n'
+  fi
+
+  if [[ "${include_secrets}" -eq 1 ]]; then
     printf '\nFluxDigest Admin\n'
     printf -- '- Username: %s\n' "${APP_ADMIN_BOOTSTRAP_USERNAME}"
     printf -- '- Password: %s\n' "${APP_ADMIN_BOOTSTRAP_PASSWORD}"
@@ -740,43 +753,50 @@ write_install_summary() {
     else
       printf -- '- Not installed in this profile\n'
     fi
+  else
+    printf '\nCredentials\n'
+    printf -- '- Sensitive credentials are stored in: %s\n' "${summary_path}"
+    printf -- '- If this file is root-only, use: sudo cat %s\n' "${summary_path}"
+  fi
 
-    printf '\nPostgreSQL\n'
-    printf -- '- Host: %s\n' "${display_host}"
-    printf -- '- Port: %s\n' "${POSTGRES_HOST_PORT}"
+  printf '\nPostgreSQL\n'
+  printf -- '- Host: %s\n' "${display_host}"
+  printf -- '- Port: %s\n' "${POSTGRES_HOST_PORT}"
+  if [[ "${include_secrets}" -eq 1 ]]; then
     printf -- '- FluxDigest DB: %s / %s / %s\n' "${FLUXDIGEST_DB_NAME}" "${FLUXDIGEST_DB_USER}" "${FLUXDIGEST_DB_PASSWORD}"
     printf -- '- Miniflux DB: %s / %s / %s\n' "${MINIFLUX_DB_NAME}" "${MINIFLUX_DB_USER}" "${MINIFLUX_DB_PASSWORD}"
     printf -- '- Halo DB: %s / %s / %s\n' "${HALO_DB_NAME}" "${HALO_DB_USER}" "${HALO_DB_PASSWORD}"
+  else
+    printf -- '- FluxDigest DB: %s / %s / <redacted>\n' "${FLUXDIGEST_DB_NAME}" "${FLUXDIGEST_DB_USER}"
+    printf -- '- Miniflux DB: %s / %s / <redacted>\n' "${MINIFLUX_DB_NAME}" "${MINIFLUX_DB_USER}"
+    printf -- '- Halo DB: %s / %s / <redacted>\n' "${HALO_DB_NAME}" "${HALO_DB_USER}"
+  fi
 
-    printf '\nRedis\n'
-    printf -- '- Host: %s\n' "${display_host}"
-    printf -- '- Port: %s\n' "${REDIS_HOST_PORT}"
+  printf '\nRedis\n'
+  printf -- '- Host: %s\n' "${display_host}"
+  printf -- '- Port: %s\n' "${REDIS_HOST_PORT}"
 
-    printf '\nImages\n'
-    printf -- '- PostgreSQL: %s\n' "${POSTGRES_IMAGE}"
-    printf -- '- Redis: %s\n' "${REDIS_IMAGE}"
-    printf -- '- Miniflux: %s\n' "$(if profile_has_service "${STACK_PROFILE}" "miniflux"; then printf '%s' "${MINIFLUX_IMAGE}"; else printf 'Not installed in this profile'; fi)"
-    printf -- '- Halo: %s\n' "$(if profile_has_service "${STACK_PROFILE}" "halo"; then printf '%s' "${HALO_IMAGE}"; else printf 'Not installed in this profile'; fi)"
+  printf '\nImages\n'
+  printf -- '- PostgreSQL: %s\n' "${POSTGRES_IMAGE}"
+  printf -- '- Redis: %s\n' "${REDIS_IMAGE}"
+  printf -- '- Miniflux: %s\n' "$(if profile_has_service "${STACK_PROFILE}" "miniflux"; then printf '%s' "${MINIFLUX_IMAGE}"; else printf 'Not installed in this profile'; fi)"
+  printf -- '- Halo: %s\n' "$(if profile_has_service "${STACK_PROFILE}" "halo"; then printf '%s' "${HALO_IMAGE}"; else printf 'Not installed in this profile'; fi)"
 
-    printf '\nImportant Files\n'
-    printf -- '- .env: %s\n' "${STACK_DIR}/.env"
-    printf -- '- docker-compose.yml: %s\n' "${STACK_DIR}/docker-compose.yml"
-    printf -- '- install-summary.txt: %s\n' "${summary_path}"
-    printf -- '- releases/: %s\n' "${STACK_RELEASES_DIR}"
+  printf '\nImportant Files\n'
+  printf -- '- .env: %s\n' "${STACK_DIR}/.env"
+  printf -- '- docker-compose.yml: %s\n' "${STACK_DIR}/docker-compose.yml"
+  printf -- '- install-summary.txt: %s\n' "${summary_path}"
+  printf -- '- releases/: %s\n' "${STACK_RELEASES_DIR}"
 
-    printf '\nNext Steps\n'
-    printf -- '- 1) 登录 FluxDigest WebUI\n'
-    printf -- '- 2) 在 WebUI 中配置 LLM（Base URL / API Key / Model）\n'
-    printf -- '- 3) 如包含 Miniflux / Halo，可分别登录后台确认状态\n'
+  printf '\nNext Steps\n'
+  printf -- '- 1) 登录 FluxDigest WebUI\n'
+  printf -- '- 2) 在 WebUI 中配置 LLM（Base URL / API Key / Model）\n'
+  printf -- '- 3) 如包含 Miniflux / Halo，可分别登录后台确认状态\n'
 
-    printf '\nOps Commands\n'
-    printf -- '- cd %s && docker compose --env-file .env -f docker-compose.yml ps\n' "${STACK_DIR}"
-    printf -- '- cd %s && docker compose --env-file .env -f docker-compose.yml logs -f fluxdigest-api\n' "${STACK_DIR}"
-    printf -- '- cd %s && docker compose --env-file .env -f docker-compose.yml restart\n' "${STACK_DIR}"
-  } > "${summary_path}"
-
-  chmod 600 "${summary_path}" || true
-  log_info "Install summary written to ${summary_path}"
+  printf '\nOps Commands\n'
+  printf -- '- cd %s && docker compose --env-file .env -f docker-compose.yml ps\n' "${STACK_DIR}"
+  printf -- '- cd %s && docker compose --env-file .env -f docker-compose.yml logs -f fluxdigest-api\n' "${STACK_DIR}"
+  printf -- '- cd %s && docker compose --env-file .env -f docker-compose.yml restart\n' "${STACK_DIR}"
 }
 
 print_install_summary_hint() {
@@ -819,10 +839,17 @@ run_rollback_action() {
 
 run_status_action() {
   load_existing_env_values
-  if [[ ! -f "${STACK_DIR}/install-summary.txt" ]]; then
-    write_install_summary
+  local summary_path="${STACK_DIR}/install-summary.txt"
+  if [[ -f "${summary_path}" ]]; then
+    if cat "${summary_path}" 2>/dev/null; then
+      return 0
+    fi
+    log_warn "install-summary.txt 不可读，输出脱敏状态摘要"
+  else
+    log_warn "install-summary.txt 不存在，输出即时状态摘要"
   fi
-  cat "${STACK_DIR}/install-summary.txt"
+
+  render_summary_report 0
 }
 
 main() {

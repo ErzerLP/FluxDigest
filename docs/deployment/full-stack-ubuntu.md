@@ -71,6 +71,18 @@ bash install.sh
 - `.env`、`docker-compose.yml`、`install-summary.txt` 路径
 - 当前 release 信息
 
+`install-summary.txt` 默认保留敏感权限。如果你只是想看当前 release / 访问地址 / 镜像状态，可直接执行：
+
+```bash
+bash install.sh --action status --stack-dir /opt/fluxdigest-stack
+```
+
+如果需要查看完整账号密码，再使用：
+
+```bash
+sudo cat /opt/fluxdigest-stack/install-summary.txt
+```
+
 安装目录中还会生成：
 
 ```text

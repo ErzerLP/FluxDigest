@@ -28,7 +28,7 @@ bash install.sh --action status --stack-dir /opt/fluxdigest-stack
 - `install`：安装或重装指定 profile
 - `upgrade`：在保留现有数据和主要配置的前提下升级当前部署
 - `rollback`：回滚到指定 release
-- `status`：读取并显示当前部署摘要
+- `status`：显示当前部署状态；如果敏感摘要文件不可读，会自动回退为脱敏输出
 
 ## 支持的 profile
 
@@ -63,6 +63,8 @@ bash install.sh --action status --stack-dir /opt/fluxdigest-stack
 - 默认账号密码
 - 数据库连接信息
 - 当前 release 与镜像 tag
+
+> `install-summary.txt` 默认按敏感信息文件处理。普通用户执行 `bash install.sh --action status ...` 时，如果没有读取该文件的权限，安装器会自动输出脱敏状态摘要；需要查看完整账号密码时，再使用 `sudo cat /opt/fluxdigest-stack/install-summary.txt`。
 
 ## 推荐使用方式
 
