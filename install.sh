@@ -51,9 +51,10 @@ require_cmd() {
   fi
 }
 
-require_file_exec() {
+require_file_readable() {
   local path="${1:?}"
-  [[ -x "${path}" ]] || fail "未找到可执行文件: ${path}"
+  [[ -f "${path}" ]] || fail "未找到文件: ${path}"
+  [[ -r "${path}" ]] || fail "文件不可读: ${path}"
 }
 
 ensure_whiptail() {
@@ -187,7 +188,7 @@ run_stack_action() {
     args+=(--force)
   fi
 
-  "${STACK_INSTALL_BIN}" "${args[@]}"
+  bash "${STACK_INSTALL_BIN}" "${args[@]}"
 }
 
 main_menu() {
@@ -325,7 +326,7 @@ main() {
 
   require_cmd git
   require_cmd curl
-  require_file_exec "${STACK_INSTALL_BIN}"
+  require_file_readable "${STACK_INSTALL_BIN}"
 
   if [[ "${ROOT_NON_INTERACTIVE}" -eq 1 ]]; then
     run_non_interactive
