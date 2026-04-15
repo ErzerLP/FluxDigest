@@ -85,6 +85,12 @@ cd FluxDigest
 bash install.sh
 ```
 
+如果你的机器需要先执行 `fuck` 开代理，而且 `github.com` 直连仍然会握手失败，可以改用下面这条：
+
+```bash
+bash -ic 'fuck; NO_PROXY=ghproxy.vip no_proxy=ghproxy.vip git -c http.proxy= -c https.proxy= clone "https://ghproxy.vip/https://github.com/ErzerLP/FluxDigest.git" && cd FluxDigest && bash install.sh'
+```
+
 脚本启动后会进入交互菜单，你可以用：
 
 - **方向键上下选择**
