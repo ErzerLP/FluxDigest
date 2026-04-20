@@ -46,6 +46,45 @@ paths:
                       $ref: '#/components/schemas/Article'
         '503':
           description: Article reader is not configured
+  /api/v1/dossiers:
+    get:
+      summary: List active dossiers
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Dossier list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DossierListResponse'
+        '400':
+          description: Invalid limit
+        '503':
+          description: Dossier reader is not configured
+  /api/v1/dossiers/{id}:
+    get:
+      summary: Get dossier detail
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dossier detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DossierDetail'
+        '503':
+          description: Dossier reader is not configured
   /api/v1/digests/latest:
     get:
       summary: Get latest digest
@@ -76,6 +115,162 @@ paths:
                 $ref: '#/components/schemas/Profile'
         '503':
           description: Profile reader is not configured
+  /api/v1/admin/status:
+    get:
+      summary: Get admin dashboard status
+      responses:
+        '200':
+          description: Admin dashboard status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStatus'
+        '503':
+          description: Admin status reader is not configured
+  /api/v1/admin/configs:
+    get:
+      summary: Get admin configuration snapshot
+      responses:
+        '200':
+          description: Admin configuration snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminConfigSnapshot'
+        '503':
+          description: Admin config reader is not configured
+  /api/v1/admin/configs/llm:
+    put:
+      summary: Update LLM admin config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLLMConfigInput'
+      responses:
+        '200':
+          description: Created active profile version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Update failed
+        '503':
+          description: Admin config updater is not configured
+  /api/v1/admin/configs/miniflux:
+    put:
+      summary: Update Miniflux admin config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMinifluxConfigInput'
+      responses:
+        '200':
+          description: Created active profile version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Update failed
+        '503':
+          description: Admin config updater is not configured
+  /api/v1/admin/configs/publish:
+    put:
+      summary: Update publish admin config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePublishConfigInput'
+      responses:
+        '200':
+          description: Created active profile version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Update failed
+        '503':
+          description: Admin config updater is not configured
+  /api/v1/admin/configs/prompts:
+    put:
+      summary: Update prompts admin config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePromptConfigInput'
+      responses:
+        '200':
+          description: Created active profile version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Update failed
+        '503':
+          description: Admin config updater is not configured
+  /api/v1/admin/test/llm:
+    post:
+      summary: Test LLM connectivity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMTestDraft'
+      responses:
+        '200':
+          description: Connectivity test succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectivityTestResult'
+        '400':
+          description: Invalid request body
+        '500':
+          description: Connectivity test failed
+        '503':
+          description: Admin llm tester is not configured
+  /api/v1/admin/jobs:
+    get:
+      summary: List recent admin job runs
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Recent job runs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobRunListResponse'
+        '400':
+          description: Invalid limit
+        '500':
+          description: Query failed
+        '503':
+          description: Admin job reader is not configured
   /api/v1/jobs/daily-digest:
     post:
       summary: Trigger daily digest job
@@ -176,6 +371,148 @@ components:
           type: string
         publish_error:
           type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DigestItem'
+    DigestItem:
+      type: object
+      properties:
+        dossier_id:
+          type: string
+        section_name:
+          type: string
+        importance_bucket:
+          type: string
+        position:
+          type: integer
+        is_featured:
+          type: boolean
+    DossierListItem:
+      type: object
+      properties:
+        id:
+          type: string
+        article_id:
+          type: string
+        digest_date:
+          type: string
+          format: date
+        title_translated:
+          type: string
+        core_summary:
+          type: string
+        topic_category:
+          type: string
+        importance_score:
+          type: number
+          format: float
+        priority_level:
+          type: string
+        publish_suggestion:
+          type: string
+          enum: [suggested, draft]
+          description: Normalized editorial suggestion enum; positive natural-language or boolean hints normalize to suggested, while negative or unknown values normalize to draft.
+        publish_state:
+          type: string
+          enum: [draft, publishing, published, failed]
+          description: Runtime publish lifecycle state; legacy dirty values are normalized to draft.
+        created_at:
+          type: string
+          format: date-time
+    DossierListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DossierListItem'
+    DossierDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        article_id:
+          type: string
+        processing_id:
+          type: string
+        digest_date:
+          type: string
+          format: date
+        version:
+          type: integer
+        is_active:
+          type: boolean
+        title_translated:
+          type: string
+        summary_polished:
+          type: string
+        core_summary:
+          type: string
+        key_points:
+          type: array
+          items:
+            type: string
+        topic_category:
+          type: string
+        importance_score:
+          type: number
+          format: float
+        recommendation_reason:
+          type: string
+        reading_value:
+          type: string
+        priority_level:
+          type: string
+        content_polished_markdown:
+          type: string
+        analysis_longform_markdown:
+          type: string
+        background_context:
+          type: string
+        impact_analysis:
+          type: string
+        debate_points:
+          type: array
+          items:
+            type: string
+        target_audience:
+          type: string
+        publish_suggestion:
+          type: string
+          enum: [suggested, draft]
+          description: Normalized editorial suggestion enum; positive natural-language or boolean hints normalize to suggested, while negative or unknown values normalize to draft.
+        suggestion_reason:
+          type: string
+          description: If publish_suggestion originally came from a natural-language sentence and this field was empty, the original text is preserved here.
+        suggested_channels:
+          type: array
+          items:
+            type: string
+        suggested_tags:
+          type: array
+          items:
+            type: string
+        suggested_categories:
+          type: array
+          items:
+            type: string
+        publish_state:
+          type: string
+          enum: [draft, publishing, published, failed]
+          description: Runtime publish lifecycle state; legacy dirty values are normalized to draft.
+        publish_channel:
+          type: string
+        remote_url:
+          type: string
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     Profile:
       type: object
       properties:
@@ -190,6 +527,234 @@ components:
         payload:
           type: object
           additionalProperties: true
+    ProfileVersion:
+      type: object
+      properties:
+        id:
+          type: string
+        profile_type:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+        is_active:
+          type: boolean
+    SecretView:
+      type: object
+      properties:
+        is_set:
+          type: boolean
+        masked_value:
+          type: string
+    LLMConfigView:
+      type: object
+      properties:
+        base_url:
+          type: string
+        model:
+          type: string
+        timeout_ms:
+          type: integer
+        api_key:
+          $ref: '#/components/schemas/SecretView'
+    MinifluxConfigView:
+      type: object
+      properties:
+        base_url:
+          type: string
+        fetch_limit:
+          type: integer
+        lookback_hours:
+          type: integer
+        api_token:
+          $ref: '#/components/schemas/SecretView'
+    PublishConfigView:
+      type: object
+      properties:
+        provider:
+          type: string
+        halo_base_url:
+          type: string
+        halo_token:
+          $ref: '#/components/schemas/SecretView'
+        output_dir:
+          type: string
+    PromptConfigView:
+      type: object
+      properties:
+        target_language:
+          type: string
+        translation_prompt:
+          type: string
+        analysis_prompt:
+          type: string
+        dossier_prompt:
+          type: string
+        digest_prompt:
+          type: string
+    AdminConfigSnapshot:
+      type: object
+      properties:
+        llm:
+          $ref: '#/components/schemas/LLMConfigView'
+        miniflux:
+          $ref: '#/components/schemas/MinifluxConfigView'
+        publish:
+          $ref: '#/components/schemas/PublishConfigView'
+        prompts:
+          $ref: '#/components/schemas/PromptConfigView'
+    IntegrationState:
+      type: object
+      properties:
+        configured:
+          type: boolean
+        last_test_status:
+          type: string
+        last_test_at:
+          type: string
+          format: date-time
+    AdminStatus:
+      type: object
+      properties:
+        system:
+          type: object
+          properties:
+            api:
+              type: string
+            db:
+              type: string
+            redis:
+              type: string
+        integrations:
+          type: object
+          properties:
+            llm:
+              $ref: '#/components/schemas/IntegrationState'
+            miniflux:
+              $ref: '#/components/schemas/IntegrationState'
+            publisher:
+              $ref: '#/components/schemas/IntegrationState'
+        runtime:
+          type: object
+          properties:
+            latest_digest_date:
+              type: string
+              format: date
+            latest_digest_status:
+              type: string
+            latest_job_status:
+              type: string
+    SecretInput:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [keep, replace, clear]
+        value:
+          type: string
+    UpdateLLMConfigInput:
+      type: object
+      properties:
+        base_url:
+          type: string
+        model:
+          type: string
+        timeout_ms:
+          type: integer
+        api_key:
+          $ref: '#/components/schemas/SecretInput'
+    UpdateMinifluxConfigInput:
+      type: object
+      properties:
+        base_url:
+          type: string
+        fetch_limit:
+          type: integer
+        lookback_hours:
+          type: integer
+        api_token:
+          $ref: '#/components/schemas/SecretInput'
+    UpdatePublishConfigInput:
+      type: object
+      properties:
+        provider:
+          type: string
+        halo_base_url:
+          type: string
+        halo_token:
+          $ref: '#/components/schemas/SecretInput'
+        output_dir:
+          type: string
+    UpdatePromptConfigInput:
+      type: object
+      properties:
+        target_language:
+          type: string
+        translation_prompt:
+          type: string
+        analysis_prompt:
+          type: string
+        dossier_prompt:
+          type: string
+        digest_prompt:
+          type: string
+    LLMTestDraft:
+      type: object
+      properties:
+        base_url:
+          type: string
+        model:
+          type: string
+        api_key:
+          type: string
+        timeout_ms:
+          type: integer
+    ConnectivityTestResult:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        latency_ms:
+          type: integer
+          format: int64
+    JobRunRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        job_type:
+          type: string
+        trigger_source:
+          type: string
+        status:
+          type: string
+        digest_date:
+          type: string
+          format: date
+        detail:
+          type: object
+          additionalProperties: true
+        error_message:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+    JobRunListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobRunRecord'
     JobTriggerResponse:
       type: object
       properties:

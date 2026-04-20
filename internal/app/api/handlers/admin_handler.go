@@ -1,0 +1,366 @@
+package handlers
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"rss-platform/internal/domain/profile"
+	"rss-platform/internal/service"
+)
+
+var errAdminStatusReaderRequired = errors.New("admin status reader is not configured")
+var errAdminConfigReaderRequired = errors.New("admin config reader is not configured")
+var errAdminConfigUpdaterRequired = errors.New("admin config updater is not configured")
+var errAdminConnectivityTesterRequired = errors.New("admin connectivity tester is not configured")
+var errAdminJobReaderRequired = errors.New("admin job reader is not configured")
+var errAdminJobTriggerRequired = errors.New("admin job trigger is not configured")
+
+// AdminStatusReader 定义 dashboard 状态读取能力。
+type AdminStatusReader interface {
+	GetStatus(ctx context.Context) (service.AdminStatusView, error)
+}
+
+// AdminConfigReader 定义管理员配置读取能力。
+type AdminConfigReader interface {
+	GetSnapshot(ctx context.Context) (service.AdminConfigSnapshot, error)
+}
+
+// AdminConfigUpdater 定义管理员配置更新能力。
+type AdminConfigUpdater interface {
+	UpdateLLM(ctx context.Context, input service.UpdateLLMConfigInput) (profile.Version, error)
+	UpdateMiniflux(ctx context.Context, input service.UpdateMinifluxConfigInput) (profile.Version, error)
+	UpdatePublish(ctx context.Context, input service.UpdatePublishConfigInput) (profile.Version, error)
+	UpdateScheduler(ctx context.Context, input service.UpdateSchedulerConfigInput) (profile.Version, error)
+	UpdatePrompts(ctx context.Context, input service.UpdatePromptConfigInput) (profile.Version, error)
+}
+
+// AdminConnectivityTester 定义管理员连通性测试能力。
+type AdminConnectivityTester interface {
+	TestLLM(ctx context.Context, draft service.LLMTestDraft) (service.ConnectivityTestResult, error)
+	TestMiniflux(ctx context.Context) (service.ConnectivityTestResult, error)
+	TestPublish(ctx context.Context) (service.ConnectivityTestResult, error)
+}
+
+// AdminJobReader 定义管理员作业列表读取能力。
+type AdminJobReader interface {
+	ListLatest(ctx context.Context, filter service.JobRunListFilter) ([]service.JobRunRecord, error)
+}
+
+// AdminDeps 定义 admin handler 依赖。
+type AdminDeps struct {
+	Status        AdminStatusReader
+	Configs       AdminConfigReader
+	ConfigUpdater AdminConfigUpdater
+	Tester        AdminConnectivityTester
+	Jobs          AdminJobReader
+	JobTrigger    JobTrigger
+}
+
+type profileVersionResponse struct {
+	ID          string `json:"id"`
+	ProfileType string `json:"profile_type"`
+	Name        string `json:"name"`
+	Version     int    `json:"version"`
+	IsActive    bool   `json:"is_active"`
+}
+
+// RegisterAdminRoutes 注册管理后台接口。
+func RegisterAdminRoutes(group *gin.RouterGroup, deps AdminDeps) {
+	admin := adminRouteGroup(group)
+	admin.GET("/status", func(c *gin.Context) {
+		if deps.Status == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminStatusReaderRequired.Error()})
+			return
+		}
+
+		status, err := deps.Status.GetStatus(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, status)
+	})
+
+	admin.GET("/configs", func(c *gin.Context) {
+		if deps.Configs == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigReaderRequired.Error()})
+			return
+		}
+
+		snapshot, err := deps.Configs.GetSnapshot(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, snapshot)
+	})
+
+	admin.PUT("/configs/llm", func(c *gin.Context) {
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
+			return
+		}
+
+		var req service.UpdateLLMConfigInput
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		version, err := deps.ConfigUpdater.UpdateLLM(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
+	})
+
+	admin.PUT("/configs/miniflux", func(c *gin.Context) {
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
+			return
+		}
+
+		var req service.UpdateMinifluxConfigInput
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		version, err := deps.ConfigUpdater.UpdateMiniflux(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
+	})
+
+	admin.PUT("/configs/publish", func(c *gin.Context) {
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
+			return
+		}
+
+		var req service.UpdatePublishConfigInput
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		version, err := deps.ConfigUpdater.UpdatePublish(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
+	})
+
+	admin.PUT("/configs/scheduler", func(c *gin.Context) {
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
+			return
+		}
+
+		var req service.UpdateSchedulerConfigInput
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		version, err := deps.ConfigUpdater.UpdateScheduler(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
+	})
+
+	admin.PUT("/configs/prompts", func(c *gin.Context) {
+		if deps.ConfigUpdater == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConfigUpdaterRequired.Error()})
+			return
+		}
+
+		var req service.UpdatePromptConfigInput
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		version, err := deps.ConfigUpdater.UpdatePrompts(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, toProfileVersionResponse(version))
+	})
+
+	admin.POST("/test/llm", func(c *gin.Context) {
+		if deps.Tester == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConnectivityTesterRequired.Error()})
+			return
+		}
+
+		var req service.LLMTestDraft
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		result, err := deps.Tester.TestLLM(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
+			return
+		}
+
+		c.JSON(http.StatusOK, result)
+	})
+
+	admin.POST("/test/miniflux", func(c *gin.Context) {
+		if deps.Tester == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConnectivityTesterRequired.Error()})
+			return
+		}
+
+		result, err := deps.Tester.TestMiniflux(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
+			return
+		}
+
+		c.JSON(http.StatusOK, result)
+	})
+
+	admin.POST("/test/publish", func(c *gin.Context) {
+		if deps.Tester == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminConnectivityTesterRequired.Error()})
+			return
+		}
+
+		result, err := deps.Tester.TestPublish(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
+			return
+		}
+
+		c.JSON(http.StatusOK, result)
+	})
+
+	admin.GET("/jobs", func(c *gin.Context) {
+		if deps.Jobs == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminJobReaderRequired.Error()})
+			return
+		}
+
+		limit := 20
+		if value := c.Query("limit"); value != "" {
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+				return
+			}
+			if parsed <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+				return
+			}
+			limit = parsed
+		}
+
+		runs, err := deps.Jobs.ListLatest(c.Request.Context(), service.JobRunListFilter{Limit: limit})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"items": runs})
+	})
+
+	admin.POST("/jobs/daily-digest/run", func(c *gin.Context) {
+		if deps.JobTrigger == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": errAdminJobTriggerRequired.Error()})
+			return
+		}
+
+		req := triggerDailyDigestRequest{}
+		if c.Request.ContentLength > 0 {
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
+
+		triggerAt := time.Now()
+		if req.TriggerAt != "" {
+			parsed, err := time.Parse(time.RFC3339, req.TriggerAt)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid trigger_at"})
+				return
+			}
+			triggerAt = parsed
+		}
+
+		var (
+			result service.JobTriggerResult
+			err    error
+		)
+		if req.Force {
+			forceTrigger, ok := deps.JobTrigger.(DailyDigestForceTrigger)
+			if !ok {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": errJobForceTriggerUnsupported.Error()})
+				return
+			}
+			result, err = forceTrigger.TriggerDailyDigestWithOptions(c.Request.Context(), triggerAt, service.DailyDigestTriggerOptions{Force: true})
+		} else {
+			result, err = deps.JobTrigger.TriggerDailyDigest(c.Request.Context(), triggerAt)
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if result.Status == "" {
+			result.Status = "accepted"
+		}
+
+		statusCode := http.StatusAccepted
+		if result.Status == "skipped" {
+			statusCode = http.StatusOK
+		}
+
+		c.JSON(statusCode, gin.H{
+			"digest_date": result.DigestDate,
+			"status":      result.Status,
+			"trigger_at":  triggerAt.Format(time.RFC3339),
+			"force":       req.Force,
+		})
+	})
+}
+
+func adminRouteGroup(group *gin.RouterGroup) *gin.RouterGroup {
+	if strings.HasSuffix(group.BasePath(), "/admin") {
+		return group
+	}
+	return group.Group("/admin")
+}
+
+func toProfileVersionResponse(version profile.Version) profileVersionResponse {
+	return profileVersionResponse{
+		ID:          version.ID,
+		ProfileType: version.ProfileType,
+		Name:        version.Name,
+		Version:     version.Version,
+		IsActive:    version.IsActive,
+	}
+}

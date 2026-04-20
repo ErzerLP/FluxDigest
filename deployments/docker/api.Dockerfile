@@ -1,5 +1,19 @@
+FROM node:22-alpine AS web-builder
+WORKDIR /src/web
+
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web .
+RUN npm run build
+
 FROM golang:1.24 AS builder
 WORKDIR /src
+
+ARG GOPROXY=https://goproxy.cn,direct
+ARG GOSUMDB=sum.golang.google.cn
+ENV GOPROXY=${GOPROXY}
+ENV GOSUMDB=${GOSUMDB}
 
 COPY go.mod go.sum ./
 RUN go mod download
@@ -12,5 +26,7 @@ WORKDIR /app
 COPY --from=builder /out/rss-api /app/rss-api
 COPY --from=builder /src/configs /app/configs
 COPY --from=builder /src/migrations /app/migrations
+COPY --from=web-builder /src/web/dist /app/web/dist
+ENV APP_STATIC_DIR=/app/web/dist
 EXPOSE 8080
 ENTRYPOINT ["/app/rss-api"]

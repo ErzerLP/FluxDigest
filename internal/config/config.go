@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -31,16 +32,26 @@ type Config struct {
 		AuthToken string `yaml:"auth_token"`
 	} `yaml:"miniflux"`
 	LLM struct {
-		BaseURL string `yaml:"base_url"`
-		APIKey  string `yaml:"api_key"`
-		Model   string `yaml:"model"`
+		BaseURL        string   `yaml:"base_url"`
+		APIKey         string   `yaml:"api_key"`
+		Model          string   `yaml:"model"`
+		FallbackModels []string `yaml:"fallback_models"`
+		TimeoutMS      int      `yaml:"timeout_ms"`
 	} `yaml:"llm"`
 	Publish struct {
-		HoloEndpoint string `yaml:"holo_endpoint"`
-		HoloToken    string `yaml:"holo_token"`
-		Channel      string `yaml:"channel"`
-		OutputDir    string `yaml:"output_dir"`
+		HaloBaseURL string `yaml:"halo_base_url"`
+		HaloToken   string `yaml:"halo_token"`
+		Channel     string `yaml:"channel"`
+		OutputDir   string `yaml:"output_dir"`
 	} `yaml:"publish"`
+	Admin struct {
+		SessionSecret     string `yaml:"session_secret"`
+		BootstrapUsername string `yaml:"bootstrap_username"`
+		BootstrapPassword string `yaml:"bootstrap_password"`
+	} `yaml:"admin"`
+	Security struct {
+		SecretKey string `yaml:"secret_key"`
+	} `yaml:"security"`
 }
 
 // Load 加载 YAML 与环境变量，并应用最小默认值。
@@ -49,6 +60,9 @@ func Load() (*Config, error) {
 	cfg.HTTP.Port = 8080
 	cfg.Job.Queue = "default"
 	cfg.Worker.Concurrency = 10
+	cfg.LLM.Model = "MiniMax-M2.7"
+	cfg.LLM.FallbackModels = []string{"mimo-v2-pro"}
+	cfg.LLM.TimeoutMS = 30000
 
 	if err := loadFromYAML(cfg); err != nil {
 		return nil, err
@@ -107,17 +121,35 @@ func loadFromYAML(cfg *Config) error {
 	if fromFile.LLM.Model != "" {
 		cfg.LLM.Model = fromFile.LLM.Model
 	}
-	if fromFile.Publish.HoloEndpoint != "" {
-		cfg.Publish.HoloEndpoint = fromFile.Publish.HoloEndpoint
+	if len(fromFile.LLM.FallbackModels) > 0 {
+		cfg.LLM.FallbackModels = copyStringSlice(fromFile.LLM.FallbackModels)
 	}
-	if fromFile.Publish.HoloToken != "" {
-		cfg.Publish.HoloToken = fromFile.Publish.HoloToken
+	if fromFile.LLM.TimeoutMS > 0 {
+		cfg.LLM.TimeoutMS = fromFile.LLM.TimeoutMS
+	}
+	if fromFile.Publish.HaloBaseURL != "" {
+		cfg.Publish.HaloBaseURL = fromFile.Publish.HaloBaseURL
+	}
+	if fromFile.Publish.HaloToken != "" {
+		cfg.Publish.HaloToken = fromFile.Publish.HaloToken
 	}
 	if fromFile.Publish.Channel != "" {
 		cfg.Publish.Channel = fromFile.Publish.Channel
 	}
 	if fromFile.Publish.OutputDir != "" {
 		cfg.Publish.OutputDir = fromFile.Publish.OutputDir
+	}
+	if fromFile.Admin.SessionSecret != "" {
+		cfg.Admin.SessionSecret = fromFile.Admin.SessionSecret
+	}
+	if fromFile.Admin.BootstrapUsername != "" {
+		cfg.Admin.BootstrapUsername = fromFile.Admin.BootstrapUsername
+	}
+	if fromFile.Admin.BootstrapPassword != "" {
+		cfg.Admin.BootstrapPassword = fromFile.Admin.BootstrapPassword
+	}
+	if fromFile.Security.SecretKey != "" {
+		cfg.Security.SecretKey = fromFile.Security.SecretKey
 	}
 
 	return nil
@@ -166,11 +198,21 @@ func applyEnvOverrides(cfg *Config) error {
 	if value := os.Getenv("APP_LLM_MODEL"); value != "" {
 		cfg.LLM.Model = value
 	}
-	if value := os.Getenv("APP_PUBLISH_HOLO_ENDPOINT"); value != "" {
-		cfg.Publish.HoloEndpoint = value
+	if value := os.Getenv("APP_LLM_FALLBACK_MODELS"); value != "" {
+		cfg.LLM.FallbackModels = parseCSVStrings(value)
 	}
-	if value := os.Getenv("APP_PUBLISH_HOLO_TOKEN"); value != "" {
-		cfg.Publish.HoloToken = value
+	if value := os.Getenv("APP_LLM_TIMEOUT_MS"); value != "" {
+		timeoutMS, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		cfg.LLM.TimeoutMS = timeoutMS
+	}
+	if value := os.Getenv("APP_PUBLISH_HALO_BASE_URL"); value != "" {
+		cfg.Publish.HaloBaseURL = value
+	}
+	if value := os.Getenv("APP_PUBLISH_HALO_TOKEN"); value != "" {
+		cfg.Publish.HaloToken = value
 	}
 	if value := os.Getenv("APP_PUBLISH_CHANNEL"); value != "" {
 		cfg.Publish.Channel = value
@@ -178,6 +220,40 @@ func applyEnvOverrides(cfg *Config) error {
 	if value := os.Getenv("APP_PUBLISH_OUTPUT_DIR"); value != "" {
 		cfg.Publish.OutputDir = value
 	}
+	if value := os.Getenv("APP_ADMIN_SESSION_SECRET"); value != "" {
+		cfg.Admin.SessionSecret = value
+	}
+	if value := os.Getenv("APP_ADMIN_BOOTSTRAP_USERNAME"); value != "" {
+		cfg.Admin.BootstrapUsername = value
+	}
+	if value := os.Getenv("APP_ADMIN_BOOTSTRAP_PASSWORD"); value != "" {
+		cfg.Admin.BootstrapPassword = value
+	}
+	if value := os.Getenv("APP_SECRET_KEY"); value != "" {
+		cfg.Security.SecretKey = value
+	}
 
 	return nil
+}
+
+func parseCSVStrings(value string) []string {
+	items := strings.Split(value, ",")
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func copyStringSlice(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
 }

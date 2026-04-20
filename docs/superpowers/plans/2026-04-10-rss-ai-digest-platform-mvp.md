@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Docker Compose deployable MVP that pulls articles from Miniflux every day at 07:00, translates and analyzes them through an OpenAI-compatible model, generates a daily digest, publishes it to Holo, and exposes article-level and digest-level APIs.
+**Goal:** Build a Docker Compose deployable MVP that pulls articles from Miniflux every day at 07:00, translates and analyzes them through an OpenAI-compatible model, generates a daily digest, publishes it to Halo, and exposes article-level and digest-level APIs.
 
 **Architecture:** Use a single Go monorepo with three binaries (`rss-api`, `rss-worker`, `rss-scheduler`). Persist business state in PostgreSQL through GORM, coordinate background jobs with Redis + Asynq, run deterministic article/digest flows with Eino Workflow, and keep digest planning inside a constrained Eino Agent layer.
 
@@ -27,7 +27,7 @@
 - `D:\Works\guaidongxi\RSS\internal\workflow\article_processing_workflow\workflow.go`：单篇文章处理工作流。
 - `D:\Works\guaidongxi\RSS\internal\agent\digest_planning\agent.go`：Digest Planning Agent。
 - `D:\Works\guaidongxi\RSS\internal\workflow\daily_digest_workflow\workflow.go`：日报工作流。
-- `D:\Works\guaidongxi\RSS\internal\adapter\publisher\holo\publisher.go`：Holo 发布器。
+- `D:\Works\guaidongxi\RSS\internal\adapter\publisher\halo\publisher.go`：Halo 发布器。
 - `D:\Works\guaidongxi\RSS\internal\app\api\handlers\*.go`：Articles / Digests / Profiles / Jobs handlers。
 - `D:\Works\guaidongxi\RSS\internal\service\job_service.go`：任务状态与幂等。
 - `D:\Works\guaidongxi\RSS\deployments\compose\docker-compose.yml`：Compose 部署。
@@ -462,8 +462,8 @@ git commit -m "feat: add llm processing and article workflow"
 - Create: `D:\Works\guaidongxi\RSS\internal\workflow\daily_digest_workflow\workflow.go`
 - Create: `D:\Works\guaidongxi\RSS\internal\workflow\daily_digest_workflow\workflow_test.go`
 - Create: `D:\Works\guaidongxi\RSS\internal\adapter\publisher\publisher.go`
-- Create: `D:\Works\guaidongxi\RSS\internal\adapter\publisher\holo\publisher.go`
-- Create: `D:\Works\guaidongxi\RSS\internal\adapter\publisher\holo\publisher_test.go`
+- Create: `D:\Works\guaidongxi\RSS\internal\adapter\publisher\halo\publisher.go`
+- Create: `D:\Works\guaidongxi\RSS\internal\adapter\publisher\halo\publisher_test.go`
 - Create: `D:\Works\guaidongxi\RSS\internal\adapter\publisher\markdown_export\publisher.go`
 
 - [ ] **Step 1: Write the failing digest and publisher tests**
@@ -478,13 +478,13 @@ func TestWorkflowGenerateDigest(t *testing.T) {
 ```
 
 ```go
-func TestPublishDigestPostsMarkdownToHolo(t *testing.T) {
+func TestPublishDigestPostsMarkdownToHalo(t *testing.T) {
     server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         if r.Method != http.MethodPost { t.Fatalf("want POST got %s", r.Method) }
         _ = json.NewEncoder(w).Encode(map[string]any{"id": "remote-1", "url": "https://blog.example.com/digest"})
     }))
     defer server.Close()
-    p := holo.New(server.URL, "blog-token")
+    p := halo.New(server.URL, "blog-token")
     result, err := p.PublishDigest(context.Background(), publisher.PublishDigestRequest{Title: "今日 AI 日报", ContentMarkdown: "# 内容"})
     if err != nil { t.Fatal(err) }
     if result.RemoteURL == "" { t.Fatal("expected remote url") }
@@ -493,7 +493,7 @@ func TestPublishDigestPostsMarkdownToHolo(t *testing.T) {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test ./internal/workflow/daily_digest_workflow ./internal/adapter/publisher/holo -v`
+Run: `go test ./internal/workflow/daily_digest_workflow ./internal/adapter/publisher/halo -v`
 Expected: FAIL with missing workflow and publisher constructors
 
 - [ ] **Step 3: Write the minimal implementation**
@@ -523,21 +523,21 @@ type Publisher interface { Name() string; PublishDigest(ctx context.Context, req
 ```
 
 ```go
-package holo
+package halo
 
 func New(endpoint, token string) *Publisher { return &Publisher{endpoint: endpoint, token: token, httpClient: &http.Client{Timeout: 15 * time.Second}} }
-func (p *Publisher) Name() string { return "holo" }
+func (p *Publisher) Name() string { return "halo" }
 ```
 
 - [ ] **Step 4: Run the tests**
 
-Run: `go test ./internal/workflow/daily_digest_workflow ./internal/adapter/publisher/holo ./internal/adapter/publisher/markdown_export -v`
+Run: `go test ./internal/workflow/daily_digest_workflow ./internal/adapter/publisher/halo ./internal/adapter/publisher/markdown_export -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/agent/digest_planning/schema.go internal/agent/digest_planning/agent.go internal/render/digest_renderer.go internal/workflow/daily_digest_workflow/workflow.go internal/workflow/daily_digest_workflow/workflow_test.go internal/adapter/publisher/publisher.go internal/adapter/publisher/holo/publisher.go internal/adapter/publisher/holo/publisher_test.go internal/adapter/publisher/markdown_export/publisher.go
+git add internal/agent/digest_planning/schema.go internal/agent/digest_planning/agent.go internal/render/digest_renderer.go internal/workflow/daily_digest_workflow/workflow.go internal/workflow/daily_digest_workflow/workflow_test.go internal/adapter/publisher/publisher.go internal/adapter/publisher/halo/publisher.go internal/adapter/publisher/halo/publisher_test.go internal/adapter/publisher/markdown_export/publisher.go
 git commit -m "feat: add digest workflow and publisher slice"
 ```
 
@@ -675,7 +675,8 @@ git commit -m "feat: add api surface, scheduler, and compose deployment"
 
 ## Self-review checklist
 
-- **Spec coverage:** Miniflux 拉取在 Task 3；OpenAI-compatible 接入在 Task 4；文章处理 Workflow 在 Task 4；日报 Agent + Workflow 在 Task 5；Holo 发布在 Task 5；开放 API 在 Task 6；Scheduler / 07:00 / Compose / Metrics 在 Task 6。
+- **Spec coverage:** Miniflux 拉取在 Task 3；OpenAI-compatible 接入在 Task 4；文章处理 Workflow 在 Task 4；日报 Agent + Workflow 在 Task 5；Halo 发布在 Task 5；开放 API 在 Task 6；Scheduler / 07:00 / Compose / Metrics 在 Task 6。
 - **Placeholder scan:** 本计划未使用常见占位标记或“后面再补”式描述。
 - **Type consistency:** 统一使用 `SourceArticle`、`Translation`、`Analysis`、`Plan`、`Digest`、`JobService` 这些类型名，不在后续任务里改名。
+
 

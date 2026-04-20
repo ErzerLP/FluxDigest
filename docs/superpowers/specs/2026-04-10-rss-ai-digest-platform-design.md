@@ -7,7 +7,7 @@
 
 ## 1. 项目目标
 
-构建一个基于 Golang 的 RSS 智能处理平台，通过 Miniflux 聚合 RSS 订阅内容，在每天固定时间自动拉取新增文章，使用兼容 OpenAI 标准格式的模型 API 完成翻译与分析，最后聚合成日报并自动发布到自建 Holo 等博客站点。同时，平台应向其他项目开放文章级和日报级接口，并具备清晰、可扩展的 Agent / Workflow 编排能力。
+构建一个基于 Golang 的 RSS 智能处理平台，通过 Miniflux 聚合 RSS 订阅内容，在每天固定时间自动拉取新增文章，使用兼容 OpenAI 标准格式的模型 API 完成翻译与分析，最后聚合成日报并自动发布到自建 Halo 等博客站点。同时，平台应向其他项目开放文章级和日报级接口，并具备清晰、可扩展的 Agent / Workflow 编排能力。
 
 ## 2. 已确认的需求边界
 
@@ -91,7 +91,7 @@
 - **Redis**：任务队列、幂等键、分布式锁、缓存
 - **Miniflux**：RSS 内容聚合源
 - **OpenAI-compatible API**：模型调用入口
-- **Holo / Blog**：日报发布目标
+- **Halo / Blog**：日报发布目标
 
 ### 3.3 逻辑结构
 
@@ -104,7 +104,7 @@ flowchart LR
     W --> R["Redis"]
     W --> M["OpenAI-compatible API"]
     W --> B["Publisher Adapter"]
-    B --> H["Holo / Blog"]
+    B --> H["Halo / Blog"]
 
     U["User / Other Projects"] --> API["rss-api"]
     API --> P
@@ -565,7 +565,7 @@ type Publisher interface {
 
 第一版至少支持：
 
-- `HoloPublisher`
+- `HaloPublisher`
 - `WebhookPublisher`
 - `MarkdownExportPublisher`
 
@@ -660,7 +660,7 @@ D:\Works\guaidongxi\RSS
 │  │  ├─ miniflux/
 │  │  ├─ llm/
 │  │  ├─ publisher/
-│  │  │  ├─ holo/
+│  │  │  ├─ halo/
 │  │  │  ├─ webhook/
 │  │  │  └─ markdown_export/
 │  │  └─ httpapi/
@@ -748,7 +748,7 @@ MVP 以“跑通完整业务闭环”为目标：
 - 入库与去重
 - 单篇翻译与分析
 - 日报生成
-- Holo 发布
+- Halo 发布
 
 #### 核心配置能力
 
@@ -797,7 +797,7 @@ MVP 以“跑通完整业务闭环”为目标：
 - OpenAI-compatible 接入
 - 翻译/分析流程
 - 日报生成
-- Holo 发布器
+- Halo 发布器
 - 基础 API
 
 #### 阶段 2：做稳系统
@@ -873,7 +873,7 @@ MVP 以“跑通完整业务闭环”为目标：
 应对：
 
 - 抽象统一 `Publisher`
-- 将 Holo 作为 Adapter 实现
+- 将 Halo 作为 Adapter 实现
 - 保留 `MarkdownExportPublisher` 作为兜底方向
 - 发布失败不影响日报本体保存
 
@@ -900,3 +900,4 @@ MVP 以“跑通完整业务闭环”为目标：
 - Agent 能力可控
 - 接口生态可扩展
 - 后续演进空间充足
+

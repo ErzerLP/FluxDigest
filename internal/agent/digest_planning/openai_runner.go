@@ -14,9 +14,17 @@ var (
 	errPlanSectionsRequired = errors.New("digest plan sections are required")
 )
 
+const defaultPlanTitle = "FluxDigest 每日汇总"
+
+const planStructuredOutputAttempts = 2
+
 // PromptRunner 定义最小文本生成边界。
 type PromptRunner interface {
 	Generate(ctx context.Context, prompt string) (string, error)
+}
+
+type structuredJSONPromptRunner interface {
+	GenerateStructuredJSON(ctx context.Context, prompt string) (string, error)
 }
 
 // OpenAIRunner 负责把原始 JSON 响应解析为 Plan。
@@ -35,19 +43,27 @@ func (r *OpenAIRunner) Run(ctx context.Context, prompt string) (Plan, error) {
 		return Plan{}, errPromptRunnerRequired
 	}
 
-	raw, err := r.runner.Generate(ctx, prompt)
-	if err != nil {
-		return Plan{}, err
+	var lastStructuredErr error
+	for attempt := 0; attempt < planStructuredOutputAttempts; attempt++ {
+		raw, err := generateStructuredPlanJSON(ctx, r.runner, prompt)
+		if err != nil {
+			return Plan{}, err
+		}
+
+		var plan Plan
+		if err := json.Unmarshal([]byte(normalizePlanJSON(raw)), &plan); err != nil {
+			lastStructuredErr = err
+			continue
+		}
+		plan = normalizePlan(plan)
+		if err := validatePlan(plan); err != nil {
+			lastStructuredErr = err
+			continue
+		}
+		return plan, nil
 	}
 
-	var plan Plan
-	if err := json.Unmarshal([]byte(normalizePlanJSON(raw)), &plan); err != nil {
-		return Plan{}, err
-	}
-	if err := validatePlan(plan); err != nil {
-		return Plan{}, err
-	}
-	return plan, nil
+	return Plan{}, lastStructuredErr
 }
 
 func normalizePlanJSON(raw string) string {
@@ -64,6 +80,21 @@ func normalizePlanJSON(raw string) string {
 	}
 
 	return trimmed
+}
+
+func normalizePlan(plan Plan) Plan {
+	if strings.TrimSpace(plan.Title) == "" {
+		plan.Title = defaultPlanTitle
+	}
+	for i := range plan.Sections {
+		for j := range plan.Sections[i].Items {
+			if strings.TrimSpace(plan.Sections[i].Items[j].ImportanceBucket) == "" {
+				plan.Sections[i].Items[j].ImportanceBucket = "normal"
+			}
+		}
+	}
+
+	return plan
 }
 
 func validatePlan(plan Plan) error {
@@ -92,4 +123,11 @@ func validatePlan(plan Plan) error {
 	}
 
 	return nil
+}
+
+func generateStructuredPlanJSON(ctx context.Context, runner PromptRunner, prompt string) (string, error) {
+	if structured, ok := runner.(structuredJSONPromptRunner); ok {
+		return structured.GenerateStructuredJSON(ctx, prompt)
+	}
+	return runner.Generate(ctx, prompt)
 }

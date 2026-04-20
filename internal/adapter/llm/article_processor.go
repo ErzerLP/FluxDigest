@@ -32,6 +32,10 @@ type ChatInvoker interface {
 	Generate(ctx context.Context, prompt string) (string, error)
 }
 
+type structuredJSONChatInvoker interface {
+	GenerateStructuredJSON(ctx context.Context, prompt string) (string, error)
+}
+
 // ArticleProcessor 负责翻译与分析单篇文章。
 type ArticleProcessor struct {
 	chat                ChatInvoker
@@ -87,7 +91,7 @@ func (p *ArticleProcessor) Translate(ctx context.Context, input article.SourceAr
 		return processing.Translation{}, err
 	}
 
-	raw, err := p.chat.Generate(ctx, prompt)
+	raw, err := generateStructuredJSON(ctx, p.chat, prompt)
 	if err != nil {
 		return processing.Translation{}, err
 	}
@@ -118,7 +122,7 @@ func (p *ArticleProcessor) Analyze(ctx context.Context, input article.SourceArti
 		return processing.Analysis{}, err
 	}
 
-	raw, err := p.chat.Generate(ctx, prompt)
+	raw, err := generateStructuredJSON(ctx, p.chat, prompt)
 	if err != nil {
 		return processing.Analysis{}, err
 	}
@@ -136,7 +140,7 @@ func (p *ArticleProcessor) Analyze(ctx context.Context, input article.SourceArti
 		CoreSummary:     out.CoreSummary,
 		KeyPoints:       out.KeyPoints,
 		TopicCategory:   out.TopicCategory,
-		ImportanceScore: out.ImportanceScore,
+		ImportanceScore: normalizeImportanceScore(out.ImportanceScore),
 	}
 	if err := validateAnalysis(analysis); err != nil {
 		return processing.Analysis{}, err
@@ -214,6 +218,14 @@ func validateAnalysis(analysis processing.Analysis) error {
 	return nil
 }
 
+func normalizeImportanceScore(score float64) float64 {
+	if score > 1 && score <= 10 {
+		return score / 10
+	}
+
+	return score
+}
+
 func resolvePath(path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return path, nil
@@ -259,4 +271,11 @@ func normalizeJSONObject(raw string) string {
 	}
 
 	return trimmed
+}
+
+func generateStructuredJSON(ctx context.Context, chat ChatInvoker, prompt string) (string, error) {
+	if structured, ok := chat.(structuredJSONChatInvoker); ok {
+		return structured.GenerateStructuredJSON(ctx, prompt)
+	}
+	return chat.Generate(ctx, prompt)
 }

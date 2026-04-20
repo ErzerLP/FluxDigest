@@ -1,6 +1,7 @@
 package miniflux
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -45,6 +46,7 @@ func (c *Client) ListEntries(ctx context.Context, windowStart, windowEnd time.Ti
 
 	query := endpoint.Query()
 	query.Set("published_after", strconv.FormatInt(windowStart.UTC().Unix(), 10))
+	query.Set("status", "unread")
 	endpoint.RawQuery = query.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
@@ -111,4 +113,39 @@ func (c *Client) ListEntries(ctx context.Context, windowStart, windowEnd time.Ti
 	}
 
 	return entries, nil
+}
+
+func (c *Client) MarkEntriesRead(ctx context.Context, entryIDs []int64) error {
+	if len(entryIDs) == 0 {
+		return nil
+	}
+
+	endpoint := c.baseURL + "/v1/entries"
+	body, err := json.Marshal(map[string]any{
+		"entry_ids": entryIDs,
+		"status":    "read",
+	})
+	if err != nil {
+		return fmt.Errorf("marshal mark-read payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build mark-read request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Token", c.authToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request mark-read: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("miniflux returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	return nil
 }
